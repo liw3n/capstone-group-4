@@ -25,12 +25,12 @@ The local store is in memory. Replace `app/store.py` with a DynamoDB repository 
 
 ## Local setup
 
+This project uses `uv` for dependency management, so the virtual environment and package list are defined in `pyproject.toml`.
+
 ```bash
 cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 4000
+uv sync
+uv run uvicorn app.main:app --reload --port 4000
 ```
 
 The frontend's Vite proxy forwards `/api` requests to port 4000.
