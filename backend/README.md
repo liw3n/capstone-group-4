@@ -1,6 +1,6 @@
-# MyWealth Chat API
+# PULSE Chat API
 
-FastAPI backend for the chat popup. It can run locally with Uvicorn or on AWS Lambda/API Gateway through Mangum.
+FastAPI backend for the chat popup.
 
 ## Endpoints
 
@@ -9,32 +9,33 @@ FastAPI backend for the chat popup. It can run locally with Uvicorn or on AWS La
 - `GET /chat/history?session_id=<id>`
 - `POST /chat/query`
 
-The query endpoint accepts `fa_id` either as a query parameter or in the JSON body:
-
-```json
-{ "fa_id": "advisor-1", "message_content": "How many clients need follow-up?" }
-```
-
-It returns:
-
-```json
-{ "user": "advisor-1", "timestamp": "...", "ai_answer": "..." }
-```
-
-The local store is in memory. Replace `app/store.py` with a DynamoDB repository when persistent AWS storage is needed.
+Detailed API contract can be found in `docs/api_contract.md`.
 
 ## Local setup
 
 This project uses `uv` for dependency management, so the virtual environment and package list are defined in `pyproject.toml`.
 
+1. Install `uv`, FakeCloud, and Terraform if they are not already available:
+
 ```bash
-cd backend
-uv sync
-uv run uvicorn app.main:app --reload --port 4000
+brew install uv fakecloud
+brew tap hashicorp/tap
+brew install hashicorp/tap/terraform
 ```
 
-The frontend's Vite proxy forwards `/api` requests to port 4000.
+2. Start the virtual environment:
 
-## AWS
+```bash
+uv venv
+source .venv/bin/activate
+uv sync
+```
 
-Deploy `app.main:handler` as a Lambda function behind API Gateway HTTP API. Mangum adapts the FastAPI application to the Lambda event format.
+3. Run the setup script in the virtual environment: 
+
+```bash
+cd backend
+./setup.sh
+```
+
+The setup script starts FakeCloud on port 4566, then initializes Terraform and applies the AWS resources. Terraform will ask for confirmation before applying.

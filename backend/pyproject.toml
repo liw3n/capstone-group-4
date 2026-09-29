@@ -1,12 +1,14 @@
 [project]
-name = "mywealth-chat-api"
+name = "pulse-chat-api"
 version = "0.1.0"
-description = "FastAPI backend for the MyWealth chat popup"
+description = "FastAPI backend for the PULSE chat popup"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.34,<1",
     "mangum>=0.19,<1",
+    "localstack>=2026.8.1",
+    "awscli-local>=0.22.2",
 ]
 
 [tool.uv]

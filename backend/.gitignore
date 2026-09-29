@@ -3,3 +3,13 @@
 .venv/
 .env
 .pytest_cache/
+.fakecloud.pid
+.fakecloud.log
+
+# Terraform local data and generated files
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfplan
+terraform/*.tfvars
+terraform/*.tfvars.json

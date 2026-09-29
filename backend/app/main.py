@@ -13,7 +13,7 @@ from .store import (
     now_iso,
 )
 
-app = FastAPI(title="MyWealth Chat API")
+app = FastAPI(title="PULSE Chat API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
