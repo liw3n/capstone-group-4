@@ -1,9 +1,8 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from mangum import Mangum
 from pydantic import BaseModel, Field
 
-from .store import (
+from store import (
     ChatHistoryItem,
     append_history,
     create_session,
@@ -14,6 +13,7 @@ from .store import (
 )
 
 app = FastAPI(title="PULSE Chat API")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -49,6 +49,11 @@ class QueryResponse(BaseModel):
     user: bool | str
     timestamp: str
     ai_answer: str
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 
 @app.get("/chat/sessions", response_model=list[SessionResponse])
@@ -114,6 +119,3 @@ def chat_query(
         ),
     )
     return QueryResponse(user=advisor_id, timestamp=now_iso(), ai_answer=ai_answer)
-
-
-handler = Mangum(app)

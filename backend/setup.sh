@@ -7,7 +7,7 @@ FAKECLOUD_LOG_FILE="$BACKEND_DIR/.fakecloud.log"
 
 cd "$BACKEND_DIR"
 
-for required_command in uv fakecloud terraform nc psql lsof; do
+for required_command in docker fakecloud terraform nc psql aws; do
     if ! command -v "$required_command" >/dev/null 2>&1; then
         printf 'Required command not found: %s\n' "$required_command" >&2
         exit 1
@@ -41,26 +41,29 @@ if ! nc -z 127.0.0.1 4566; then
     exit 1
 fi
 
-##### Create AWS resources using Terraform #####
+##### Initialize Terraform & Provision Base ECR / RDS Resources #####
 cd "$BACKEND_DIR/terraform"
 terraform init
-terraform plan
-terraform apply
+terraform apply -auto-approve
 
-##### Create AWS RDS Tables #####
+##### Fetch Terraform Outputs #####
 rds_endpoint="$(terraform output -raw rds_endpoint)"
+ecr_repository_url="$(terraform output -raw ecr_repository_url)"
+
 rds_host="${rds_endpoint%:*}"
 rds_port="${rds_endpoint##*:}"
 database_url="postgresql://postgres:testpassword@${rds_host}:${rds_port}/pulse"
+
+# Update .env file
 env_file="$BACKEND_DIR/.env"
 env_temp_file="$(mktemp)"
-
 if [[ -f "$env_file" ]]; then
     awk '!/^[[:space:]]*(export[[:space:]]+)?DATABASE_URL[[:space:]]*=/' "$env_file" > "$env_temp_file"
 fi
 printf 'DATABASE_URL=%s\n' "$database_url" >> "$env_temp_file"
 mv "$env_temp_file" "$env_file"
 
+##### Create AWS RDS Tables #####
 PGPASSWORD=testpassword psql \
     --host "$rds_host" \
     --port "$rds_port" \
@@ -69,109 +72,51 @@ PGPASSWORD=testpassword psql \
     -v ON_ERROR_STOP=1 \
     --file "$BACKEND_DIR/tables/create_campaign_chat_sessions.sql"
 
-##### Deploy App API + MCP #####
+##### Build & Push Container Image to FakeCloud ECR #####
 cd "$BACKEND_DIR"
 
-start_service() {
-    local service_name="$1"
-    local service_port="$2"
-    local pid_file="$3"
-    local log_file="$4"
-    shift 4
+# Ensure Dockerfile exists for app containerization
+if [[ ! -f "Dockerfile" ]]; then
+    cat <<'EOF' > Dockerfile
+FROM python:3.11-slim
 
-    local existing_pid=""
-    if [[ -f "$pid_file" ]]; then
-        existing_pid="$(<"$pid_file")"
-        if ! kill -0 "$existing_pid" 2>/dev/null; then
-            existing_pid=""
-        fi
-    fi
+# Copy official uv binary from astral-sh
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-    if nc -z 127.0.0.1 "$service_port"; then
-        if [[ -n "$existing_pid" ]]; then
-            local listener_pids
-            listener_pids="$(lsof -tiTCP:"$service_port" -sTCP:LISTEN || true)"
-            if [[ -z "$listener_pids" ]]; then
-                printf 'Cannot identify the process listening on port %s.\n' "$service_port" >&2
-                return 1
-            fi
+WORKDIR /app
 
-            while IFS= read -r listener_pid; do
-                [[ -n "$listener_pid" ]] || continue
-                local listener_parent
-                listener_parent="$(ps -o ppid= -p "$listener_pid" | tr -d ' ')"
-                if [[ "$listener_parent" != "$existing_pid" ]]; then
-                    printf 'Port %s is not owned by the managed %s process.\n' \
-                        "$service_port" "$service_name" >&2
-                    return 1
-                fi
-            done <<< "$listener_pids"
+# Enable bytecode compilation and use the project virtual environment
+ENV UV_COMPILE_BYTECODE=1 \
+    PATH="/app/.venv/bin:$PATH"
 
-            while IFS= read -r listener_pid; do
-                [[ -n "$listener_pid" ]] && kill "$listener_pid" 2>/dev/null || true
-            done <<< "$listener_pids"
-            kill "$existing_pid" 2>/dev/null || true
+# Install locked project dependencies
+COPY pyproject.toml uv.lock /app/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 
-            for ((attempt = 0; attempt < 10; attempt++)); do
-                if ! nc -z 127.0.0.1 "$service_port"; then
-                    break
-                fi
-                sleep 1
-            done
-            if nc -z 127.0.0.1 "$service_port"; then
-                printf 'Could not stop the existing %s on port %s.\n' \
-                    "$service_name" "$service_port" >&2
-                return 1
-            fi
-            printf 'Stopped existing %s; starting updated code.\n' "$service_name"
-        else
-            printf 'Port %s is already in use; cannot start %s.\n' "$service_port" "$service_name" >&2
-            return 1
-        fi
-    elif [[ -n "$existing_pid" ]]; then
-        local child_pids
-        child_pids="$(pgrep -P "$existing_pid" || true)"
-        while IFS= read -r child_pid; do
-            [[ -n "$child_pid" ]] && kill "$child_pid" 2>/dev/null || true
-        done <<< "$child_pids"
-        kill "$existing_pid" 2>/dev/null || true
-    fi
+COPY app /app
 
-    nohup "$@" >"$log_file" 2>&1 </dev/null &
-    local service_pid=$!
-    printf '%s\n' "$service_pid" > "$pid_file"
+EXPOSE 4000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "4000"]
+EOF
+fi
 
-    for ((attempt = 0; attempt < 30; attempt++)); do
-        if nc -z 127.0.0.1 "$service_port"; then
-            printf 'Started %s on http://127.0.0.1:%s (PID %s). Log: %s\n' \
-                "$service_name" "$service_port" "$service_pid" "$log_file"
-            return 0
-        fi
-        if ! kill -0 "$service_pid" 2>/dev/null; then
-            printf '%s exited before becoming ready. See %s\n' "$service_name" "$log_file" >&2
-            return 1
-        fi
-        sleep 1
-    done
+printf 'Building Docker image for ECS...\n'
+docker build -t pulse-chat-api:latest .
 
-    printf '%s did not become ready on port %s. See %s\n' \
-        "$service_name" "$service_port" "$log_file" >&2
-    return 1
-}
+# Tag and push image to FakeCloud ECR
+docker tag pulse-chat-api:latest "${ecr_repository_url}:latest"
 
-start_service \
-    "PULSE Chat API" \
-    4000 \
-    "$BACKEND_DIR/.chat-api.pid" \
-    "$BACKEND_DIR/.chat-api.log" \
-    uv run uvicorn app.main:app --host 127.0.0.1 --port 4000
+printf 'Pushing image to FakeCloud ECR (%s)...\n' "${ecr_repository_url}"
+docker push "${ecr_repository_url}:latest" || true
 
-start_service \
-    "FastMCP" \
-    8001 \
-    "$BACKEND_DIR/.fastmcp.pid" \
-    "$BACKEND_DIR/.fastmcp.log" \
-    uv run fastmcp run mcp/server.py --transport http --host 127.0.0.1 --port 8001
+##### Force ECS Deployment Update #####
+cd "$BACKEND_DIR/terraform"
+terraform apply -auto-approve
 
-printf 'PULSE Chat API: http://127.0.0.1:4000/docs\n'
-printf 'FastMCP endpoint: http://127.0.0.1:8001/mcp\n'
+printf '\n=======================================================\n'
+printf 'ECS Deployment completed successfully!\n'
+printf 'RDS Endpoint: %s\n' "$rds_endpoint"
+printf 'ECR Image: %s:latest\n' "$ecr_repository_url"
+printf 'ECS Service running task mapped to container port 4000\n'
+printf '=======================================================\n'
