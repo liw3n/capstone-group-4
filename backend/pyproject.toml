@@ -9,6 +9,7 @@ dependencies = [
     "mangum>=0.19,<1",
     "localstack>=2026.8.1",
     "awscli-local>=0.22.2",
+    "fastmcp>=4.0.10",
 ]
 
 [tool.uv]
