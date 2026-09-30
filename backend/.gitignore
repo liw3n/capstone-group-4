@@ -5,6 +5,10 @@
 .pytest_cache/
 .fakecloud.pid
 .fakecloud.log
+.chat-api.pid
+.chat-api.log
+.fastmcp.pid
+.fastmcp.log
 
 # Terraform local data and generated files
 terraform/.terraform/

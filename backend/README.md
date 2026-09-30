@@ -38,4 +38,4 @@ cd backend
 ./setup.sh
 ```
 
-The setup script starts FakeCloud on port 4566, then initializes Terraform and applies the AWS resources. Terraform will ask for confirmation before applying.
+The setup script starts FakeCloud on port 4566, initializes Terraform, and applies the AWS resources. It then writes the RDS connection URL to the ignored `.env` file and runs `tables/create_campaign_chat_sessions.sql`. Terraform will ask for confirmation before applying.

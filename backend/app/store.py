@@ -1,6 +1,14 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import os
+from pathlib import Path
 from uuid import uuid4
+
+import psycopg
+from dotenv import load_dotenv
+from psycopg.rows import dict_row
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 @dataclass
@@ -27,11 +35,30 @@ def now_iso() -> str:
 
 
 def list_sessions(fa_id: str) -> list[ChatSession]:
-    return sorted(
-        (session for session in _sessions.values() if session.fa_id == fa_id),
-        key=lambda session: session.timestamp,
-        reverse=True,
-    )
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is not configured")
+
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        rows = connection.execute(
+            """
+            SELECT session_id, timestamp, COALESCE(session_title, 'New chat') AS session_title
+            FROM campaign_chat_sessions
+            WHERE fa_id = %s
+            ORDER BY timestamp DESC
+            """,
+            (fa_id,),
+        ).fetchall()
+
+    return [
+        ChatSession(
+            session_id=row["session_id"],
+            fa_id=str(fa_id),
+            timestamp=row["timestamp"].isoformat(),
+            session_title=row["session_title"],
+        )
+        for row in rows
+    ]
 
 
 def create_session(fa_id: str) -> ChatSession:

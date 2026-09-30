@@ -53,7 +53,7 @@ class QueryResponse(BaseModel):
 
 @app.get("/chat/sessions", response_model=list[SessionResponse])
 @app.get("/api/chat/sessions", response_model=list[SessionResponse])
-def chat_sessions(fa_id: str = Query(min_length=1)) -> list[SessionResponse]:
+def chat_sessions(fa_id: str = Query()) -> list[SessionResponse]:
     return [
         SessionResponse(
             session_id=session.session_id,
