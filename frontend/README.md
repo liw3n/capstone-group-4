@@ -328,7 +328,11 @@ on — keep those stable and nothing else needs to change.
 
 The floating **PULSE assistant** is separate and real: `components/ChatPanel.tsx`
 uses `services/chatApi.ts` to load adviser sessions and history and send queries
-through `/api/chat/...`. The browser never holds the model-provider key.
+through `/api/chat/...`. Successful exchanges are persisted by PostgreSQL. The
+panel cancels stale list/history/provider requests when its adviser or session
+context changes, exposes retryable storage/network errors, and labels generated
+responses with a verification/no-auto-send notice. The browser never holds the
+model-provider key.
 
 ## Conventions / gotchas
 

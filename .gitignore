@@ -7,3 +7,9 @@
 # Finder-created duplicate copies; canonical files omit the " 2" suffix.
 /frontend/AGENTS 2.md
 /backend/docs/Architecture 2.png
+
+# Company-provided confidential source material stays local. Commit only the
+# handling guides in these directories.
+/docs/*.docx
+/docs/*.pdf
+/gwm_api/*.json

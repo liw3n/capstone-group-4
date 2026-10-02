@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+    <style>
+      .title { font: 700 25px Arial, sans-serif; fill: #0f172a; }
+      .heading { font: 700 18px Arial, sans-serif; fill: #0f172a; }
+      .label { font: 600 15px Arial, sans-serif; fill: #0f172a; }
+      .small { font: 13px Arial, sans-serif; fill: #334155; }
+      .box { stroke: #334155; stroke-width: 2; rx: 12; }
+      .arrow { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1200" height="720" fill="#f8fafc"/>
+  <text x="50" y="48" class="title">PULSE local architecture</text>
+
+  <rect x="35" y="285" width="150" height="90" class="box" fill="#dbeafe"/>
+  <text x="110" y="320" text-anchor="middle" class="heading">Frontend</text>
+  <text x="110" y="348" text-anchor="middle" class="small">Chat popup</text>
+
+  <rect x="245" y="75" width="650" height="570" class="box" fill="#f1f5f9"/>
+  <text x="270" y="110" class="heading">FakeCloud / local AWS environment</text>
+
+  <rect x="285" y="145" width="400" height="300" class="box" fill="#ffffff"/>
+  <text x="485" y="180" text-anchor="middle" class="heading">ECS task: PULSE Chat API</text>
+  <text x="485" y="205" text-anchor="middle" class="small">FastAPI · port 4000</text>
+
+  <rect x="325" y="235" width="320" height="65" class="box" fill="#dcfce7"/>
+  <text x="485" y="262" text-anchor="middle" class="label">Chat routes + persistence layer</text>
+  <text x="485" y="283" text-anchor="middle" class="small">/chat/* and /api/chat/*</text>
+
+  <rect x="325" y="325" width="150" height="75" class="box" fill="#fef3c7"/>
+  <text x="400" y="353" text-anchor="middle" class="label">LLM orchestrator</text>
+  <text x="400" y="377" text-anchor="middle" class="small">bounded tool loop</text>
+
+  <rect x="495" y="325" width="150" height="75" class="box" fill="#fae8ff"/>
+  <text x="570" y="353" text-anchor="middle" class="label">Tool registry</text>
+  <text x="570" y="377" text-anchor="middle" class="small">validated functions</text>
+
+  <rect x="315" y="500" width="340" height="100" class="box" fill="#e0e7ff"/>
+  <text x="485" y="535" text-anchor="middle" class="heading">RDS PostgreSQL</text>
+  <text x="485" y="563" text-anchor="middle" class="small">sessions + messages · port 5432</text>
+
+  <rect x="730" y="230" width="125" height="115" class="box" fill="#fce7f3"/>
+  <text x="792" y="266" text-anchor="middle" class="label">FastMCP</text>
+  <text x="792" y="290" text-anchor="middle" class="small">stdio prototype</text>
+  <text x="792" y="315" text-anchor="middle" class="small">not deployed</text>
+
+  <rect x="965" y="285" width="190" height="105" class="box" fill="#fee2e2"/>
+  <text x="1060" y="320" text-anchor="middle" class="heading">Groq API</text>
+  <text x="1060" y="347" text-anchor="middle" class="small">OpenAI-compatible</text>
+  <text x="1060" y="370" text-anchor="middle" class="small">HTTPS inference</text>
+
+  <path d="M185 330 L285 330" class="arrow"/>
+  <text x="235" y="318" text-anchor="middle" class="small">HTTP</text>
+
+  <path d="M400 325 L450 300" class="arrow"/>
+  <path d="M475 362 L495 362" class="arrow"/>
+  <path d="M485 445 L485 500" class="arrow"/>
+  <text x="500" y="476" class="small">SQL</text>
+
+  <path d="M685 350 L965 350" class="arrow"/>
+  <text x="825" y="338" text-anchor="middle" class="small">OpenAI Chat Completions + tool calls</text>
+
+  <path d="M730 300 L645 342" stroke="#64748b" stroke-width="2" stroke-dasharray="7 6" fill="none" marker-end="url(#arrow)"/>
+  <text x="690" y="285" text-anchor="middle" class="small">shared implementations</text>
+
+  <text x="50" y="675" class="small">The API executes local tools in-process. FastMCP exposes the same implementations separately over stdio for development.</text>
+</svg>

@@ -40,6 +40,11 @@ that do not advance that workflow.
 - Use `/api/chat/...` routes from the frontend and preserve backend support for
   both `/chat/...` and `/api/chat/...`.
 - Keep API calls in service modules rather than UI components.
+- Keep chat requests abortable. Adviser/session changes must not allow stale
+  session lists, history, or provider responses to overwrite current state.
+- Preserve actionable error handling for network, validation, storage, provider
+  rate-limit, and provider-timeout failures. Never display credentials or raw
+  connection strings.
 - Preserve the distinction between leads and contacts and between deterministic
   audience selection and AI-generated ranking/copy.
 - Show clear reasons for client eligibility and allow the adviser to remove or
@@ -66,6 +71,8 @@ the frontend and backend are served separately.
 - CRM contacts, tasks, pipeline, campaigns, role selection, and email receipts
   still live only in React state and reset to seed data on refresh.
 - The PULSE chat is the only feature connected to the FastAPI backend.
+- Chat sessions and successful user/assistant exchanges persist in PostgreSQL;
+  drafts, open/closed panel state, and optimistic messages remain browser state.
 - Role selection is a prototype, not authentication or authorization.
 - No automated frontend test runner is configured; `npm run lint` is currently
   a strict TypeScript check.
