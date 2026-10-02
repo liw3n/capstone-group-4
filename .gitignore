@@ -1,0 +1,9 @@
+.DS_Store
+**/.DS_Store
+
+# Local donor/reference checkout used during the frontend adaptation.
+/Capstone-CRM-main/
+
+# Finder-created duplicate copies; canonical files omit the " 2" suffix.
+/frontend/AGENTS 2.md
+/backend/docs/Architecture 2.png

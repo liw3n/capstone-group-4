@@ -8,6 +8,25 @@ terraform {
   }
 }
 
+variable "groq_api_key" {
+  description = "Groq API key supplied through TF_VAR_groq_api_key for local FakeCloud use"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "llm_base_url" {
+  description = "OpenAI-compatible LLM API base URL"
+  type        = string
+  default     = "https://api.groq.com/openai/v1"
+}
+
+variable "llm_model" {
+  description = "Model identifier sent to the LLM provider"
+  type        = string
+  default     = "openai/gpt-oss-20b"
+}
+
 # -----------------------------------------------------------------------------
 # AWS Provider Configured for Fakecloud
 # -----------------------------------------------------------------------------
@@ -20,11 +39,11 @@ provider "aws" {
   skip_requesting_account_id  = true
 
   endpoints {
-    ecr        = "http://localhost:4566"
-    ecs        = "http://localhost:4566"
-    iam        = "http://localhost:4566"
-    rds        = "http://localhost:4566"
-    sts        = "http://localhost:4566"
+    ecr = "http://localhost:4566"
+    ecs = "http://localhost:4566"
+    iam = "http://localhost:4566"
+    rds = "http://localhost:4566"
+    sts = "http://localhost:4566"
   }
 }
 
@@ -105,6 +124,18 @@ resource "aws_ecs_task_definition" "pulse_api_task" {
         {
           name  = "DATABASE_URL"
           value = "postgresql://${aws_db_instance.pulse.username}:${aws_db_instance.pulse.password}@${aws_db_instance.pulse.address}:${aws_db_instance.pulse.port}/${aws_db_instance.pulse.db_name}"
+        },
+        {
+          name  = "GROQ_API_KEY"
+          value = var.groq_api_key
+        },
+        {
+          name  = "LLM_BASE_URL"
+          value = var.llm_base_url
+        },
+        {
+          name  = "LLM_MODEL"
+          value = var.llm_model
         }
       ]
     }
@@ -115,11 +146,12 @@ resource "aws_ecs_task_definition" "pulse_api_task" {
 # 6. ECS Service
 # -----------------------------------------------------------------------------
 resource "aws_ecs_service" "pulse_api_service" {
-  name            = "pulse-api-service"
-  cluster         = aws_ecs_cluster.pulse_cluster.id
-  task_definition = aws_ecs_task_definition.pulse_api_task.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  name                 = "pulse-api-service"
+  cluster              = aws_ecs_cluster.pulse_cluster.id
+  task_definition      = aws_ecs_task_definition.pulse_api_task.arn
+  desired_count        = 1
+  launch_type          = "FARGATE"
+  force_new_deployment = true
 }
 
 # -----------------------------------------------------------------------------

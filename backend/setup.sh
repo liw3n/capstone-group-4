@@ -7,6 +7,18 @@ FAKECLOUD_LOG_FILE="$BACKEND_DIR/.fakecloud.log"
 
 cd "$BACKEND_DIR"
 
+# Load local configuration without printing secrets. The file is git-ignored.
+if [[ -f "$BACKEND_DIR/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$BACKEND_DIR/.env"
+    set +a
+fi
+
+export TF_VAR_groq_api_key="${GROQ_API_KEY:-}"
+export TF_VAR_llm_base_url="${LLM_BASE_URL:-https://api.groq.com/openai/v1}"
+export TF_VAR_llm_model="${LLM_MODEL:-openai/gpt-oss-20b}"
+
 for required_command in docker fakecloud terraform nc psql aws; do
     if ! command -v "$required_command" >/dev/null 2>&1; then
         printf 'Required command not found: %s\n' "$required_command" >&2
@@ -72,6 +84,14 @@ PGPASSWORD=testpassword psql \
     -v ON_ERROR_STOP=1 \
     --file "$BACKEND_DIR/tables/create_campaign_chat_sessions.sql"
 
+if [[ "${DEPLOY_FAKECLOUD_ECS:-0}" != "1" ]]; then
+    printf '\nLocal database provisioning complete.\n'
+    printf 'DATABASE_URL was written to %s and the chat tables are ready.\n' "$env_file"
+    printf 'Start the application from the repository root with: make dev\n'
+    printf 'Set DEPLOY_FAKECLOUD_ECS=1 to also build and deploy the emulated ECS image.\n'
+    exit 0
+fi
+
 ##### Build & Push Container Image to FakeCloud ECR #####
 cd "$BACKEND_DIR"
 
@@ -94,10 +114,10 @@ COPY pyproject.toml uv.lock /app/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
-COPY app /app
+COPY app /app/app
 
 EXPOSE 4000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "4000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "4000"]
 EOF
 fi
 
@@ -108,7 +128,7 @@ docker build -t pulse-chat-api:latest .
 docker tag pulse-chat-api:latest "${ecr_repository_url}:latest"
 
 printf 'Pushing image to FakeCloud ECR (%s)...\n' "${ecr_repository_url}"
-docker push "${ecr_repository_url}:latest" || true
+docker push "${ecr_repository_url}:latest"
 
 ##### Force ECS Deployment Update #####
 cd "$BACKEND_DIR/terraform"
