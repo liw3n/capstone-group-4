@@ -1,15 +1,30 @@
+from functools import lru_cache
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from store import (
+from app.config import get_settings
+from app.llm import ChatOrchestrator, LLMClient
+from app.llm.errors import (
+    LLMAuthenticationError,
+    LLMConfigurationError,
+    LLMProviderError,
+    LLMRateLimitError,
+    LLMTimeoutError,
+    LLMToolLoopError,
+)
+from app.store import (
     ChatHistoryItem,
-    append_history,
+    append_exchange,
     create_session,
     get_history,
+    get_session,
     latest_session,
     list_sessions,
     now_iso,
+    StoreUnavailableError,
 )
 
 app = FastAPI(title="PULSE Chat API")
@@ -21,6 +36,11 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(StoreUnavailableError)
+def store_unavailable_handler(_request, exc: StoreUnavailableError):
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 class SessionResponse(BaseModel):
@@ -42,6 +62,7 @@ class HistoryResponse(BaseModel):
 
 class QueryRequest(BaseModel):
     fa_id: str | None = Field(default=None, min_length=1)
+    session_id: str | None = Field(default=None, min_length=1)
     message_content: str = Field(min_length=1)
 
 
@@ -51,14 +72,25 @@ class QueryResponse(BaseModel):
     ai_answer: str
 
 
+@lru_cache
+def get_orchestrator() -> ChatOrchestrator:
+    settings = get_settings()
+    return ChatOrchestrator(LLMClient(settings), settings)
+
+
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    settings = get_settings()
+    return {
+        "status": "ok",
+        "llm_configured": settings.llm_configured,
+        "llm_model": settings.llm_model,
+    }
 
 
 @app.get("/chat/sessions", response_model=list[SessionResponse])
 @app.get("/api/chat/sessions", response_model=list[SessionResponse])
-def chat_sessions(fa_id: str = Query()) -> list[SessionResponse]:
+def chat_sessions(fa_id: str = Query(min_length=1)) -> list[SessionResponse]:
     return [
         SessionResponse(
             session_id=session.session_id,
@@ -99,23 +131,44 @@ def chat_query(
     if not message_content:
         raise HTTPException(status_code=422, detail="message_content must not be empty")
 
-    session = latest_session(advisor_id) or create_session(advisor_id)
-    append_history(
-        session.session_id,
-        ChatHistoryItem(
-            timestamp=now_iso(),
-            user=advisor_id,
-            message_content=message_content,
-        ),
-    )
+    if payload.session_id:
+        session = get_session(payload.session_id)
+        if session is None or session.fa_id != advisor_id:
+            raise HTTPException(status_code=404, detail="chat session not found")
+    else:
+        session = latest_session(advisor_id) or create_session(advisor_id)
 
-    ai_answer = "Thanks for your message. I can help review campaign reach and outstanding actions."
-    append_history(
-        session.session_id,
-        ChatHistoryItem(
-            timestamp=now_iso(),
-            user=False,
-            message_content=ai_answer,
-        ),
+    history = get_history(session.session_id)
+    if history is None:
+        raise HTTPException(status_code=404, detail="chat session not found")
+
+    try:
+        ai_answer = get_orchestrator().run(message_content, history)
+    except LLMConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LLMAuthenticationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except LLMRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except LLMTimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except (LLMProviderError, LLMToolLoopError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    user_item = ChatHistoryItem(
+        timestamp=now_iso(),
+        user=advisor_id,
+        message_content=message_content,
     )
-    return QueryResponse(user=advisor_id, timestamp=now_iso(), ai_answer=ai_answer)
+    assistant_item = ChatHistoryItem(
+        timestamp=now_iso(),
+        user=False,
+        message_content=ai_answer,
+    )
+    append_exchange(session.session_id, user_item, assistant_item)
+
+    return QueryResponse(
+        user=advisor_id,
+        timestamp=assistant_item.timestamp,
+        ai_answer=ai_answer,
+    )

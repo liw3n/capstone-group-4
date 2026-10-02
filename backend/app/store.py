@@ -1,14 +1,12 @@
-from dataclasses import dataclass, field
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
-import os
-from pathlib import Path
 from uuid import uuid4
 
 import psycopg
-from dotenv import load_dotenv
 from psycopg.rows import dict_row
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+from app.config import get_settings
 
 
 @dataclass
@@ -26,50 +24,86 @@ class ChatHistoryItem:
     message_content: str
 
 
-_sessions: dict[str, ChatSession] = {}
-_history: dict[str, list[ChatHistoryItem]] = {}
+class StoreUnavailableError(RuntimeError):
+    """Raised when PostgreSQL cannot complete a storage operation."""
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def list_sessions(fa_id: str) -> list[ChatSession]:
-    database_url = os.getenv("DATABASE_URL")
+def _database_url() -> str:
+    database_url = get_settings().database_url
     if not database_url:
-        raise RuntimeError("DATABASE_URL is not configured")
+        raise StoreUnavailableError("DATABASE_URL is not configured")
+    return database_url
 
-    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+
+def _timestamp_iso(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+@contextmanager
+def _connection():
+    try:
+        with psycopg.connect(_database_url(), row_factory=dict_row) as connection:
+            yield connection
+    except StoreUnavailableError:
+        raise
+    except psycopg.Error as exc:
+        raise StoreUnavailableError("chat storage is temporarily unavailable") from exc
+
+
+def _session_from_row(row: dict) -> ChatSession:
+    return ChatSession(
+        session_id=row["session_id"],
+        fa_id=row["fa_id"],
+        timestamp=_timestamp_iso(row["timestamp"]),
+        session_title=row["session_title"] or "New chat",
+    )
+
+
+def list_sessions(fa_id: str) -> list[ChatSession]:
+    with _connection() as connection:
         rows = connection.execute(
             """
-            SELECT session_id, timestamp, COALESCE(session_title, 'New chat') AS session_title
+            SELECT session_id, fa_id, timestamp, session_title
             FROM campaign_chat_sessions
             WHERE fa_id = %s
             ORDER BY timestamp DESC
             """,
             (fa_id,),
         ).fetchall()
+    return [_session_from_row(row) for row in rows]
 
-    return [
-        ChatSession(
-            session_id=row["session_id"],
-            fa_id=str(fa_id),
-            timestamp=row["timestamp"].isoformat(),
-            session_title=row["session_title"],
-        )
-        for row in rows
-    ]
+
+def get_session(session_id: str) -> ChatSession | None:
+    with _connection() as connection:
+        row = connection.execute(
+            """
+            SELECT session_id, fa_id, timestamp, session_title
+            FROM campaign_chat_sessions
+            WHERE session_id = %s
+            """,
+            (session_id,),
+        ).fetchone()
+    return _session_from_row(row) if row else None
 
 
 def create_session(fa_id: str) -> ChatSession:
-    session = ChatSession(
-        session_id=str(uuid4()),
-        fa_id=fa_id,
-        timestamp=now_iso(),
-    )
-    _sessions[session.session_id] = session
-    _history[session.session_id] = []
-    return session
+    session_id = str(uuid4())
+    with _connection() as connection:
+        row = connection.execute(
+            """
+            INSERT INTO campaign_chat_sessions (session_id, fa_id, session_title)
+            VALUES (%s, %s, %s)
+            RETURNING session_id, fa_id, timestamp, session_title
+            """,
+            (session_id, fa_id, "New chat"),
+        ).fetchone()
+    return _session_from_row(row)
 
 
 def latest_session(fa_id: str) -> ChatSession | None:
@@ -78,9 +112,73 @@ def latest_session(fa_id: str) -> ChatSession | None:
 
 
 def get_history(session_id: str) -> list[ChatHistoryItem] | None:
-    return _history.get(session_id)
+    with _connection() as connection:
+        exists = connection.execute(
+            "SELECT 1 FROM campaign_chat_sessions WHERE session_id = %s",
+            (session_id,),
+        ).fetchone()
+        if not exists:
+            return None
+
+        rows = connection.execute(
+            """
+            SELECT timestamp, role, user_id, message_content
+            FROM campaign_chat_messages
+            WHERE session_id = %s
+            ORDER BY timestamp ASC, message_id ASC
+            """,
+            (session_id,),
+        ).fetchall()
+
+    return [
+        ChatHistoryItem(
+            timestamp=_timestamp_iso(row["timestamp"]),
+            user=False if row["role"] == "assistant" else row["user_id"],
+            message_content=row["message_content"],
+        )
+        for row in rows
+    ]
 
 
 def append_history(session_id: str, item: ChatHistoryItem) -> None:
-    if session_id in _history:
-        _history[session_id].append(item)
+    role = "assistant" if item.user is False else "user"
+    user_id = None if item.user is False else str(item.user)
+    with _connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO campaign_chat_messages
+                (session_id, timestamp, role, user_id, message_content)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (session_id, item.timestamp, role, user_id, item.message_content),
+        )
+
+
+def append_exchange(
+    session_id: str,
+    user_item: ChatHistoryItem,
+    assistant_item: ChatHistoryItem,
+) -> None:
+    """Persist one user/assistant exchange atomically."""
+    with _connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO campaign_chat_messages
+                (session_id, timestamp, role, user_id, message_content)
+            VALUES (%s, %s, 'user', %s, %s)
+            """,
+            (
+                session_id,
+                user_item.timestamp,
+                str(user_item.user),
+                user_item.message_content,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO campaign_chat_messages
+                (session_id, timestamp, role, user_id, message_content)
+            VALUES (%s, %s, 'assistant', NULL, %s)
+            """,
+            (session_id, assistant_item.timestamp, assistant_item.message_content),
+        )
