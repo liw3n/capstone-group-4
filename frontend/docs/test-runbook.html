@@ -1,0 +1,1556 @@
+<title>MyWealth Test Runbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --surface: #ffffff;
+    --surface-2: #fafbfc;
+    --ink: #131922;
+    --ink-2: #3d4757;
+    --muted: #6b7686;
+    --faint: #98a2b3;
+    --line: #e2e6ec;
+    --line-soft: #eef1f5;
+
+    --accent: #d9730d;
+    --accent-soft: #fdf1e3;
+    --accent-line: #f0d3b0;
+
+    --pass: #0e7a57;
+    --pass-soft: #e2f3ed;
+    --fail: #c03551;
+    --fail-soft: #fbe9ec;
+    --block: #6f5791;
+    --block-soft: #f0ebf6;
+
+    --link: #2563eb;
+    --shadow: 0 1px 2px rgba(19, 25, 34, .06), 0 8px 24px -16px rgba(19, 25, 34, .18);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1319;
+      --surface: #161c25;
+      --surface-2: #1b222c;
+      --ink: #edf1f6;
+      --ink-2: #c2cbd7;
+      --muted: #8b97a6;
+      --faint: #6b7686;
+      --line: #262f3b;
+      --line-soft: #1f2732;
+
+      --accent: #f0a35a;
+      --accent-soft: #2a1e12;
+      --accent-line: #4a341d;
+
+      --pass: #4ecfa0;
+      --pass-soft: #10281f;
+      --fail: #f4788c;
+      --fail-soft: #2c151a;
+      --block: #b79fd6;
+      --block-soft: #221a2c;
+
+      --link: #7ea6ff;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -16px rgba(0, 0, 0, .7);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0e1319;
+    --surface: #161c25;
+    --surface-2: #1b222c;
+    --ink: #edf1f6;
+    --ink-2: #c2cbd7;
+    --muted: #8b97a6;
+    --faint: #6b7686;
+    --line: #262f3b;
+    --line-soft: #1f2732;
+
+    --accent: #f0a35a;
+    --accent-soft: #2a1e12;
+    --accent-line: #4a341d;
+
+    --pass: #4ecfa0;
+    --pass-soft: #10281f;
+    --fail: #f4788c;
+    --fail-soft: #2c151a;
+    --block: #b79fd6;
+    --block-soft: #221a2c;
+
+    --link: #7ea6ff;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -16px rgba(0, 0, 0, .7);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink-2);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4 { color: var(--ink); text-wrap: balance; margin: 0; font-weight: 600; }
+
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  a { color: var(--link); }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
+
+  /* ---------- shell ---------- */
+
+  .wrap { max-width: 1220px; margin: 0 auto; padding: 0 24px 96px; }
+
+  header.masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+    padding: 40px 0 28px;
+    margin-bottom: 28px;
+  }
+
+  .masthead-inner { max-width: 1220px; margin: 0 auto; padding: 0 24px; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 10px;
+  }
+
+  h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.1; letter-spacing: -.02em; }
+
+  .lede { margin: 12px 0 0; max-width: 62ch; color: var(--muted); font-size: 16px; }
+
+  /* ---------- summary ---------- */
+
+  .summary {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 24px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 18px;
+  }
+
+  .tally { display: flex; gap: 18px; flex-wrap: wrap; }
+
+  .tally-item { display: flex; flex-direction: column; min-width: 62px; }
+
+  .tally-num {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
+
+  .tally-label {
+    font-size: 10px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 500;
+  }
+
+  .tally-item.pass .tally-num { color: var(--pass); }
+  .tally-item.fail .tally-num { color: var(--fail); }
+  .tally-item.block .tally-num { color: var(--block); }
+
+  .meter { flex: 1; min-width: 180px; display: flex; flex-direction: column; gap: 6px; }
+
+  .meter-track {
+    height: 8px;
+    border-radius: 99px;
+    background: var(--line-soft);
+    overflow: hidden;
+    display: flex;
+  }
+
+  .meter-fill { height: 100%; transition: width .3s ease; }
+  .meter-fill.pass { background: var(--pass); }
+  .meter-fill.fail { background: var(--fail); }
+  .meter-fill.block { background: var(--block); }
+
+  .meter-caption { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  .summary-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* ---------- buttons ---------- */
+
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 7px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink-2);
+    padding: 7px 12px;
+    transition: background .15s, border-color .15s, color .15s;
+  }
+
+  button:hover { background: var(--surface-2); border-color: var(--faint); }
+
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 500;
+  }
+
+  :root[data-theme="dark"] button.primary,
+  :root:not([data-theme="light"]) button.primary { color: #1a1207; }
+
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) button.primary { color: #fff; }
+  }
+
+  button.primary:hover { filter: brightness(1.06); }
+
+  /* ---------- layout ---------- */
+
+  .cols { display: grid; grid-template-columns: 216px 1fr; gap: 32px; align-items: start; }
+
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+
+  nav.rail { position: sticky; top: 116px; display: flex; flex-direction: column; gap: 4px; }
+
+  @media (max-width: 900px) { nav.rail { position: static; } }
+
+  .rail-title {
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+
+  .rail-link {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 8px;
+    align-items: center;
+    padding: 8px 10px;
+    border-radius: 8px;
+    text-decoration: none;
+    color: var(--ink-2);
+    font-size: 13px;
+    border: 1px solid transparent;
+  }
+
+  .rail-link:hover { background: var(--surface); border-color: var(--line); }
+
+  .rail-count {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .rail-bar { grid-column: 1 / -1; height: 3px; border-radius: 99px; background: var(--line-soft); overflow: hidden; }
+  .rail-bar > i { display: block; height: 100%; background: var(--accent); transition: width .3s ease; }
+
+  /* ---------- sections ---------- */
+
+  section.module { margin-bottom: 40px; scroll-margin-top: 120px; }
+
+  .module-head { margin-bottom: 14px; }
+
+  .module-head h2 {
+    font-size: 22px;
+    letter-spacing: -.01em;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .module-tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .1em;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-line);
+    padding: 2px 7px;
+    border-radius: 5px;
+  }
+
+  .module-blurb { color: var(--muted); font-size: 14px; margin: 6px 0 0; max-width: 68ch; }
+
+  /* ---------- UI guide ---------- */
+
+  .guide {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px;
+    margin-bottom: 18px;
+    overflow-x: auto;
+  }
+
+  .guide-label {
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 600;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .guide-label::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+  /* miniature app chrome used in the guides */
+  .mini {
+    font-size: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--surface-2);
+    min-width: 520px;
+  }
+
+  .mini-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .mini-logo {
+    width: 15px; height: 15px; border-radius: 3px;
+    background: var(--link);
+    color: #fff; font-size: 10px; font-weight: 700;
+    display: grid; place-items: center;
+  }
+
+  .mini-body { display: grid; grid-template-columns: 92px 1fr; min-height: 130px; }
+
+  .mini-nav { border-right: 1px solid var(--line); padding: 8px 0; display: flex; flex-direction: column; }
+
+  .mini-nav span {
+    padding: 5px 10px; color: var(--muted); font-size: 11px;
+  }
+
+  .mini-nav span.on { color: var(--accent); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
+
+  .mini-main { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+
+  .mini-row {
+    display: grid; gap: 8px; align-items: center;
+    padding: 6px 8px; border-radius: 6px; background: var(--surface);
+    border: 1px solid var(--line-soft);
+  }
+
+  .chip {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 1px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+
+  .chip.prospect { background: var(--accent-soft); color: var(--accent); }
+  .chip.client { background: var(--pass-soft); color: var(--pass); }
+  .chip.opp { background: var(--block-soft); color: var(--block); }
+  .chip.act { background: var(--fail-soft); color: var(--fail); }
+  .chip.won { background: var(--pass-soft); color: var(--pass); }
+  .chip.crm { background: var(--block-soft); color: var(--block); }
+
+  .callout {
+    position: relative;
+    padding-left: 26px;
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  .callout-num {
+    position: absolute; left: 0; top: 1px;
+    width: 17px; height: 17px; border-radius: 99px;
+    background: var(--accent); color: #fff;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10px; font-weight: 600;
+    display: grid; place-items: center;
+  }
+
+  :root[data-theme="dark"] .callout-num,
+  :root:not([data-theme="light"]) .callout-num { color: #1a1207; }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) .callout-num { color: #fff; }
+  }
+
+  .pin {
+    display: inline-grid; place-items: center;
+    width: 16px; height: 16px; border-radius: 99px;
+    background: var(--accent); color: #fff;
+    font-family: "IBM Plex Mono", monospace; font-size: 9px; font-weight: 600;
+    vertical-align: middle;
+  }
+  :root[data-theme="dark"] .pin,
+  :root:not([data-theme="light"]) .pin { color: #1a1207; }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) .pin { color: #fff; }
+  }
+
+  /* ---------- cases ---------- */
+
+  .case {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    overflow: hidden;
+    transition: border-color .15s;
+  }
+
+  .case[data-status="pass"] { border-left-color: var(--pass); }
+  .case[data-status="fail"] { border-left-color: var(--fail); }
+  .case[data-status="block"] { border-left-color: var(--block); }
+
+  .case-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 13px 16px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .case-head:hover { background: var(--surface-2); }
+
+  .case-id {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--faint);
+    padding-top: 2px;
+    white-space: nowrap;
+  }
+
+  .case-title { flex: 1; font-size: 14.5px; color: var(--ink); font-weight: 500; }
+
+  .case-status {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: var(--line-soft);
+    color: var(--faint);
+    white-space: nowrap;
+  }
+
+  .case[data-status="pass"] .case-status { background: var(--pass-soft); color: var(--pass); }
+  .case[data-status="fail"] .case-status { background: var(--fail-soft); color: var(--fail); }
+  .case[data-status="block"] .case-status { background: var(--block-soft); color: var(--block); }
+
+  .caret { color: var(--faint); font-size: 11px; transition: transform .2s; padding-top: 3px; }
+  .case.open .caret { transform: rotate(90deg); }
+
+  .case-body { display: none; padding: 0 16px 16px; border-top: 1px solid var(--line-soft); }
+  .case.open .case-body { display: block; }
+
+  .case-body h4 {
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 600;
+    margin: 16px 0 8px;
+  }
+
+  ol.steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; }
+  ol.steps li { font-size: 13.5px; }
+
+  .expect {
+    background: var(--surface-2);
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+    padding: 11px 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .expect div { font-size: 13.5px; display: flex; gap: 8px; }
+  .expect div::before { content: "\002192"; color: var(--accent); flex-shrink: 0; }
+
+  .expect code, .steps code, .module-blurb code, .note code {
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-line);
+    color: var(--ink);
+    padding: 0 4px;
+    border-radius: 4px;
+    font-size: .88em;
+  }
+
+  .verdict { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 16px; }
+
+  .verdict button[aria-pressed="true"][data-set="pass"] { background: var(--pass); border-color: var(--pass); color: #fff; }
+  .verdict button[aria-pressed="true"][data-set="fail"] { background: var(--fail); border-color: var(--fail); color: #fff; }
+  .verdict button[aria-pressed="true"][data-set="block"] { background: var(--block); border-color: var(--block); color: #fff; }
+
+  :root[data-theme="dark"] .verdict button[aria-pressed="true"],
+  :root:not([data-theme="light"]) .verdict button[aria-pressed="true"] { color: #10151b; }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) .verdict button[aria-pressed="true"] { color: #fff; }
+  }
+
+  textarea {
+    width: 100%;
+    margin-top: 10px;
+    min-height: 62px;
+    resize: vertical;
+    font-family: inherit;
+    font-size: 13px;
+    padding: 9px 11px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--ink-2);
+  }
+
+  textarea::placeholder { color: var(--faint); }
+
+  /* ---------- notes / setup ---------- */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 18px;
+  }
+
+  .note h3 { font-size: 15px; margin-bottom: 8px; }
+
+  .note ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+
+  pre.snippet {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--ink-2);
+    margin: 10px 0 0;
+  }
+
+  .warn {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 0 8px 8px 0;
+    padding: 12px 16px;
+    font-size: 13.5px;
+    color: var(--ink-2);
+    margin-bottom: 18px;
+  }
+
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; align-items: center; }
+  .filters button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); font-weight: 500; }
+  .case.hidden { display: none; }
+
+  .toast {
+    position: fixed;
+    bottom: 22px;
+    left: 50%;
+    transform: translateX(-50%) translateY(120%);
+    background: var(--ink);
+    color: var(--bg);
+    padding: 10px 18px;
+    border-radius: 99px;
+    font-size: 13px;
+    z-index: 100;
+    transition: transform .25s ease;
+    box-shadow: var(--shadow);
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+
+  footer.foot {
+    border-top: 1px solid var(--line);
+    margin-top: 40px;
+    padding-top: 20px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+</style>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="eyebrow">Manual QA &#183; Prototype build</div>
+    <h1>MyWealth Test Runbook</h1>
+    <p class="lede">
+      A guided pass through every screen of the MyWealth CRM prototype. Work top to bottom, mark each
+      case, and export your results when you reach the end. Progress saves in this browser as you go.
+    </p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="summary">
+    <div class="tally">
+      <div class="tally-item"><span class="tally-num" id="t-total">0</span><span class="tally-label">Cases</span></div>
+      <div class="tally-item pass"><span class="tally-num" id="t-pass">0</span><span class="tally-label">Pass</span></div>
+      <div class="tally-item fail"><span class="tally-num" id="t-fail">0</span><span class="tally-label">Fail</span></div>
+      <div class="tally-item block"><span class="tally-num" id="t-block">0</span><span class="tally-label">Blocked</span></div>
+    </div>
+    <div class="meter">
+      <div class="meter-track">
+        <span class="meter-fill pass" id="m-pass" style="width:0%"></span>
+        <span class="meter-fill fail" id="m-fail" style="width:0%"></span>
+        <span class="meter-fill block" id="m-block" style="width:0%"></span>
+      </div>
+      <span class="meter-caption" id="m-caption">Not started</span>
+    </div>
+    <div class="summary-actions">
+      <button id="btn-export" class="primary">Export results</button>
+      <button id="btn-reset">Reset</button>
+    </div>
+  </div>
+
+  <div class="warn">
+    <strong>Read first.</strong> This build keeps everything in memory &#8212; <strong>refreshing the page wipes
+    all your changes and restores the seed data.</strong> That is expected behaviour, not a bug. Finish a
+    module before refreshing, and use a refresh deliberately to get back to a clean slate.
+  </div>
+
+  <div class="cols">
+    <nav class="rail" id="rail" aria-label="Modules"></nav>
+
+    <main>
+      <div class="note">
+        <h3>Before you start</h3>
+        <ul>
+          <li>Run <code>npm install</code> once, then <code>npm run dev</code>, and open <a href="http://localhost:3000">localhost:3000</a>.</li>
+          <li>The app is pinned to a fixed "today" of <strong>26 Aug 2026</strong>. That is why tasks read
+            <em>710 days overdue</em> and never drift &#8212; treat those numbers as stable expected values.</li>
+          <li>CRM workflows use prototype role selection, in-memory data, and simulated AI. The separate PULSE chat integration is outside this runbook.</li>
+          <li>Use a desktop-width window (1280px or wider) unless a case says otherwise.</li>
+          <li>Keep the browser console open. A clean console is part of the final pass.</li>
+        </ul>
+      </div>
+
+      <div class="filters">
+        <span style="font-size:12px;color:var(--faint);letter-spacing:.1em;text-transform:uppercase;font-weight:600;margin-right:4px;">Show</span>
+        <button data-filter="all" aria-pressed="true">All</button>
+        <button data-filter="todo" aria-pressed="false">Not yet run</button>
+        <button data-filter="fail" aria-pressed="false">Failures only</button>
+        <button id="btn-expand" style="margin-left:auto">Expand all</button>
+      </div>
+
+      <div id="modules"></div>
+
+      <footer class="foot">
+        <p>
+          The miniature screens above each module are hand-drawn maps of the real layout, not captured
+          screenshots &#8212; they exist to help you find things, so trust the running app over the drawing if
+          the two ever disagree.
+        </p>
+      </footer>
+    </main>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TEST_CSV = [
+    "Full Name,E-mail Address,Handphone,DOB,IC Number,Segment,Remarks",
+    "Lim Zhi Wei,zhiwei.lim@example.com,91112222,1988-02-14,S8802345C,Client,vip",
+    "Nur Aisyah,aisyah@example.com,92223333,1993-07-09,S9312345D,Prospect,",
+    "NoPhone Person,nophone@example.com,,1990-01-01,,Prospect,"
+  ].join("\n");
+
+  /* ---------------- guides ---------------- */
+
+  var G = {};
+
+  G.nav =
+    '<div class="mini">' +
+      '<div class="mini-top"><span class="mini-logo">P</span><strong style="color:var(--ink)">MyWealth</strong>' +
+      '<span style="margin-left:auto;color:var(--faint)">S &nbsp;\u23FB</span></div>' +
+      '<div class="mini-body">' +
+        '<div class="mini-nav">' +
+          '<span>Home</span><span>Contacts</span><span class="on">Tasks</span>' +
+          '<span>CRM Pipeline</span><span>Settings</span></div>' +
+        '<div class="mini-main">' +
+          '<div style="color:var(--ink);font-weight:600;font-size:14px">Tasks</div>' +
+          '<div style="display:flex;gap:14px;border-bottom:1px solid var(--line);padding-bottom:5px">' +
+            '<span style="color:var(--accent);font-weight:600;box-shadow:inset 0 -2px 0 var(--accent)">To-Do (180)</span>' +
+            '<span style="color:var(--muted)">Done (3)</span></div>' +
+          '<div class="mini-row" style="grid-template-columns:1fr 60px 74px">' +
+            '<span style="color:var(--ink);font-weight:600">Client Agreement Form Collection</span>' +
+            '<span class="chip crm">CRM</span>' +
+            '<span style="color:var(--fail)">710 days overdue</span></div>' +
+        '</div></div></div>' +
+    '<div class="callout"><span class="callout-num">1</span>Five nav items only. The active one turns orange with an underline.</div>' +
+    '<div class="callout"><span class="callout-num">2</span>Counts in the tab labels are live and must move when you complete or add tasks.</div>';
+
+  G.contacts =
+    '<div class="mini">' +
+      '<div class="mini-main" style="min-width:520px">' +
+        '<div style="display:flex;gap:8px">' +
+          '<div class="mini-row" style="flex:1;display:block"><div style="color:var(--muted);font-size:10px">Bookmark Contacts</div><div style="color:var(--ink);font-size:17px;font-weight:600">25</div><div style="color:var(--faint);font-size:10px">out of total of 75 contacts</div></div>' +
+          '<div class="mini-row" style="flex:1;display:block"><div style="color:var(--muted);font-size:10px">Need Attention</div><div style="color:var(--ink);font-size:17px;font-weight:600">9</div><div style="color:var(--fail);font-size:10px">\u25BC 10%</div></div>' +
+          '<div class="mini-row" style="flex:1;display:block"><div style="color:var(--muted);font-size:10px">New Prospects</div><div style="color:var(--ink);font-size:17px;font-weight:600">28</div><div style="color:var(--pass);font-size:10px">\u25B2 10%</div></div>' +
+        '</div>' +
+        '<div class="mini-row" style="border-radius:99px;color:var(--faint)">Search &nbsp;<span style="margin-left:auto">\u1F50D</span></div>' +
+        '<div style="display:flex;gap:6px;align-items:center">' +
+          '<span class="mini-row" style="border-radius:99px;padding:3px 10px">All Labels \u2304</span>' +
+          '<span style="margin-left:auto;background:var(--accent);color:#fff;padding:3px 9px;border-radius:5px">+ Add Contact</span>' +
+          '<span class="mini-row" style="padding:3px 9px">\u2B06 Upload Contacts</span></div>' +
+        '<div class="mini-row" style="grid-template-columns:14px 1fr 1fr 84px 62px 78px;color:var(--faint);font-size:10px">' +
+          '<span>\u2610</span><span>Name \u21C5</span><span>Email \u21C5</span><span>Contact Number</span><span>Labels \u21C5</span><span>Pipeline Status</span></div>' +
+        '<div class="mini-row" style="grid-template-columns:14px 1fr 1fr 84px 62px 78px">' +
+          '<span>\u2610</span><span style="color:var(--link)">Steven</span><span style="color:var(--muted)">stevn@phillip\u2026</span>' +
+          '<span style="color:var(--muted)">+65 92988104</span><span class="chip prospect">Prospect</span>' +
+          '<span style="color:var(--muted)">Opportunities</span></div>' +
+      '</div></div>' +
+    '<div class="callout"><span class="callout-num">1</span>Three summary cards read from the live list, so they move when you add or import contacts.</div>' +
+    '<div class="callout"><span class="callout-num">2</span>Name, Email and Labels headers sort. Contact Number does not.</div>' +
+    '<div class="callout"><span class="callout-num">3</span>The last column shows the pipeline stage, or an <em>Add to pipeline</em> link when the contact is not on the board.</div>';
+
+  G.wizard =
+    '<div class="mini"><div class="mini-main" style="min-width:520px;align-items:center">' +
+      '<div style="display:flex;align-items:center;gap:8px;font-size:11px">' +
+        '<span style="background:var(--link);color:#fff;width:17px;height:17px;border-radius:99px;display:grid;place-items:center">1</span>' +
+        '<span style="color:var(--link);font-weight:600">Upload</span>' +
+        '<span style="width:26px;height:1px;background:var(--line)"></span>' +
+        '<span style="background:var(--line);color:var(--muted);width:17px;height:17px;border-radius:99px;display:grid;place-items:center">2</span>' +
+        '<span style="color:var(--muted)">Match</span>' +
+        '<span style="width:26px;height:1px;background:var(--line)"></span>' +
+        '<span style="background:var(--line);color:var(--muted);width:17px;height:17px;border-radius:99px;display:grid;place-items:center">3</span>' +
+        '<span style="color:var(--muted)">Complete</span></div>' +
+      '<div style="color:var(--ink);font-weight:600;font-size:14px">Upload Contacts</div>' +
+      '<div style="background:var(--accent-soft);border-radius:6px;padding:8px;width:100%;text-align:center;color:var(--muted);font-size:11px">' +
+        'Name &nbsp;\u00B7&nbsp; Email &nbsp;\u00B7&nbsp; Phone Number<br><span style="font-size:10px">the three essential fields</span></div>' +
+      '<div style="border:1px dashed var(--line);border-radius:6px;padding:14px;width:100%;text-align:center;color:var(--muted);font-size:11px">' +
+        '\u2B06 Drag and drop or <span style="border:1px solid var(--line);padding:1px 6px;border-radius:4px">Choose File</span></div>' +
+      '<div style="display:flex;width:100%;justify-content:space-between;font-size:11px">' +
+        '<span style="color:var(--accent)">CANCEL</span>' +
+        '<span style="background:var(--line);color:var(--faint);padding:2px 10px;border-radius:5px">NEXT</span></div>' +
+    '</div></div>' +
+    '<div class="callout"><span class="callout-num">1</span>NEXT stays disabled until a file parses successfully.</div>' +
+    '<div class="callout"><span class="callout-num">2</span>Step 2 lists every column in your file beside the field it was matched to, with sample data.</div>';
+
+  G.meeting =
+    '<div class="mini"><div class="mini-main" style="min-width:520px">' +
+      '<div style="text-align:center;color:var(--ink);font-weight:600;font-size:14px">AI Meeting Summary</div>' +
+      '<div style="background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:11px;color:var(--muted)">' +
+        '\u2605 <span style="color:var(--link);font-weight:600">AI Extracted Data</span> Review and fine-tune all automated outputs.</div>' +
+      '<div style="border:1px solid var(--line);border-radius:6px;padding:10px;background:var(--surface);display:flex;flex-direction:column;gap:7px">' +
+        '<div style="color:var(--ink);font-weight:600;font-size:12px">Finalized Whole Life Critical Illness Protection Plan <span style="color:var(--faint);font-weight:400">@26 Aug 2026</span> <span style="float:right;color:var(--faint)">\u270E</span></div>' +
+        '<div style="border-left:3px solid var(--accent);padding-left:7px;color:var(--muted);font-size:11px">Summary</div>' +
+        '<div style="border-left:3px solid var(--accent);padding-left:7px;color:var(--muted);font-size:11px">To-Do</div>' +
+        '<div class="mini-row" style="grid-template-columns:14px 1fr 58px 44px 14px;background:var(--surface-2)">' +
+          '<span style="color:var(--accent)">\u2611</span>' +
+          '<span style="color:var(--ink);font-weight:600">Submit Signed Application</span>' +
+          '<span style="color:var(--link)">Read more</span><span class="chip crm">CRM</span><span style="color:var(--faint)">\u270E</span></div>' +
+      '</div>' +
+      '<div style="text-align:right"><span style="background:var(--accent);color:#fff;padding:3px 9px;border-radius:5px;font-size:11px">SAVE TO ENGAGEMENT TIMELINE</span></div>' +
+    '</div></div>' +
+    '<div class="callout"><span class="callout-num">1</span>Five tasks are generated. The checkbox decides whether that task is created \u2014 unchecked ones are discarded.</div>' +
+    '<div class="callout"><span class="callout-num">2</span>The pencil on each row opens <em>Edit To-Do Task</em>; the one by the title edits the title inline.</div>';
+
+  G.pipeline =
+    '<div class="mini"><div class="mini-main" style="min-width:520px">' +
+      '<div style="display:flex;gap:14px;border-bottom:1px solid var(--line);padding-bottom:5px;font-size:11px">' +
+        '<span style="color:var(--link);font-weight:600;box-shadow:inset 0 -2px 0 var(--link)">CRM Pipeline</span>' +
+        '<span style="color:var(--muted)">Archive</span></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">' +
+        '<div style="border:1px solid var(--line);border-radius:6px;padding:7px;background:var(--surface)">' +
+          '<div style="color:var(--ink);font-weight:600;font-size:11px;margin-bottom:6px">Opportunities (1)</div>' +
+          '<div style="border:1px solid var(--line);border-radius:5px;padding:6px;font-size:10px">' +
+            '<div style="color:var(--ink);font-weight:600">Steven <span style="float:right;color:var(--faint)">\u28FF</span></div>' +
+            '<div style="margin:4px 0"><span class="chip prospect">Prospect</span> <span class="chip opp">Opportunities</span></div>' +
+            '<div style="color:var(--faint)">Case ID</div><div style="color:var(--link);font-weight:600">4</div></div></div>' +
+        '<div style="border:1px solid var(--line);border-radius:6px;padding:7px;background:var(--surface)">' +
+          '<div style="color:var(--ink);font-weight:600;font-size:11px">Activities (1)</div></div>' +
+        '<div style="border:1px dashed var(--accent);border-radius:6px;padding:7px;background:var(--accent-soft)">' +
+          '<div style="color:var(--ink);font-weight:600;font-size:11px">Closed (0)</div>' +
+          '<div style="color:var(--accent);font-size:10px;margin-top:14px;text-align:center">Drop here</div></div>' +
+      '</div></div></div>' +
+    '<div class="callout"><span class="callout-num">1</span>Grab a card anywhere on its body and drag. The target column turns orange while you hover it.</div>' +
+    '<div class="callout"><span class="callout-num">2</span>Dropping into <strong>Closed</strong> always asks Won or Lost first. Cancelling must leave the card where it started.</div>';
+
+  /* ---------------- test cases ---------------- */
+
+  var MODULES = [
+    {
+      id: "nav", tag: "NAV", name: "Shell & navigation",
+      blurb: "The frame every other module sits inside. Run this first \u2014 if navigation is broken, later failures will be misleading.",
+      guide: G.nav,
+      cases: [
+        { id: "NAV-01", title: "Sidebar shows exactly five destinations",
+          steps: ["Load the app.", "Read the left sidebar top to bottom."],
+          expect: ["Home, Contacts, Tasks, CRM Pipeline, Settings \u2014 in that order.",
+                   "No Campaigns entry and no Product entry. Their removal is intentional."] },
+        { id: "NAV-02", title: "Active navigation item is marked",
+          steps: ["Click each sidebar item in turn."],
+          expect: ["The active item's label and icon turn orange and gain an underline.",
+                   "Exactly one item is marked at a time."] },
+        { id: "NAV-03", title: "Home summarises the book of business",
+          steps: ["Open Home."],
+          expect: ["Open Tasks <code>180</code> with <code>133 overdue</code>.",
+                   "Active Deals <code>2</code>. Total Contacts <code>75</code> with <code>28 prospects</code>.",
+                   "Highest Urgency Tasks lists five rows, most overdue first.",
+                   "Priority Relationship Review lists Steven and Joseph Rahman."] },
+        { id: "NAV-04", title: "Home shortcuts navigate",
+          steps: ["Click <em>Go to Tasks</em>.", "Return Home, then click <em>Go to Pipeline</em>.",
+                  "Return Home and click a name under Priority Relationship Review."],
+          expect: ["Each lands on the matching screen.",
+                   "Clicking a name opens that contact's detail page, not just the list."] },
+        { id: "NAV-05", title: "Settings renders as a placeholder",
+          steps: ["Open Settings."],
+          expect: ["Four cards: Profile, Organisation, Notifications, Compliance.",
+                   "Copy states plainly that configuration is not wired up. Nothing here needs to work."] }
+      ]
+    },
+    {
+      id: "contacts", tag: "CON", name: "Contacts",
+      blurb: "The registry, its filters, and the contact detail page. Labels were deliberately cut down to two \u2014 checking that nothing else leaks through is part of the job.",
+      guide: G.contacts,
+      cases: [
+        { id: "CON-01", title: "Summary cards match the list",
+          steps: ["Open Contacts.", "Compare the three cards against the table."],
+          expect: ["Bookmark Contacts <code>25</code>, captioned <code>out of total of 75 contacts</code>.",
+                   "Need Attention shows a red \u25BC 10%. New Prospects shows a green \u25B2 10%.",
+                   "The totals move if you later add or import a contact."] },
+        { id: "CON-02", title: "Only two labels exist anywhere",
+          steps: ["Scan the Labels column across several pages of contacts.",
+                  "Open the All Labels dropdown.",
+                  "Open any contact and check the LABEL dropdown."],
+          expect: ["Only <code>Prospect</code> and <code>Client</code> ever appear.",
+                   "No <em>Warm lead</em> and no <em>VIP</em> \u2014 these were removed and must not resurface."] },
+        { id: "CON-03", title: "Search matches name and email",
+          steps: ["Type <code>chong</code> into the search field.", "Clear it and type <code>@yahoo</code>."],
+          expect: ["The name search matches contacts whose name contains the text.",
+                   "The email search matches on the address, proving both fields are searched.",
+                   "The footer count under the table updates to match."] },
+        { id: "CON-04", title: "Label filter narrows the list",
+          steps: ["Choose <em>Client</em> from the All Labels dropdown.", "Switch to <em>Prospect</em>, then back to All Labels."],
+          expect: ["Only rows with the chosen label remain.",
+                   "The button label reflects the current choice.",
+                   "All Labels restores the full list."] },
+        { id: "CON-05", title: "Sorting toggles direction",
+          steps: ["Click the Name header, then click it again.", "Repeat for Email and Labels."],
+          expect: ["First click sorts A\u2192Z, second click sorts Z\u2192A.",
+                   "The active sort arrow is orange; the others stay grey.",
+                   "Contact Number is not sortable, by design."] },
+        { id: "CON-06", title: "Row selection works",
+          steps: ["Tick a few individual checkboxes.", "Tick the header checkbox.", "Untick the header checkbox."],
+          expect: ["The line under the table reports how many are selected.",
+                   "The header box selects and clears every visible row."] },
+        { id: "CON-07", title: "Phone numbers render as code plus number",
+          steps: ["Look at the Contact Number column, including rows with no number on file."],
+          expect: ["Numbers read as <code>+65 92988104</code> \u2014 dialling code, space, number.",
+                   "Missing numbers show an en dash <code>\u2013</code>, never blank and never <code>\\N</code>."] },
+        { id: "CON-08", title: "Add Contact enforces its required fields",
+          steps: ["Click <em>Add Contact</em>.", "Press SAVE with everything empty.",
+                  "Fill in a name, put <code>notanemail</code> in Email, press SAVE."],
+          expect: ["Three errors appear: name, email and phone are all required.",
+                   "The malformed email is rejected with its own message.",
+                   "The form does not close and nothing is created."] },
+        { id: "CON-09", title: "Add Contact creates a contact",
+          steps: ["Fill Name, Email and Phone. Optionally add DOB and NRIC.", "Press SAVE."],
+          expect: ["The dialog closes and the new contact appears at the top of the list.",
+                   "It is labelled <code>Prospect</code>.",
+                   "The Bookmark Contacts caption total rises by one, from 75 to 76."] },
+        { id: "CON-10", title: "Contact detail header is complete",
+          steps: ["Open <strong>Steven</strong> from the list."],
+          expect: ["Breadcrumb reads Home / Contacts / Steven, and both links go back.",
+                   "Name, a Prospect chip, LABEL and PIPELINE STATUS dropdowns, Edit Contact and a pipeline button.",
+                   "Because Steven is already on the board, the button reads <em>In Pipeline</em> and is disabled."] },
+        { id: "CON-11", title: "Only two tabs on the detail page",
+          steps: ["Look at the tab strip on the contact detail page."],
+          expect: ["<code>Engagement Timeline</code> and <code>Contact Info</code>, and nothing else.",
+                   "There is no AI Insight tab \u2014 it was removed and must not return."] },
+        { id: "CON-12", title: "Contact Info shows the full profile",
+          steps: ["Open the Contact Info tab on Steven, then on a contact further down the list."],
+          expect: ["Four sections: Personal Information, Residential Address, Employment Details, Primary Contact.",
+                   "Every empty field shows <code>\u2013</code>. Yes/No fields read Yes or No.",
+                   "No field anywhere displays the raw import artifact <code>\\N</code>."] },
+        { id: "CON-13", title: "Notes can be edited and cancelled",
+          steps: ["Click Edit Notes, type something, press Save.",
+                  "Click Edit Notes again, change the text, press Cancel."],
+          expect: ["Saved text replaces the <em>No notes yet.</em> placeholder.",
+                   "Cancel restores the previously saved text, discarding the edit."] },
+        { id: "CON-14", title: "Changing the label updates everything",
+          steps: ["On Steven, switch the LABEL dropdown to <em>Client</em>.",
+                  "Go back to the Contacts list, then look at the Pipeline board."],
+          expect: ["The chip beside the name changes immediately.",
+                   "The list row and Steven's pipeline card both show the new label."] }
+      ]
+    },
+    {
+      id: "upload", tag: "UPL", name: "Upload Contacts wizard",
+      blurb: "A three-step import. The column matching is a real heuristic run against your actual file headers, so it is worth trying to break it with awkward names.",
+      guide: G.wizard,
+      cases: [
+        { id: "UPL-01", title: "Step 1 presents the requirements",
+          steps: ["From Contacts, click <em>Upload Contacts</em>."],
+          expect: ["A full-screen wizard with the stepper Upload \u2192 Match \u2192 Complete.",
+                   "Cards for the three essential fields: Name, Email, Phone Number.",
+                   "A drop zone stating Excel or CSV and a 10 MB cap, plus a template download.",
+                   "NEXT is greyed out until a file is accepted."] },
+        { id: "UPL-02", title: "Template downloads",
+          steps: ["Click <em>Download</em> beside Contacts Template.", "Open the saved file."],
+          expect: ["A CSV downloads with a header row and two sample contacts.",
+                   "Its headers are the field names the importer expects."] },
+        { id: "UPL-03", title: "Wrong file types are refused",
+          steps: ["Choose an image or PDF instead of a spreadsheet."],
+          expect: ["A readable error explains that Excel or CSV is required.",
+                   "NEXT stays disabled and the wizard does not advance."],
+          note: true },
+        { id: "UPL-04", title: "A valid file is parsed and summarised",
+          steps: ["Save the sample CSV from the button below as <code>contacts.csv</code>.",
+                  "Drop it into the zone, or use Choose File."],
+          expect: ["The zone reports the file name plus <code>3 rows \u00B7 7 columns detected</code>.",
+                   "A <em>Choose a different file</em> link appears.",
+                   "NEXT becomes active."],
+          csv: true },
+        { id: "UPL-05", title: "Messy headers are matched correctly",
+          steps: ["Click NEXT and wait for matching to finish."],
+          expect: ["<code>Full Name</code> \u2192 Name, <code>E-mail Address</code> \u2192 Email, <code>Handphone</code> \u2192 Phone Number.",
+                   "<code>DOB</code> \u2192 Date of Birth, <code>IC Number</code> \u2192 NRIC/Passport, <code>Segment</code> \u2192 Label.",
+                   "<code>Remarks</code> is flagged <em>no match found</em> and set to Do not import.",
+                   "Sample values from your file are shown beside each column."] },
+        { id: "UPL-06", title: "A field can only be claimed once",
+          steps: ["Change the <code>Remarks</code> row to <em>Email</em>."],
+          expect: ["The <code>E-mail Address</code> row flips to Do not import automatically.",
+                   "Two columns can never map to the same field."] },
+        { id: "UPL-07", title: "Missing required fields block the import",
+          steps: ["Set the Name column to <em>Do not import</em>."],
+          expect: ["A red banner names what is still needed.",
+                   "The IMPORT button is disabled until you restore it."] },
+        { id: "UPL-08", title: "Import applies the row rules",
+          steps: ["Restore a correct mapping, then press IMPORT."],
+          expect: ["Step 3 reports <code>2 contacts imported</code>.",
+                   "It also reports <code>1 row was skipped</code> \u2014 the third row has no phone number.",
+                   "The stepper shows Upload and Match ticked."] },
+        { id: "UPL-09", title: "Imported contacts land in the list",
+          steps: ["Press DONE and search the list for <code>Zhi Wei</code> and <code>Aisyah</code>."],
+          expect: ["Both appear with their email, phone and label from the file.",
+                   "<code>Segment</code> of <em>Client</em> became the Client label.",
+                   "NoPhone Person was not created."] },
+        { id: "UPL-10", title: "BACK preserves your file",
+          steps: ["Open the wizard, upload the CSV, press NEXT, then press BACK."],
+          expect: ["Step 1 still shows the parsed file and its row count.",
+                   "NEXT returns you to matching without re-uploading."] }
+      ]
+    },
+    {
+      id: "meeting", tag: "MTG", name: "Meeting summary flow",
+      blurb: "Four stages: input, processing, review, save. The generated content is scripted, so the same summary appears every time \u2014 what you are testing is the editing and the hand-off into Tasks.",
+      guide: G.meeting,
+      cases: [
+        { id: "MTG-01", title: "Input stage gates the generate button",
+          steps: ["Open a contact, then click <em>New Meeting Summary</em>.",
+                  "Look at GENERATE SUMMARY before typing anything."],
+          expect: ["A date field defaulted to 26 Aug 2026, a drop zone, and a notes box.",
+                   "GENERATE SUMMARY is disabled until you attach a file or type notes."] },
+        { id: "MTG-02", title: "Attached files are listed and removable",
+          steps: ["Attach two files of any type.", "Remove one with its \u00D7 button."],
+          expect: ["Each file shows its name and size in MB.",
+                   "Removing one leaves the other untouched."] },
+        { id: "MTG-03", title: "Processing screen runs to completion",
+          steps: ["Type a sentence of notes and press GENERATE SUMMARY."],
+          expect: ["Heading <em>Generating meeting summary</em> with explanatory copy beneath.",
+                   "<code>Processing with AI... N%</code> climbs from 0 to 100 and the bar tracks it.",
+                   "The close button is hidden while processing, then the review screen appears."] },
+        { id: "MTG-04", title: "Review screen is fully populated",
+          steps: ["Read the review screen top to bottom."],
+          expect: ["Title <em>AI Meeting Summary</em> and a blue <em>AI Extracted Data</em> banner.",
+                   "Card titled <em>Finalized Whole Life Critical Illness Protection Plan</em> with <code>@26 Aug 2026</code>.",
+                   "Exactly <strong>five</strong> to-do rows, each ticked by default.",
+                   "Your typed notes appear as the summary body."] },
+        { id: "MTG-05", title: "No task is due before it starts",
+          steps: ["Read the date line under each of the five tasks."],
+          expect: ["Every row's second date is the same as or later than the first.",
+                   "This is a deliberate difference from the original design, which allowed the reverse."] },
+        { id: "MTG-06", title: "Read more expands a description",
+          steps: ["Click <em>Read more</em> on a truncated row, then <em>Show less</em>."],
+          expect: ["The full description appears, then collapses back to one line.",
+                   "Other rows are unaffected."] },
+        { id: "MTG-07", title: "A generated task can be edited",
+          steps: ["Click the pencil on the first task.",
+                  "Change the title, switch Task Type, adjust the dates and description, press SAVE."],
+          expect: ["The dialog is titled <em>Edit To-Do Task</em> with Title, Type, Start Date, Due Date, Description.",
+                   "Every change is reflected in the row behind it, including the type chip."] },
+        { id: "MTG-08", title: "Invalid dates are rejected in the editor",
+          steps: ["Reopen the editor and set a due date earlier than the start date."],
+          expect: ["A message explains the due date cannot precede the start date.",
+                   "SAVE is disabled until you fix it."] },
+        { id: "MTG-09", title: "Unchecking excludes a task",
+          steps: ["Untick the fifth task.", "Read the line under the list."],
+          expect: ["It reads <code>4 of 5 tasks will be added to your task list</code>.",
+                   "The count follows every tick and untick."] },
+        { id: "MTG-10", title: "The summary title is editable",
+          steps: ["Click the pencil beside the card title, type a new title, click away."],
+          expect: ["The heading becomes an input and keeps your text once you leave it."] },
+        { id: "MTG-11", title: "Saving writes the timeline entry",
+          steps: ["Press SAVE TO ENGAGEMENT TIMELINE."],
+          expect: ["The flow closes and returns to the contact.",
+                   "A new entry sits at the top of the Engagement Timeline, dated 26 Aug 2026.",
+                   "It carries your title, your summary text, and a To-Do chip per kept task."] },
+        { id: "MTG-12", title: "Kept tasks become task rows",
+          steps: ["Note the To-Do count on Tasks before saving, then check it after.",
+                  "Search Tasks for one of the generated titles."],
+          expect: ["The To-Do count rises by the number you left ticked \u2014 four, not five.",
+                   "Each row is linked to the contact you ran the flow from.",
+                   "The unticked task was discarded and is nowhere to be found."] },
+        { id: "MTG-13", title: "An existing summary can be edited",
+          steps: ["On the timeline, press <em>Edit Summary</em> on any entry.",
+                  "Change the title and text, press SAVE."],
+          expect: ["The entry updates in place.",
+                   "Editing does <strong>not</strong> create more task rows \u2014 only the generate flow does."] }
+      ]
+    },
+    {
+      id: "tasks", tag: "TSK", name: "Tasks",
+      blurb: "A long, paginated list \u2014 183 rows across To-Do and Done. Most of the risk here is in filters interacting with pagination.",
+      guide: null,
+      cases: [
+        { id: "TSK-01", title: "Tabs carry live counts",
+          steps: ["Open Tasks and read both tab labels."],
+          expect: ["<code>To-Do (180)</code> and <code>Done (3)</code> on a clean load.",
+                   "Switching tabs swaps the rows and resets you to page 1."] },
+        { id: "TSK-02", title: "The most overdue task leads the list",
+          steps: ["Read the first row of the To-Do tab."],
+          expect: ["<em>Client Agreement Form Collection</em>, contact Jason Rahman.",
+                   "Due in reads <code>710 days overdue</code> in red.",
+                   "Rows run from most overdue down to furthest in the future."] },
+        { id: "TSK-03", title: "Empty cells use a dash",
+          steps: ["Find rows with no description and no contact."],
+          expect: ["Both show <code>\u2013</code> rather than an empty cell."] },
+        { id: "TSK-04", title: "Pagination walks the list",
+          steps: ["Click through pages 2, 3, then the last page.",
+                  "Use the \u2039 and \u203A arrows at both ends."],
+          expect: ["18 pages on a clean load, since 180 tasks show 10 per page.",
+                   "The current page is outlined in orange.",
+                   "\u2039 is disabled on page 1 and \u203A is disabled on the last page.",
+                   "Middle pages collapse to an ellipsis rather than wrapping."] },
+        { id: "TSK-05", title: "Search covers three fields",
+          steps: ["Search <code>KYC</code>, then a contact name, then a phrase from a description."],
+          expect: ["Title, description and contact name are all searched.",
+                   "The page resets to 1 and the page count shrinks with the results."] },
+        { id: "TSK-06", title: "Task Type filter is multi-select",
+          steps: ["Open Task Type and tick Compliance.", "Add Campaign.", "Untick both."],
+          expect: ["The button shows a count of active selections and turns orange.",
+                   "Ticking two types shows rows of either type.",
+                   "Only the ticked types appear in the table."] },
+        { id: "TSK-07", title: "Contacts filter has its own search",
+          steps: ["Open the Contacts filter and type into its search box.", "Tick one or two names."],
+          expect: ["The list narrows as you type.",
+                   "Only the chosen contacts' tasks remain in the table."] },
+        { id: "TSK-08", title: "Clear filters restores everything",
+          steps: ["With both filters active, press <em>Clear filters</em>."],
+          expect: ["The link only appears while a filter is active.",
+                   "Both filter buttons return to grey and the full list is back."] },
+        { id: "TSK-09", title: "Checkbox clicks do not open the row",
+          steps: ["Click a row's checkbox.", "Then click the row itself.", "Then click a contact name."],
+          expect: ["The checkbox only selects \u2014 the detail dialog must not open.",
+                   "Clicking the row body opens the task detail.",
+                   "Clicking the contact name navigates to that contact instead."] },
+        { id: "TSK-10", title: "Task detail shows both dates",
+          steps: ["Open any task from the list."],
+          expect: ["Contact, Task Type, Status, Start Date, Due Date, Due in, Description.",
+                   "An overdue task shows Due in in red.",
+                   "A task with no description says so rather than showing an empty area."] },
+        { id: "TSK-11", title: "Completing a task moves it",
+          steps: ["Open a task and press <em>Mark as done</em>.", "Switch to the Done tab."],
+          expect: ["To-Do drops by one and Done rises by one.",
+                   "The task appears under Done with its title struck through.",
+                   "Reopening it and pressing Reopen sends it back."] },
+        { id: "TSK-12", title: "Add Task validates its dates",
+          steps: ["Press <em>Add Task</em>.", "Set a due date before the start date.",
+                  "Fix the dates, fill in a title and contact, press SAVE."],
+          expect: ["The bad date pair is rejected with a message and SAVE is disabled.",
+                   "A valid task saves and appears in the list linked to the chosen contact.",
+                   "Leaving the contact empty is allowed and produces a task with no contact."] },
+        { id: "TSK-13", title: "A task can be edited",
+          steps: ["Open a task, press EDIT TASK, change the title and type, press SAVE."],
+          expect: ["The dialog is pre-filled with the existing values.",
+                   "The row reflects the changes afterwards."] }
+      ]
+    },
+    {
+      id: "pipeline", tag: "PIP", name: "Pipeline",
+      blurb: "A drag-and-drop board with a guarded Closed column. The cancel path in the Won/Lost prompt is the highest-risk behaviour on this screen \u2014 test it deliberately.",
+      guide: G.pipeline,
+      cases: [
+        { id: "PIP-01", title: "Board opens with the seeded cases",
+          steps: ["Open CRM Pipeline."],
+          expect: ["Opportunities (1) holding Steven; Activities (1) holding Joseph Rahman; Closed (0).",
+                   "Tabs read CRM Pipeline and Archive."] },
+        { id: "PIP-02", title: "Cards carry their case details",
+          steps: ["Read Steven's card."],
+          expect: ["Name, a label chip and a stage chip.",
+                   "<code>Case ID</code> with the number in blue.",
+                   "Start Date <code>Aug 26, 2026</code> and Due Date <code>Sep 25, 2026</code>."] },
+        { id: "PIP-03", title: "Cards drag between open stages",
+          steps: ["Drag Steven from Opportunities onto Activities.", "Drag him back."],
+          expect: ["Both column counts update as the card lands.",
+                   "No prompt appears for moves that do not involve Closed.",
+                   "The card being dragged dims while it moves."] },
+        { id: "PIP-04", title: "The drop target is signposted",
+          steps: ["Start dragging a card and hover each column without releasing."],
+          expect: ["The hovered column's border turns orange and its background tints.",
+                   "An empty column shows <em>Drop here</em>.",
+                   "The highlight follows you and clears when you leave."] },
+        { id: "PIP-05", title: "Closing asks Won or Lost",
+          steps: ["Drag a card onto the Closed column and release."],
+          expect: ["A dialog titled <em>Close this case</em> asks how the opportunity ended.",
+                   "Two choices: <code>Closed - Won</code> and <code>Closed - Lost</code>, each with a description.",
+                   "The card has not moved yet."] },
+        { id: "PIP-06", title: "Cancelling leaves the card alone",
+          steps: ["With the prompt open, press CANCEL.", "Check every column count."],
+          expect: ["The card is still in the column it started in.",
+                   "Closed is still (0). Nothing was half-moved.",
+                   "This is the key regression check on this screen."] },
+        { id: "PIP-07", title: "Closed - Won records the outcome",
+          steps: ["Drag the card to Closed again and choose <em>Closed - Won</em>."],
+          expect: ["The card moves to Closed and the count becomes (1).",
+                   "Its stage chip now reads <code>Closed - Won</code> in green."] },
+        { id: "PIP-08", title: "Closed - Lost is distinct",
+          steps: ["Repeat with the other card and choose <em>Closed - Lost</em>."],
+          expect: ["Its chip reads <code>Closed - Lost</code> in red.",
+                   "Won and Lost are visually distinguishable at a glance."] },
+        { id: "PIP-09", title: "Reopening clears the outcome",
+          steps: ["Drag a closed card back to Activities."],
+          expect: ["No prompt appears on the way out.",
+                   "The chip reverts to <code>Activities</code> with no lingering Won or Lost."] },
+        { id: "PIP-10", title: "Contacts reflects the outcome",
+          steps: ["Close a case as Won, then open Contacts and find that person."],
+          expect: ["The Pipeline Status column reads <code>Closed - Won</code>, not just <em>Closed</em>."] },
+        { id: "PIP-11", title: "Case modal opens and guards SAVE",
+          steps: ["Click a card body.", "Look at SAVE before changing anything, then edit the description."],
+          expect: ["Title reads <code>Pipeline Case: 4</code> with the real case number.",
+                   "Contact is a link, dates are read-only, Label and Pipeline Status are dropdowns.",
+                   "SAVE is disabled until something actually changes."] },
+        { id: "PIP-12", title: "Closing from the modal also prompts",
+          steps: ["Open a case on an open stage, set Pipeline Status to Closed, press SAVE."],
+          expect: ["The Won/Lost prompt appears rather than closing silently.",
+                   "Choosing an outcome applies it and shuts both dialogs."] },
+        { id: "PIP-13", title: "Archiving removes a case from the board",
+          steps: ["Open a case and press <em>Archive</em>.", "Open the Archive tab."],
+          expect: ["The card leaves the board and the column count drops.",
+                   "The Archive tab label gains a count.",
+                   "The archived row lists its case ID, contact, stage and start date."] },
+        { id: "PIP-14", title: "Restoring returns a case",
+          steps: ["Press <em>Restore</em> on an archived row, then reopen CRM Pipeline."],
+          expect: ["The card is back in the column it was archived from.",
+                   "The Archive count falls."] },
+        { id: "PIP-15", title: "Empty board shows a proper empty state",
+          steps: ["Archive every case."],
+          expect: ["<em>No deals yet</em> with an explanatory line and an <em>Add to Pipeline</em> button.",
+                   "The search box and column layout are hidden while the board is empty."] },
+        { id: "PIP-16", title: "The picker hides duplicates",
+          steps: ["Press <em>+ Add to Pipeline</em> and search for a contact already on the board."],
+          expect: ["Contacts already on the board are absent from the list.",
+                   "Choosing someone creates a case in Opportunities with the next case number.",
+                   "Its start date is today and the due date is thirty days out."] },
+        { id: "PIP-17", title: "Board search filters cards",
+          steps: ["With several cases on the board, search a name, then a case number."],
+          expect: ["Only matching cards remain, in their own columns.",
+                   "Column counts follow the filtered result."] }
+      ]
+    },
+    {
+      id: "general", tag: "GEN", name: "Cross-cutting checks",
+      blurb: "Run these last, once you have exercised the app properly. The final two are known limitations rather than defects \u2014 confirm they behave as described and mark them accordingly.",
+      guide: null,
+      cases: [
+        { id: "GEN-01", title: "Refresh resets to seed data",
+          steps: ["Make several changes across modules, then refresh the browser."],
+          expect: ["Everything returns to the starting state: 75 contacts, 180 to-dos, 2 pipeline cases.",
+                   "This is expected \u2014 the prototype has no persistence layer."] },
+        { id: "GEN-02", title: "The layout survives a narrow window",
+          steps: ["Resize to roughly 1000px, then to a phone width."],
+          expect: ["Tables scroll sideways inside their own container.",
+                   "The page body itself never scrolls horizontally.",
+                   "The sidebar hides below the medium breakpoint, which is intended."] },
+        { id: "GEN-03", title: "The console stays clean",
+          steps: ["With devtools open, repeat a full pass across every module."],
+          expect: ["No red errors.",
+                   "React key warnings or update warnings are worth reporting even though they are not visible on screen."] },
+        { id: "GEN-04", title: "Edit Contact is not wired up",
+          steps: ["Press <em>Edit Contact</em> on a contact detail page."],
+          expect: ["Nothing happens. This is a known gap, not a defect.",
+                   "Mark this Pass if it is inert, and Fail only if it throws an error."] },
+        { id: "GEN-05", title: "AI is simulated, and honestly so",
+          steps: ["Attach a real PDF or audio file to a meeting summary and generate."],
+          expect: ["The generated summary ignores the file contents entirely \u2014 it is the same scripted text every time.",
+                   "The file is only ever listed by name.",
+                   "Mark Pass if it behaves this way. Nothing here calls a network."] }
+      ]
+    }
+  ];
+
+  /* ---------------- state ---------------- */
+
+  var KEY = "mywealth-runbook-v1";
+  var state = {};
+  try { state = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { state = {}; }
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* private mode */ }
+  }
+
+  var allCases = MODULES.reduce(function (acc, m) { return acc.concat(m.cases); }, []);
+
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  /* ---------------- render ---------------- */
+
+  function caseHtml(c) {
+    var st = (state[c.id] && state[c.id].status) || "";
+    var notes = (state[c.id] && state[c.id].notes) || "";
+    var label = st === "pass" ? "Pass" : st === "fail" ? "Fail" : st === "block" ? "Blocked" : "Not run";
+
+    var extras = "";
+    if (c.csv) {
+      extras +=
+        '<h4>Sample file</h4>' +
+        '<pre class="snippet">' + esc(TEST_CSV) + '</pre>' +
+        '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' +
+        '<button data-copy="csv">Copy CSV</button>' +
+        '<button data-download="csv">Download as .csv</button></div>';
+    }
+    if (c.note) {
+      extras += '<h4>Tip</h4><p style="font-size:13.5px;margin:0">Any image or PDF on your machine will do \u2014 ' +
+                'the check is that the app refuses it clearly rather than failing silently.</p>';
+    }
+
+    return '' +
+      '<article class="case" data-id="' + c.id + '"' + (st ? ' data-status="' + st + '"' : '') + '>' +
+        '<div class="case-head" role="button" tabindex="0" aria-expanded="false">' +
+          '<span class="caret">\u25B6</span>' +
+          '<span class="case-id">' + c.id + '</span>' +
+          '<span class="case-title">' + c.title + '</span>' +
+          '<span class="case-status">' + label + '</span>' +
+        '</div>' +
+        '<div class="case-body">' +
+          '<h4>Steps</h4>' +
+          '<ol class="steps"><li>' + c.steps.join("</li><li>") + '</li></ol>' +
+          '<h4>Expected</h4>' +
+          '<div class="expect"><div>' + c.expect.join("</div><div>") + '</div></div>' +
+          extras +
+          '<div class="verdict">' +
+            '<button data-set="pass" aria-pressed="' + (st === "pass") + '">Pass</button>' +
+            '<button data-set="fail" aria-pressed="' + (st === "fail") + '">Fail</button>' +
+            '<button data-set="block" aria-pressed="' + (st === "block") + '">Blocked</button>' +
+            '<button data-set="" style="margin-left:auto">Clear</button>' +
+          '</div>' +
+          '<textarea placeholder="Notes \u2014 what happened, and how to reproduce it">' + esc(notes) + '</textarea>' +
+        '</div>' +
+      '</article>';
+  }
+
+  function render() {
+    var html = MODULES.map(function (m) {
+      return '' +
+        '<section class="module" id="mod-' + m.id + '">' +
+          '<div class="module-head">' +
+            '<h2><span class="module-tag">' + m.tag + '</span>' + m.name + '</h2>' +
+            '<p class="module-blurb">' + m.blurb + '</p>' +
+          '</div>' +
+          (m.guide ? '<div class="guide"><div class="guide-label">What you should be looking at</div>' + m.guide + '</div>' : '') +
+          m.cases.map(caseHtml).join("") +
+        '</section>';
+    }).join("");
+
+    document.getElementById("modules").innerHTML = html;
+
+    document.getElementById("rail").innerHTML =
+      '<div class="rail-title">Modules</div>' +
+      MODULES.map(function (m) {
+        return '<a class="rail-link" href="#mod-' + m.id + '" data-mod="' + m.id + '">' +
+          '<span>' + m.name + '</span>' +
+          '<span class="rail-count" id="rc-' + m.id + '">0/' + m.cases.length + '</span>' +
+          '<span class="rail-bar"><i id="rb-' + m.id + '" style="width:0%"></i></span>' +
+        '</a>';
+      }).join("");
+
+    updateTallies();
+  }
+
+  function updateTallies() {
+    var counts = { pass: 0, fail: 0, block: 0 };
+    allCases.forEach(function (c) {
+      var s = state[c.id] && state[c.id].status;
+      if (s && counts[s] !== undefined) counts[s]++;
+    });
+
+    var total = allCases.length;
+    var done = counts.pass + counts.fail + counts.block;
+
+    document.getElementById("t-total").textContent = total;
+    document.getElementById("t-pass").textContent = counts.pass;
+    document.getElementById("t-fail").textContent = counts.fail;
+    document.getElementById("t-block").textContent = counts.block;
+
+    document.getElementById("m-pass").style.width = (counts.pass / total * 100) + "%";
+    document.getElementById("m-fail").style.width = (counts.fail / total * 100) + "%";
+    document.getElementById("m-block").style.width = (counts.block / total * 100) + "%";
+
+    document.getElementById("m-caption").textContent =
+      done === 0 ? "Not started" : done + " of " + total + " run \u00B7 " + (total - done) + " remaining";
+
+    MODULES.forEach(function (m) {
+      var d = m.cases.filter(function (c) { return state[c.id] && state[c.id].status; }).length;
+      var rc = document.getElementById("rc-" + m.id);
+      var rb = document.getElementById("rb-" + m.id);
+      if (rc) rc.textContent = d + "/" + m.cases.length;
+      if (rb) rb.style.width = (d / m.cases.length * 100) + "%";
+    });
+  }
+
+  /* ---------------- interaction ---------------- */
+
+  var toastTimer;
+  function toast(msg) {
+    var el = document.getElementById("toast");
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.remove("show"); }, 2200);
+  }
+
+  function setStatus(caseEl, status) {
+    var id = caseEl.dataset.id;
+    state[id] = state[id] || {};
+    state[id].status = status;
+    if (!status) delete state[id].status;
+    save();
+
+    if (status) caseEl.dataset.status = status;
+    else delete caseEl.dataset.status;
+
+    caseEl.querySelector(".case-status").textContent =
+      status === "pass" ? "Pass" : status === "fail" ? "Fail" : status === "block" ? "Blocked" : "Not run";
+
+    caseEl.querySelectorAll(".verdict button").forEach(function (b) {
+      if (b.dataset.set !== undefined && b.dataset.set !== "") {
+        b.setAttribute("aria-pressed", String(b.dataset.set === status));
+      }
+    });
+
+    updateTallies();
+    applyFilter();
+  }
+
+  document.getElementById("modules").addEventListener("click", function (e) {
+    var head = e.target.closest(".case-head");
+    if (head) {
+      var art = head.closest(".case");
+      art.classList.toggle("open");
+      head.setAttribute("aria-expanded", String(art.classList.contains("open")));
+      return;
+    }
+
+    var btn = e.target.closest("button");
+    if (!btn) return;
+
+    if (btn.dataset.copy === "csv") {
+      navigator.clipboard.writeText(TEST_CSV).then(
+        function () { toast("Sample CSV copied"); },
+        function () { toast("Could not copy \u2014 select the text instead"); }
+      );
+      return;
+    }
+
+    if (btn.dataset.download === "csv") {
+      downloadCsv();
+      return;
+    }
+
+    if (btn.dataset.set !== undefined) {
+      setStatus(btn.closest(".case"), btn.dataset.set);
+    }
+  });
+
+  document.getElementById("modules").addEventListener("keydown", function (e) {
+    if ((e.key === "Enter" || e.key === " ") && e.target.classList.contains("case-head")) {
+      e.preventDefault();
+      e.target.click();
+    }
+  });
+
+  document.getElementById("modules").addEventListener("input", function (e) {
+    if (e.target.tagName !== "TEXTAREA") return;
+    var id = e.target.closest(".case").dataset.id;
+    state[id] = state[id] || {};
+    state[id].notes = e.target.value;
+    save();
+  });
+
+  /* ---------------- filter ---------------- */
+
+  var filter = "all";
+
+  function applyFilter() {
+    document.querySelectorAll(".case").forEach(function (el) {
+      var s = state[el.dataset.id] && state[el.dataset.id].status;
+      var show = filter === "all" || (filter === "todo" && !s) || (filter === "fail" && s === "fail");
+      el.classList.toggle("hidden", !show);
+    });
+
+    document.querySelectorAll("section.module").forEach(function (sec) {
+      var any = sec.querySelectorAll(".case:not(.hidden)").length > 0;
+      sec.style.display = any ? "" : "none";
+    });
+  }
+
+  document.querySelectorAll("[data-filter]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      filter = b.dataset.filter;
+      document.querySelectorAll("[data-filter]").forEach(function (o) {
+        o.setAttribute("aria-pressed", String(o === b));
+      });
+      applyFilter();
+    });
+  });
+
+  document.getElementById("btn-expand").addEventListener("click", function () {
+    var open = document.querySelectorAll(".case.open").length;
+    var expand = open === 0;
+    document.querySelectorAll(".case").forEach(function (el) {
+      el.classList.toggle("open", expand);
+      el.querySelector(".case-head").setAttribute("aria-expanded", String(expand));
+    });
+    this.textContent = expand ? "Collapse all" : "Expand all";
+  });
+
+  /* ---------------- export ---------------- */
+
+  function buildReport() {
+    var counts = { pass: 0, fail: 0, block: 0 };
+    allCases.forEach(function (c) {
+      var s = state[c.id] && state[c.id].status;
+      if (s && counts[s] !== undefined) counts[s]++;
+    });
+
+    var lines = [
+      "# MyWealth CRM \u2014 test results",
+      "",
+      "Run on: " + new Date().toString(),
+      "",
+      "| Result | Count |",
+      "| --- | --- |",
+      "| Pass | " + counts.pass + " |",
+      "| Fail | " + counts.fail + " |",
+      "| Blocked | " + counts.block + " |",
+      "| Not run | " + (allCases.length - counts.pass - counts.fail - counts.block) + " |",
+      "| **Total** | **" + allCases.length + "** |",
+      ""
+    ];
+
+    MODULES.forEach(function (m) {
+      lines.push("## " + m.tag + " \u2014 " + m.name, "");
+      m.cases.forEach(function (c) {
+        var rec = state[c.id] || {};
+        var s = rec.status || "not run";
+        lines.push("- **" + c.id + "** " + c.title + " \u2014 _" + s + "_");
+        if (rec.notes && rec.notes.trim()) {
+          lines.push("  - Notes: " + rec.notes.trim().replace(/\n/g, " "));
+        }
+      });
+      lines.push("");
+    });
+
+    return lines.join("\n");
+  }
+
+  async function downloadCsv() {
+    var downloads = await window.claude?.use?.("downloads");
+    if (!downloads) {
+      navigator.clipboard.writeText(TEST_CSV).then(
+        function () { toast("Download unavailable \u2014 CSV copied instead"); },
+        function () { toast("Download unavailable \u2014 copy the text above"); }
+      );
+      return;
+    }
+    try {
+      await downloads.save({ filename: "contacts.csv", data: TEST_CSV });
+      toast("Saved contacts.csv");
+    } catch (e) {
+      toast("Download was declined");
+    }
+  }
+
+  document.getElementById("btn-export").addEventListener("click", async function () {
+    var report = buildReport();
+    var downloads = await window.claude?.use?.("downloads");
+
+    if (!downloads) {
+      navigator.clipboard.writeText(report).then(
+        function () { toast("Results copied to clipboard"); },
+        function () { toast("Could not export \u2014 try a different browser"); }
+      );
+      return;
+    }
+
+    try {
+      await downloads.save({ filename: "mywealth-test-results.md", data: report });
+      toast("Saved mywealth-test-results.md");
+    } catch (e) {
+      toast("Download was declined");
+    }
+  });
+
+  document.getElementById("btn-reset").addEventListener("click", function () {
+    if (!confirm("Clear every result and note on this device?")) return;
+    state = {};
+    save();
+    render();
+    applyFilter();
+    toast("Runbook cleared");
+  });
+
+  render();
+  applyFilter();
+})();
+</script>

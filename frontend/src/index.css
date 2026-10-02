@@ -1,0 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* Navy used for headings and table titles */
+  --color-ink: #16295c;
+  --color-ink-soft: #1f3d7a;
+  --color-body: #374151;
+  --color-muted: #6b7280;
+  --color-faint: #9ca3af;
+
+  /* Orange — navigation, active state, primary CTA */
+  --color-accent: #d9730d;
+  --color-accent-hover: #b45309;
+  --color-accent-soft: #fdf0e3;
+
+  /* Blue — links and secondary actions */
+  --color-link: #2563eb;
+  --color-link-hover: #1d4ed8;
+  --color-link-soft: #eaf0fd;
+
+  --color-danger: #dc2626;
+  --color-danger-soft: #fdecec;
+  --color-success: #047857;
+  --color-success-soft: #d9f2e8;
+  --color-purple: #6d28d9;
+  --color-purple-soft: #f2eafd;
+  --color-pink: #be185d;
+  --color-pink-soft: #fce8f1;
+  --color-amber: #a16207;
+  --color-amber-soft: #fdf4dd;
+
+  --color-line: #e5e7eb;
+  --color-line-soft: #f1f2f4;
+  --color-canvas: #ffffff;
+}
+
+@layer base {
+  body {
+    @apply font-sans bg-canvas text-body antialiased;
+    font-size: 14px;
+  }
+
+  /* Date inputs match the rest of the form controls */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.5;
+  }
+}
+
+/* Shared primitives — these repeat across every screen */
+@utility field-label {
+  @apply text-[11px] font-medium text-faint;
+}
+
+@utility table-head {
+  @apply px-4 py-3 text-left text-[12px] font-medium text-muted;
+}
+
+@utility cell {
+  @apply px-4 py-3 align-top text-[13px];
+}
+
+@utility input-field {
+  @apply w-full rounded-md border border-line px-3 py-2 text-[13px] outline-none transition-colors focus:border-accent;
+}
