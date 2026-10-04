@@ -599,7 +599,7 @@ export default function App() {
         />
       )}
 
-      {!isMarketing && session.advisorId && (
+      {activeTab === 'campaigns' && !isMarketing && session.advisorId && (
         <ChatPanel key={session.advisorId} advisorId={session.advisorId} />
       )}
     </div>
