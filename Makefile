@@ -17,7 +17,7 @@ help: ## Show the available commands.
 		'' \
 		'  make bootstrap       Install project dependencies and create backend/.env' \
 		'  make dev             Run the backend and frontend development servers' \
-		'  make backend-dev     Run FastAPI on http://localhost:4000' \
+		'  make backend-dev     Run FastAPI :4000 and FastMCP :8001' \
 		'  make frontend-dev    Run Vite on http://localhost:3000' \
 		'  make provision       Provision the local FakeCloud/PostgreSQL stack' \
 		'  make test            Run backend tests and frontend type checking' \
@@ -86,7 +86,7 @@ check-dev:
 
 dev: check-dev ## Run FastAPI and Vite together; Ctrl-C stops both.
 	@set -e; \
-	"$(UVICORN)" app.main:app --app-dir "$(BACKEND_DIR)" --reload --host 0.0.0.0 --port 4000 & \
+	PATH="$(abspath $(BACKEND_VENV))/bin:$$PATH" bash "$(BACKEND_DIR)/run_services.sh" & \
 	backend_pid=$$!; \
 	cleanup() { \
 		kill "$$backend_pid" 2>/dev/null || true; \
@@ -98,7 +98,7 @@ dev: check-dev ## Run FastAPI and Vite together; Ctrl-C stops both.
 backend-dev: ## Run only the FastAPI development server.
 	@test -x "$(UVICORN)" || { printf 'Backend dependencies are missing. Run make install.\n' >&2; exit 1; }
 	@test -f "$(BACKEND_DIR)/.env" || { printf 'backend/.env is missing. Run make configure.\n' >&2; exit 1; }
-	"$(UVICORN)" app.main:app --app-dir "$(BACKEND_DIR)" --reload --host 0.0.0.0 --port 4000
+	PATH="$(abspath $(BACKEND_VENV))/bin:$$PATH" bash "$(BACKEND_DIR)/run_services.sh"
 
 frontend-dev: ## Run only the Vite development server.
 	@command -v npm >/dev/null 2>&1 || { printf 'npm is required. Install Node.js 20 first.\n' >&2; exit 1; }

@@ -33,5 +33,4 @@ def calculate_sum(a: float, b: float) -> float:
 
 # 3. Run the Server
 if __name__ == "__main__":
-    # Runs over standard I/O by default (stdio)
-    mcp.run()
+    mcp.run(transport="http", host="0.0.0.0", port=8001)

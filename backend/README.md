@@ -1,8 +1,8 @@
 # PULSE Chat API
 
 FastAPI backend for the PULSE chat popup. The service calls Groq through its
-OpenAI-compatible API, supports local function tools, and persists sessions and
-messages in PostgreSQL.
+OpenAI-compatible API, discovers and invokes tools through FastMCP over HTTP,
+and persists sessions and messages in PostgreSQL.
 
 ## Configuration
 
@@ -27,12 +27,16 @@ Install `uv`, FakeCloud, Terraform, PostgreSQL tools, and Docker, then run:
 ```bash
 uv sync --dev
 ./setup.sh
-uv run uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
+bash run_services.sh
 ```
 
 `setup.sh` starts FakeCloud, provisions the local AWS resources, writes the
 generated PostgreSQL connection to the ignored `.env`, and creates both chat
 tables. That is everything required by the Vite/FastAPI development workflow.
+
+The API listens on port `4000`; the FastMCP Streamable HTTP endpoint listens on
+port `8001` at `/mcp`. `MCP_SERVER_URL` can override the API's MCP endpoint.
+`make dev` and `make backend-dev` start both processes.
 
 The emulated ECS image path is optional:
 
@@ -58,16 +62,19 @@ See `docs/api_contract.md` for request and response details.
 
 ## Tools
 
-Tool definitions live in `app/tools/registry.py`, and their business logic lives
-in `app/tools/implementations.py`. The same implementations are exposed by the
-FastMCP server. `search_database` remains an explicit placeholder; replace its
-implementation before using it with production campaign data.
+The FastMCP server registers tools in `mcp/server.py`; the API retrieves their
+schemas and calls them through `app/tools/mcp_registry.py`. Business logic lives
+in `app/tools/implementations.py`. `search_database` remains an explicit
+placeholder; replace its implementation before using it with production
+campaign data.
 
-Run the MCP server from this directory with:
+Run only the MCP server from this directory with:
 
 ```bash
 uv run python mcp/server.py
 ```
+
+It serves `http://127.0.0.1:8001/mcp` using Streamable HTTP.
 
 ## Tests
 

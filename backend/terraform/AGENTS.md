@@ -47,7 +47,7 @@ Review a plan before applying during ordinary development. Do not commit
 - The task execution role has no attached policy, and no task role is defined.
 - There are no CloudWatch logs, health checks, autoscaling, image digest/version
   pinning, backup policy, deletion protection, or environment separation.
-- Only the API task is defined. The MCP task shown in the architecture diagram
-  is absent.
+- The API task runs both the API and FastMCP processes and maps ports `4000`
+  and `8001`; there is no separate MCP task or public load balancer.
 - The RDS resource has no subnet/security group configuration; compatibility
   depends on FakeCloud rather than representing a deployable AWS design.

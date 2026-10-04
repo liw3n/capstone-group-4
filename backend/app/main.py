@@ -26,6 +26,7 @@ from app.store import (
     now_iso,
     StoreUnavailableError,
 )
+from app.tools.mcp_registry import MCPToolRegistry
 
 app = FastAPI(title="PULSE Chat API")
 
@@ -75,7 +76,11 @@ class QueryResponse(BaseModel):
 @lru_cache
 def get_orchestrator() -> ChatOrchestrator:
     settings = get_settings()
-    return ChatOrchestrator(LLMClient(settings), settings)
+    return ChatOrchestrator(
+        LLMClient(settings),
+        settings,
+        registry=MCPToolRegistry(settings.mcp_server_url),
+    )
 
 
 @app.get("/health")

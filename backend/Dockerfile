@@ -13,5 +13,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 	uv sync --frozen --no-dev
 
 COPY app /app/app
-EXPOSE 4000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "4000"]
+COPY mcp /app/mcp
+COPY run_services.sh /app/run_services.sh
+EXPOSE 4000 8001
+CMD ["bash", "/app/run_services.sh"]

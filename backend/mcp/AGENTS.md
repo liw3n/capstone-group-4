@@ -2,16 +2,17 @@
 
 ## Scope and runtime
 
-`server.py` is a FastMCP prototype that runs over stdio when executed directly:
+`server.py` exposes FastMCP over Streamable HTTP on port `8001` when executed
+directly:
 
 ```bash
 cd backend
 uv run python mcp/server.py
 ```
 
-It exposes the same implementation functions used by the API tool registry.
-Keep the MCP schemas and application tool schemas behaviorally aligned even
-though their registration mechanisms differ.
+The endpoint is `/mcp`. The API connects using `MCP_SERVER_URL` and converts
+discovered MCP schemas into Groq-compatible function tools. Keep the MCP tool
+schemas and API client behavior aligned.
 
 ## Change rules
 
@@ -20,8 +21,8 @@ though their registration mechanisms differ.
 - Treat tool arguments as untrusted. Validate limits and identifiers, use
   parameterized database access, and never return secrets or raw connection
   errors.
-- Keep transport assumptions explicit. Stdio tools should not print unrelated
-  content to stdout.
+- Keep the HTTP transport, port, and endpoint aligned across local startup,
+  Docker, Terraform, and API configuration.
 - Add unit tests for tool behavior and failure modes before exposing real data.
 - Coordinate tool schema changes with the API/client that consumes them and
   with the architecture/API documentation.

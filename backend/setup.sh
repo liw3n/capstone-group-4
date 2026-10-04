@@ -115,9 +115,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
 COPY app /app/app
+COPY mcp /app/mcp
+COPY run_services.sh /app/run_services.sh
 
-EXPOSE 4000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "4000"]
+EXPOSE 4000 8001
+CMD ["bash", "/app/run_services.sh"]
 EOF
 fi
 
@@ -138,5 +140,5 @@ printf '\n=======================================================\n'
 printf 'ECS Deployment completed successfully!\n'
 printf 'RDS Endpoint: %s\n' "$rds_endpoint"
 printf 'ECR Image: %s:latest\n' "$ecr_repository_url"
-printf 'ECS Service running task mapped to container port 4000\n'
+printf 'ECS Service running task mapped to container ports 4000 and 8001\n'
 printf '=======================================================\n'

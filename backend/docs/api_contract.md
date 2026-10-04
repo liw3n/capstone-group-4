@@ -62,8 +62,10 @@ Response:
 }
 ```
 
-Provider failures are returned as `429`, `502`, `503`, or `504` depending on the
-failure category. Tool execution is bounded by `LLM_MAX_TOOL_ROUNDS`.
+Provider or MCP tool-server failures are returned as `429`, `502`, `503`, or
+`504` depending on the failure category. Groq receives schemas discovered from
+the FastMCP server at `MCP_SERVER_URL`; tool calls are executed by that server.
+Tool execution is bounded by `LLM_MAX_TOOL_ROUNDS`.
 After a successful provider response, the user and assistant messages are stored
 in one PostgreSQL transaction. A failed provider request does not append a
 partial exchange, although a session explicitly created beforehand remains.

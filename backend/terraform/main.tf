@@ -118,6 +118,10 @@ resource "aws_ecs_task_definition" "pulse_api_task" {
         {
           containerPort = 4000
           hostPort      = 4000
+        },
+        {
+          containerPort = 8001
+          hostPort      = 8001
         }
       ]
       environment = [
@@ -136,6 +140,10 @@ resource "aws_ecs_task_definition" "pulse_api_task" {
         {
           name  = "LLM_MODEL"
           value = var.llm_model
+        },
+        {
+          name  = "MCP_SERVER_URL"
+          value = "http://127.0.0.1:8001/mcp"
         }
       ]
     }

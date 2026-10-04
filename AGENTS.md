@@ -107,7 +107,7 @@ checks and startup commands are in `backend/AGENTS.md`.
   UI role selection and request-supplied adviser IDs are prototype mechanisms.
 - There is no automated frontend test runner, end-to-end test suite, CI
   workflow, or pre-commit configuration.
-- FastMCP is a separate stdio development process; it is not deployed or called
-  by the API. The API reuses the same tool implementations in-process.
+- FastMCP runs over HTTP on port `8001` in the API container, and the API calls
+  it through the MCP protocol. The tools still use placeholder implementations.
 - Infrastructure remains a local FakeCloud prototype, not a production AWS
   design.

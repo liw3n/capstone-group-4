@@ -1,4 +1,5 @@
 from typing import Any
+from typing import Any, Protocol
 
 from app.config import Settings
 from app.llm.errors import LLMProviderError, LLMToolLoopError
@@ -12,12 +13,18 @@ placeholder tool returned real production data. Keep answers concise and actiona
 """
 
 
+class ToolExecutor(Protocol):
+    def schemas(self) -> list[dict[str, Any]]: ...
+
+    def execute(self, name: str, arguments_json: str) -> str: ...
+
+
 class ChatOrchestrator:
     def __init__(
         self,
         client: Any,
         settings: Settings,
-        registry: ToolRegistry = DEFAULT_TOOL_REGISTRY,
+        registry: ToolExecutor = DEFAULT_TOOL_REGISTRY,
     ) -> None:
         self.client = client
         self.settings = settings

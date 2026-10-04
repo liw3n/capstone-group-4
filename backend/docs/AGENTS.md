@@ -32,7 +32,8 @@ confidential infrastructure identifiers or PDPA examples into this directory.
   tool schemas.
 - An editable SVG now accompanies the rendered architecture, but there are no
   architecture decision records or threat/data-flow diagrams.
-- FastMCP is shown as a stdio-only development process. There is no deployed
-  MCP service or API-to-MCP transport; the API executes shared tools in-process.
+- FastMCP runs over HTTP on port `8001` beside the API process, and the API
+  discovers and executes tools through the MCP protocol. It shares the API
+  container rather than running as a separate ECS task.
 - The diagram is conceptual: Terraform defines no load balancer, service
   discovery, or stable browser-facing endpoint for the emulated ECS task.
