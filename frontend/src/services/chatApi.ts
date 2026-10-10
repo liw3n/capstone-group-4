@@ -119,6 +119,7 @@ export function sendChatMessage(
   sessionId: string,
   messageContent: string,
   signal?: AbortSignal,
+  campaignId?: string,
 ): Promise<QueryResponse> {
   return request<QueryResponse>(apiUrl('/api/chat/query'), {
     method: 'POST',
@@ -127,6 +128,7 @@ export function sendChatMessage(
       fa_id: faId,
       session_id: sessionId,
       message_content: messageContent,
+      campaign_id: campaignId,
     }),
   });
 }

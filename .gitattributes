@@ -1,0 +1,2 @@
+# Shell scripts run under Linux, including Docker containers.
+*.sh text eol=lf

@@ -111,3 +111,16 @@ def test_stops_after_maximum_tool_rounds():
 
     with pytest.raises(LLMToolLoopError, match="round limit"):
         orchestrator.run("Keep calculating", [])
+
+
+def test_selected_campaign_context_overrides_history_without_mutating_registry():
+    from app.campaigns.repository import DEMO_FA, RequestScope
+    from app.tools import DEFAULT_TOOL_REGISTRY
+    client = FakeClient([completion(message(content="Use camp-2"))])
+    orchestrator = ChatOrchestrator(client, settings())
+    history = [ChatHistoryItem("2026-08-25T00:00:00Z", False, "Earlier results for camp-1")]
+    orchestrator.run("What about this campaign?", history,
+                     scope=RequestScope(DEMO_FA), campaign_id="camp-2")
+    assert '"campaign_id": "camp-2"' in client.calls[0]["messages"][0]["content"]
+    assert client.calls[0]["messages"][1]["content"] == "Earlier results for camp-1"
+    assert orchestrator.registry is DEFAULT_TOOL_REGISTRY

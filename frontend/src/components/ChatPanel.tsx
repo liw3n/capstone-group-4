@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Bot, MessageCircle, Plus, Send, X } from 'lucide-react';
+import AssistantMessage from './AssistantMessage';
 import {
   ChatMessage,
   ChatSession,
@@ -12,6 +13,8 @@ import {
 
 interface ChatPanelProps {
   advisorId: string;
+  campaignId?: string;
+  campaignName?: string;
 }
 
 type ErrorSource = 'sessions' | 'history' | 'create' | 'send';
@@ -40,7 +43,7 @@ function formatSessionTimestamp(timestamp: string): string {
   }).format(date);
 }
 
-export default function ChatPanel({ advisorId }: ChatPanelProps) {
+export default function ChatPanel({ advisorId, campaignId, campaignName }: ChatPanelProps) {
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -217,6 +220,7 @@ export default function ChatPanel({ advisorId }: ChatPanelProps) {
         sessionId,
         content,
         controller.signal,
+        campaignId,
       );
       if (controller.signal.aborted) return;
       setMessages((current) => [
@@ -273,7 +277,7 @@ export default function ChatPanel({ advisorId }: ChatPanelProps) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.98 }}
             transition={{ duration: 0.16 }}
-            className="fixed inset-x-3 bottom-3 z-50 flex h-[min(640px,calc(100vh-24px))] flex-col overflow-hidden rounded-xl border border-line bg-white shadow-2xl sm:inset-x-auto sm:bottom-5 sm:right-5 sm:w-[410px]"
+            className="fixed inset-x-3 bottom-3 z-50 flex h-[min(640px,calc(100vh-24px))] flex-col overflow-hidden rounded-xl border border-line bg-white shadow-2xl sm:inset-x-auto sm:bottom-5 sm:right-5 sm:w-[460px]"
           >
             <header className="flex items-center justify-between border-b border-line bg-ink px-4 py-3 text-white">
               <div className="flex items-center gap-2.5">
@@ -294,6 +298,27 @@ export default function ChatPanel({ advisorId }: ChatPanelProps) {
                 <X size={17} />
               </button>
             </header>
+
+            <div className="border-b border-line-soft bg-link-soft px-3 py-2 text-[12px] text-body">
+              <p className="font-medium">
+                {campaignName ? 'Selected campaign: ' + campaignName : 'Select a campaign to request client recommendations.'}
+              </p>
+              {campaignId && (
+                <>
+                  <p className="mt-1 text-[11px] text-muted">
+                    Demo recommendations use a separate synthetic client list.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setDraft('Which clients are recommended for this campaign? Explain why each matches.')}
+                    disabled={sending || creatingSession}
+                    className="mt-1 text-link hover:underline disabled:opacity-50"
+                  >
+                    Ask for recommended clients
+                  </button>
+                </>
+              )}
+            </div>
 
             <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2">
               <select
@@ -327,7 +352,7 @@ export default function ChatPanel({ advisorId }: ChatPanelProps) {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto bg-gray-50/60 px-4 py-4" aria-live="polite">
+            <div className="min-h-0 flex-1 overflow-y-auto bg-gray-50/60 px-4 py-4" aria-live="polite">
               {(loadingSessions || loadingHistory) && (
                 <p className="py-8 text-center text-[12px] text-faint">Loading conversation…</p>
               )}
@@ -353,13 +378,17 @@ export default function ChatPanel({ advisorId }: ChatPanelProps) {
                       className={`flex ${fromAssistant ? 'justify-start' : 'justify-end'}`}
                     >
                       <div
-                        className={`max-w-[82%] rounded-xl px-3 py-2 text-[12px] leading-relaxed shadow-sm ${
+                        className={`min-w-0 rounded-xl text-[13px] leading-relaxed shadow-sm ${
                           fromAssistant
-                            ? 'rounded-tl-sm border border-line-soft bg-white text-body'
-                            : 'rounded-tr-sm bg-ink text-white'
+                            ? 'w-full rounded-tl-sm border border-line-soft bg-white px-4 py-3 text-body'
+                            : 'max-w-[85%] rounded-tr-sm bg-ink px-3 py-2 text-white'
                         }`}
                       >
-                        <p className="whitespace-pre-wrap break-words">{message.message_content}</p>
+                        {fromAssistant ? (
+                          <AssistantMessage content={message.message_content} />
+                        ) : (
+                          <p className="whitespace-pre-wrap break-words">{message.message_content}</p>
+                        )}
                       </div>
                     </div>
                   );

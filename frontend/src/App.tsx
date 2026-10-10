@@ -600,7 +600,12 @@ export default function App() {
       )}
 
       {activeTab === 'campaigns' && !isMarketing && session.advisorId && (
-        <ChatPanel key={session.advisorId} advisorId={session.advisorId} />
+        <ChatPanel
+          key={session.advisorId + ':' + (selectedCampaign?.id ?? 'none')}
+          advisorId={session.advisorId}
+          campaignId={selectedCampaign?.id}
+          campaignName={selectedCampaign?.name}
+        />
       )}
     </div>
   );

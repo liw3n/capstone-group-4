@@ -1,19 +1,33 @@
-from typing import Any
+import json
 from typing import Any, Protocol
 
+from app.campaigns.repository import RequestScope
 from app.config import Settings
 from app.llm.errors import LLMProviderError, LLMToolLoopError
 from app.store import ChatHistoryItem
-from app.tools import DEFAULT_TOOL_REGISTRY, ToolRegistry
+from app.tools import DEFAULT_TOOL_REGISTRY
 
 
 SYSTEM_PROMPT = """You are PULSE, an assistant for financial advisers.
 Use the available tools when they are needed to answer accurately. Never claim that a
-placeholder tool returned real production data. Keep answers concise and actionable.
+placeholder or synthetic tool returned real production data. Keep answers concise and actionable.
+For campaign client recommendations, call recommend_clients_for_campaign and base
+names, counts and eligibility explanations only on its output. Return all matches by
+default, without inventing a suitability ranking. Report missing information and
+exclusions separately. If results are truncated, say so. The current selected
+campaign context overrides campaign references in older conversation history.
+If no campaign is selected or named, ask the adviser to select one; do not guess.
+If a tool returns an error, explain it without inventing client results.
+Synthetic criteria matches are not a product suitability assessment or financial
+advice. State this when giving recommendations. This read-only tool does not check
+outreach consent or authorise sending communications; adviser confirmation and
+separate channel consent checks are required before outreach.
 """
 
 
 class ToolExecutor(Protocol):
+    def bind_scope(self, scope: RequestScope) -> "ToolExecutor": ...
+
     def schemas(self) -> list[dict[str, Any]]: ...
 
     def execute(self, name: str, arguments_json: str) -> str: ...
@@ -30,8 +44,15 @@ class ChatOrchestrator:
         self.settings = settings
         self.registry = registry
 
-    def run(self, user_message: str, history: list[ChatHistoryItem]) -> str:
-        messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    def run(self, user_message: str, history: list[ChatHistoryItem], *,
+            scope: RequestScope | None = None, campaign_id: str | None = None) -> str:
+        registry = self.registry.bind_scope(scope) if scope is not None else self.registry
+        prompt = SYSTEM_PROMPT
+        if scope is not None:
+            prompt += "\nCurrent campaign context (server-validated): " + json.dumps(
+                {"campaign_id": campaign_id, "data_source": "synthetic"}
+            )
+        messages: list[dict[str, Any]] = [{"role": "system", "content": prompt}]
         for item in history[-self.settings.llm_history_limit :]:
             messages.append(
                 {
@@ -41,7 +62,7 @@ class ChatOrchestrator:
             )
         messages.append({"role": "user", "content": user_message})
 
-        tools = self.registry.schemas()
+        tools = registry.schemas()
         for _ in range(self.settings.llm_max_tool_rounds):
             completion = self.client.create_chat_completion(messages, tools)
             if not getattr(completion, "choices", None):
@@ -74,7 +95,7 @@ class ChatOrchestrator:
             )
 
             for tool_call in tool_calls:
-                result = self.registry.execute(
+                result = registry.execute(
                     tool_call.function.name,
                     tool_call.function.arguments,
                 )

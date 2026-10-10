@@ -87,3 +87,53 @@ curl -X POST http://localhost:4000/chat/query \
 - `502`: provider authentication, response, or tool-loop failure.
 - `503`: LLM configuration or PostgreSQL is unavailable.
 - `504`: the upstream model request timed out.
+
+
+## Campaign context and synthetic recommendation tool
+
+`POST /chat/query` and `POST /api/chat/query` additionally accept an optional
+`campaign_id` (1-69 letters, digits, hyphens or underscores; starts with a letter or digit). Example:
+
+```json
+{
+  "fa_id": "adv-steven-raynaldi",
+  "campaign_id": "camp-1",
+  "message_content": "Which clients are recommended for this campaign?"
+}
+```
+
+Omitting it preserves existing chat behavior. An invalid ID returns `422`;
+an unknown/inaccessible campaign returns `404`; a campaign that is not active
+on the fixed demo date returns `409`. Campaign validation happens before session
+creation/provider calls. The backend retrieves criteria from its synthetic
+PostgreSQL repository; the request never supplies campaign criteria. Missing
+database configuration, tables or database availability return `503` during
+campaign validation, before chat storage/provider calls.
+
+The API binds an immutable adviser/tenant scope to each orchestration call. The
+MCP client supplies it as `_meta.pulse_scope`, separate from model arguments.
+No request-specific state is stored on the cached orchestrator. `fa_id` remains
+caller-supplied and the tenant is fixed to `pulse-demo`; this is not authentication.
+
+### MCP: recommend_clients_for_campaign
+
+Arguments: `campaign_id` (required) and `limit` (strict integer, 1-100, default 100).
+Context is injected by FastMCP and absent from the model-facing schema. It is
+read-only and returns synthetic campaign criteria matches, without ranking,
+sending outreach or changing CRM data.
+
+Result keys: `data_source`, `campaign_id`, `campaign_name`, `as_of_date`,
+`evaluated_count`, `matched_count`, `clients` (contact_id, name, reasons),
+`returned_count`, `truncated`, `incomplete_count`, `incomplete_clients`
+(contact_id, name, missing_fields), `incomplete_truncated`, `excluded_count`
+and `disclaimer`. Counts refer only to that adviser's tenant-scoped book.
+
+Domain failures return `data_source: synthetic`, `error` and `error_code`
+(`missing_context`, `campaign_unavailable`, `campaign_inactive`, or
+`storage_unavailable`). Database errors do not return client lists or connection details. Invalid
+arguments are rejected by the API-side argument model or MCP input validation.
+Tool errors are passed back to the LLM as errors, never successful audience results.
+Recommendations are not communication consent or product suitability approval.
+
+See [campaign_recommendations.md](campaign_recommendations.md) for fake table
+assumptions, SQL setup, expected results and commands that work without Groq.

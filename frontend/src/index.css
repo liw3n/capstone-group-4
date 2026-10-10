@@ -66,3 +66,67 @@
 @utility input-field {
   @apply w-full rounded-md border border-line px-3 py-2 text-[13px] outline-none transition-colors focus:border-accent;
 }
+
+/* Readable assistant answers, including responses already saved in chat history. */
+.pulse-markdown {
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+.pulse-markdown > :first-child { margin-top: 0; }
+.pulse-markdown > :last-child { margin-bottom: 0; }
+.pulse-markdown p { margin: 0.65rem 0; white-space: pre-wrap; }
+.pulse-markdown h1, .pulse-markdown h2, .pulse-markdown h3,
+.pulse-markdown h4, .pulse-markdown h5, .pulse-markdown h6 {
+  margin: 1.1rem 0 0.5rem;
+  color: var(--color-ink);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  font-weight: 600;
+}
+.pulse-markdown strong { color: var(--color-ink); font-weight: 600; }
+.pulse-markdown ul, .pulse-markdown ol { margin: 0.65rem 0; padding-left: 1.25rem; }
+.pulse-markdown ul { list-style: disc; }
+.pulse-markdown ol { list-style: decimal; }
+.pulse-markdown li + li { margin-top: 0.35rem; }
+.pulse-markdown li > p { margin: 0.25rem 0; }
+.pulse-markdown hr { margin: 1rem 0; border-color: var(--color-line); }
+.pulse-markdown a { color: var(--color-link); text-decoration: underline; }
+.pulse-markdown blockquote {
+  margin: 0.75rem 0;
+  padding: 0.15rem 0.75rem;
+  border-left: 3px solid var(--color-line);
+  color: var(--color-muted);
+}
+.pulse-markdown code {
+  border-radius: 4px;
+  background: var(--color-line-soft);
+  padding: 0.1rem 0.25rem;
+  font-size: 0.75rem;
+}
+.pulse-markdown pre { margin: 0.75rem 0; overflow-x: auto; border-radius: 6px; background: var(--color-line-soft); padding: 0.75rem; }
+.pulse-markdown pre code { padding: 0; white-space: pre; }
+.pulse-table-wrap { max-width: 100%; overflow-x: auto; margin: 0.75rem 0; }
+.pulse-markdown table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+.pulse-markdown th, .pulse-markdown td { border-bottom: 1px solid var(--color-line); padding: 0.5rem; text-align: left; vertical-align: top; }
+.pulse-markdown th { background: var(--color-line-soft); color: var(--color-ink); font-weight: 600; }
+
+/* Client tables become cards; native table headers remain accessible. */
+.pulse-client-cards { display: block; position: relative; }
+.pulse-client-cards thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.pulse-client-cards tbody { display: grid; gap: 0.625rem; }
+.pulse-client-cards tbody tr {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem 0.5rem;
+  border: 1px solid var(--color-line);
+  border-radius: 0.5rem;
+  background: #fff;
+  padding: 0.75rem;
+}
+.pulse-client-cards tbody td { display: block; border: 0; padding: 0; }
+.pulse-client-cards td[data-column="0"] { grid-column: 2; grid-row: 1; color: var(--color-muted); font-size: 0.6875rem; }
+.pulse-client-cards td[data-column="1"] { grid-column: 1; grid-row: 1; color: var(--color-ink); font-size: 0.8125rem; font-weight: 600; }
+.pulse-client-cards td[data-column="2"] { grid-column: 1 / -1; margin-top: 0.25rem; font-size: 0.8125rem; }
+.pulse-cell-label { display: block; margin-bottom: 0.2rem; color: var(--color-muted); font-size: 0.625rem; font-weight: 500; }
+.pulse-client-cards td[data-column="0"] .pulse-cell-label,
+.pulse-client-cards td[data-column="1"] .pulse-cell-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }

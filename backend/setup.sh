@@ -76,17 +76,19 @@ printf 'DATABASE_URL=%s\n' "$database_url" >> "$env_temp_file"
 mv "$env_temp_file" "$env_file"
 
 ##### Create AWS RDS Tables #####
-PGPASSWORD=testpassword psql \
-    --host "$rds_host" \
-    --port "$rds_port" \
-    --username postgres \
-    --dbname pulse \
-    -v ON_ERROR_STOP=1 \
-    --file "$BACKEND_DIR/tables/create_campaign_chat_sessions.sql"
+for table_script in create_campaign_chat_sessions.sql create_mock_campaign_tables.sql seed_mock_campaign_data.sql; do
+    PGPASSWORD=testpassword psql \
+        --host "$rds_host" \
+        --port "$rds_port" \
+        --username postgres \
+        --dbname pulse \
+        -v ON_ERROR_STOP=1 \
+        --file "$BACKEND_DIR/tables/$table_script"
+done
 
 if [[ "${DEPLOY_FAKECLOUD_ECS:-0}" != "1" ]]; then
     printf '\nLocal database provisioning complete.\n'
-    printf 'DATABASE_URL was written to %s and the chat tables are ready.\n' "$env_file"
+    printf 'DATABASE_URL was written to %s and the chat / mock campaign tables are ready.\n' "$env_file"
     printf 'Start the application from the repository root with: make dev\n'
     printf 'Set DEPLOY_FAKECLOUD_ECS=1 to also build and deploy the emulated ECS image.\n'
     exit 0
@@ -117,6 +119,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY app /app/app
 COPY mcp /app/mcp
 COPY run_services.sh /app/run_services.sh
+# Normalize Windows checkouts before running Bash in Linux.
+RUN sed -i 's/\r$//' /app/run_services.sh
 
 EXPOSE 4000 8001
 CMD ["bash", "/app/run_services.sh"]

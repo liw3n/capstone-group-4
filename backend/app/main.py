@@ -5,6 +5,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from app.campaigns.repository import (
+    CAMPAIGN_ID_PATTERN, CampaignInactive, CampaignStorageUnavailable, CampaignUnavailable,
+    RequestScope, get_campaign, require_active,
+)
 from app.config import get_settings
 from app.llm import ChatOrchestrator, LLMClient
 from app.llm.errors import (
@@ -39,6 +43,7 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(CampaignStorageUnavailable)
 @app.exception_handler(StoreUnavailableError)
 def store_unavailable_handler(_request, exc: StoreUnavailableError):
     return JSONResponse(status_code=503, content={"detail": str(exc)})
@@ -64,6 +69,7 @@ class HistoryResponse(BaseModel):
 class QueryRequest(BaseModel):
     fa_id: str | None = Field(default=None, min_length=1)
     session_id: str | None = Field(default=None, min_length=1)
+    campaign_id: str | None = Field(default=None, pattern=CAMPAIGN_ID_PATTERN, max_length=69)
     message_content: str = Field(min_length=1)
 
 
@@ -128,13 +134,24 @@ def chat_query(
     payload: QueryRequest,
     fa_id: str | None = Query(default=None, min_length=1),
 ) -> QueryResponse:
-    advisor_id = fa_id or payload.fa_id
+    advisor_id = (fa_id or payload.fa_id or "").strip()
     if not advisor_id:
         raise HTTPException(status_code=400, detail="fa_id is required")
 
     message_content = payload.message_content.strip()
     if not message_content:
         raise HTTPException(status_code=422, detail="message_content must not be empty")
+
+    # Tenant is fixed by the synthetic adapter, not chosen by the model/client.
+    # fa_id remains caller-supplied until real authentication is introduced.
+    scope = RequestScope(advisor_id)
+    if payload.campaign_id is not None:
+        try:
+            require_active(get_campaign(payload.campaign_id, scope))
+        except CampaignUnavailable as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CampaignInactive as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     if payload.session_id:
         session = get_session(payload.session_id)
@@ -148,7 +165,9 @@ def chat_query(
         raise HTTPException(status_code=404, detail="chat session not found")
 
     try:
-        ai_answer = get_orchestrator().run(message_content, history)
+        ai_answer = get_orchestrator().run(
+            message_content, history, scope=scope, campaign_id=payload.campaign_id,
+        )
     except LLMConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except LLMAuthenticationError as exc:

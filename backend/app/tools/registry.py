@@ -4,6 +4,7 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.campaigns.repository import RequestScope
 from app.tools.implementations import calculate_sum, search_database
 
 
@@ -46,6 +47,10 @@ class ToolRegistry:
         self._definitions = {
             definition.name: definition for definition in (definitions or [])
         }
+
+    def bind_scope(self, _scope: RequestScope) -> "ToolRegistry":
+        # These local demonstration tools do not access adviser-owned records.
+        return self
 
     def schemas(self) -> list[dict[str, Any]]:
         return [definition.as_openai_tool() for definition in self._definitions.values()]

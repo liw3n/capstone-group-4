@@ -1,71 +1,128 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1270" viewBox="0 0 1600 1270" role="img" aria-labelledby="diagram-title diagram-description">
+  <title id="diagram-title">PULSE system architecture</title>
+  <desc id="diagram-description">Current local prototype: a React CRM served by Vite connects to FastAPI chat endpoints. The backend runs an LLM orchestrator and a FastMCP server in one container. Groq provides inference, PostgreSQL stores chat and synthetic campaign data. CRM screen state and simulated outreach remain in the browser. Optional Terraform and FakeCloud infrastructure emulate ECR, ECS and RDS. Company CRM integration is planned.</desc>
   <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
-    </marker>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="4" orient="auto"><path d="M0,0 L0,8 L9,4 z" fill="#64748b"/></marker>
+    <marker id="planned-arrow" markerWidth="10" markerHeight="10" refX="9" refY="4" orient="auto"><path d="M0,0 L0,8 L9,4 z" fill="#94a3b8"/></marker>
     <style>
-      .title { font: 700 25px Arial, sans-serif; fill: #0f172a; }
-      .heading { font: 700 18px Arial, sans-serif; fill: #0f172a; }
-      .label { font: 600 15px Arial, sans-serif; fill: #0f172a; }
-      .small { font: 13px Arial, sans-serif; fill: #334155; }
-      .box { stroke: #334155; stroke-width: 2; rx: 12; }
-      .arrow { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      text { font-family: Arial, Helvetica, sans-serif; }
+      .title { font-size: 32px; font-weight: 700; fill: #16295c; }
+      .section { font-size: 18px; font-weight: 700; fill: #16295c; }
+      .heading { font-size: 19px; font-weight: 700; fill: #16295c; }
+      .label { font-size: 15px; fill: #334155; }
+      .small { font-size: 13px; fill: #64748b; }
+      .badge { font-size: 12px; font-weight: 700; fill: #475569; letter-spacing: 0.7px; }
+      .arrow { fill: none; stroke: #64748b; stroke-width: 2; stroke-linejoin: round; marker-end: url(#arrow); }
+      .planned { fill: none; stroke: #94a3b8; stroke-width: 2; stroke-dasharray: 7 5; marker-end: url(#planned-arrow); }
     </style>
   </defs>
-
-  <rect width="1200" height="720" fill="#f8fafc"/>
-  <text x="50" y="48" class="title">PULSE local architecture</text>
-
-  <rect x="35" y="285" width="150" height="90" class="box" fill="#dbeafe"/>
-  <text x="110" y="320" text-anchor="middle" class="heading">Frontend</text>
-  <text x="110" y="348" text-anchor="middle" class="small">Chat popup</text>
-
-  <rect x="245" y="75" width="650" height="570" class="box" fill="#f1f5f9"/>
-  <text x="270" y="110" class="heading">FakeCloud / local AWS environment</text>
-
-  <rect x="285" y="145" width="600" height="300" class="box" fill="#ffffff"/>
-  <text x="585" y="180" text-anchor="middle" class="heading">ECS task: PULSE API + FastMCP</text>
-  <text x="485" y="205" text-anchor="middle" class="small">FastAPI · port 4000</text>
-
-  <rect x="325" y="235" width="320" height="65" class="box" fill="#dcfce7"/>
-  <text x="485" y="262" text-anchor="middle" class="label">Chat routes + persistence layer</text>
-  <text x="485" y="283" text-anchor="middle" class="small">/chat/* and /api/chat/*</text>
-
-  <rect x="325" y="325" width="150" height="75" class="box" fill="#fef3c7"/>
-  <text x="400" y="353" text-anchor="middle" class="label">LLM orchestrator</text>
-  <text x="400" y="377" text-anchor="middle" class="small">bounded tool loop</text>
-
-  <rect x="495" y="325" width="150" height="75" class="box" fill="#fae8ff"/>
-  <text x="570" y="353" text-anchor="middle" class="label">MCP client</text>
-  <text x="570" y="377" text-anchor="middle" class="small">discovers + calls tools</text>
-
-  <rect x="315" y="500" width="340" height="100" class="box" fill="#e0e7ff"/>
-  <text x="485" y="535" text-anchor="middle" class="heading">RDS PostgreSQL</text>
-  <text x="485" y="563" text-anchor="middle" class="small">sessions + messages · port 5432</text>
-
-  <rect x="730" y="230" width="125" height="115" class="box" fill="#fce7f3"/>
-  <text x="792" y="266" text-anchor="middle" class="label">FastMCP</text>
-  <text x="792" y="290" text-anchor="middle" class="small">HTTP · port 8001</text>
-  <text x="792" y="315" text-anchor="middle" class="small">/mcp</text>
-
-  <rect x="965" y="285" width="190" height="105" class="box" fill="#fee2e2"/>
-  <text x="1060" y="320" text-anchor="middle" class="heading">Groq API</text>
-  <text x="1060" y="347" text-anchor="middle" class="small">OpenAI-compatible</text>
-  <text x="1060" y="370" text-anchor="middle" class="small">HTTPS inference</text>
-
-  <path d="M185 330 L285 330" class="arrow"/>
-  <text x="235" y="318" text-anchor="middle" class="small">HTTP</text>
-
-  <path d="M400 325 L450 300" class="arrow"/>
-  <path d="M475 362 L495 362" class="arrow"/>
-  <path d="M485 445 L485 500" class="arrow"/>
-  <text x="500" y="476" class="small">SQL</text>
-
-  <path d="M645 350 L730 310" class="arrow"/>
-  <text x="685" y="330" text-anchor="middle" class="small">MCP</text>
-
-  <path d="M645 380 L965 380" class="arrow"/>
-  <text x="810" y="368" text-anchor="middle" class="small">OpenAI Chat Completions + tool calls</text>
-
-  <text x="50" y="675" class="small">Groq selects tools from MCP-discovered schemas; the API calls FastMCP over HTTP, and the MCP server runs beside the API in the same task.</text>
+  <rect width="1600" height="1270" fill="#f8fafc"/>
+  <text x="40" y="59" class="title">PULSE system architecture</text>
+  <text x="40" y="88" class="label">CRM frontend, AI conversation, MCP tools, persistence and development infrastructure</text>
+  <rect x="32" y="119" width="1536" height="850" rx="12" fill="#fff" stroke="#dbe3ee" stroke-width="1.5"/>
+  <text x="58" y="152" class="badge">CURRENT APPLICATION RUNTIME</text>
+  <text x="500" y="208" class="small">Local Docker network: pulse-dev (API container + PostgreSQL)</text>
+  <rect x="68" y="177" width="335" height="64" rx="12" fill="#fff7ed" stroke="#fed7aa" stroke-width="1.5"/>
+  <text x="88" y="203" class="heading">Financial adviser / marketing user</text>
+  <text x="88" y="224" class="small">Prototype role selection; no real authentication</text>
+  <path d="M235 241 L235 275" class="arrow"/>
+  <rect x="68" y="275" width="335" height="272" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+  <text x="88" y="308" class="heading">React CRM + PULSE</text>
+  <text x="88" y="333" class="small">Browser application</text>
+  <text x="88" y="367" class="label">Contacts / leads / pipeline / tasks</text>
+  <text x="88" y="392" class="label">Campaigns / audience review / settings</text>
+  <text x="88" y="426" class="small">CRM records: seed data + React state</text>
+  <text x="88" y="448" class="small">Outreach and task actions: simulations</text>
+  <rect x="84" y="474" width="302" height="54" rx="8" fill="#fff" stroke="#bfdbfe" stroke-width="1.5"/>
+  <text x="100" y="497" class="label">PULSE chat connects to the backend</text>
+  <text x="100" y="517" class="small">Messages + selected campaign context</text>
+  <path d="M235 547 L235 583" class="arrow"/>
+  <text x="248" y="570" class="small">HTTP /api/chat/*</text>
+  <rect x="68" y="583" width="335" height="109" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+  <text x="88" y="615" class="heading">Vite dev server :3000</text>
+  <text x="88" y="641" class="label">Serves frontend assets</text>
+  <text x="88" y="665" class="small">Proxies /api to FastAPI :4000</text>
+  <rect x="500" y="248" width="650" height="444" rx="12" fill="#f8fafc" stroke="#a5b4fc" stroke-width="1.5"/>
+  <text x="525" y="276" class="badge">BACKEND: FASTAPI + FASTMCP</text>
+  <text x="525" y="298" class="small">One API container; also runnable as local processes</text>
+  <rect x="526" y="323" width="598" height="113" rx="12" fill="#ecfdf5" stroke="#a7f3d0" stroke-width="1.5"/>
+  <text x="547" y="353" class="heading">FastAPI / Uvicorn :4000</text>
+  <text x="547" y="380" class="label">Chat sessions, history, new chats, queries and /health</text>
+  <text x="547" y="405" class="small">Input validation, session ownership and campaign access checks</text>
+  <text x="547" y="424" class="small">Supports both /chat/* and /api/chat/*</text>
+  <path d="M403 637 L450 637 L450 379 L526 379" class="arrow"/>
+  <text x="73" y="717" class="small">Chat responses return through the same API path</text>
+  <path d="M666 436 L666 494" class="arrow"/>
+  <text x="533" y="474" class="small">History + context</text>
+  <rect x="526" y="494" width="280" height="137" rx="12" fill="#fff7ed" stroke="#fed7aa" stroke-width="1.5"/>
+  <text x="545" y="525" class="heading">LLM orchestration</text>
+  <text x="545" y="549" class="label">Provider client + bounded tool loop</text>
+  <text x="545" y="574" class="label">Tool schemas, calls and results</text>
+  <text x="545" y="602" class="small">MCP client / request-scoped registry</text>
+  <rect x="848" y="494" width="276" height="137" rx="12" fill="#faf5ff" stroke="#e9d5ff" stroke-width="1.5"/>
+  <text x="867" y="525" class="heading">FastMCP :8001 /mcp</text>
+  <text x="867" y="550" class="label">Tools + shared domain logic</text>
+  <text x="867" y="575" class="label">Scoped PostgreSQL data access</text>
+  <text x="867" y="602" class="small">Matching + demo / placeholder tools</text>
+  <path d="M806 563 L848 563" class="arrow"/>
+  <text x="526" y="657" class="small">API calls tools over MCP HTTP; tools return structured results.</text>
+  <text x="526" y="678" class="small">FA + tenant metadata is supplied separately from model arguments.</text>
+  <rect x="1240" y="323" width="290" height="160" rx="12" fill="#fff1f2" stroke="#fecdd3" stroke-width="1.5"/>
+  <text x="1260" y="356" class="heading">Groq / LLM provider</text>
+  <text x="1260" y="384" class="label">OpenAI-compatible HTTPS API</text>
+  <text x="1260" y="411" class="label">Generates responses + tool calls</text>
+  <text x="1260" y="443" class="small">Provider key stays on the backend</text>
+  <path d="M806 519 L825 519 L825 462 L1190 462 L1190 402 L1240 402" class="arrow"/>
+  <text x="924" y="455" class="small">HTTPS inference</text>
+  <text x="1240" y="517" class="small">The model requests tools; the backend executes them.</text>
+  <rect x="500" y="766" width="650" height="160" rx="12" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.5"/>
+  <text x="521" y="797" class="heading">PostgreSQL persistence</text>
+  <text x="521" y="822" class="small">Container :5432 | Windows host 127.0.0.1:55432</text>
+  <path d="M825 838 L825 904" stroke="#c7d2fe" stroke-width="1.5"/>
+  <text x="521" y="854" class="label">Chat sessions + messages</text>
+  <text x="521" y="879" class="small">Stored conversations and timestamps</text>
+  <text x="847" y="854" class="label">Synthetic campaigns + clients</text>
+  <text x="847" y="879" class="small">Campaign access assignments</text>
+  <text x="847" y="902" class="small">Persisted mock data; tenant / FA filters</text>
+  <path d="M526 408 L475 408 L475 850 L500 850" class="arrow"/>
+  <text x="500" y="745" class="small">SQL: chat storage + campaign validation</text>
+  <path d="M986 631 L986 766" class="arrow"/>
+  <text x="1000" y="726" class="small">Scoped SQL reads</text>
+  <rect x="1240" y="766" width="290" height="160" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="1260" y="797" class="heading">Company CRM / GWM APIs</text>
+  <text x="1260" y="823" class="badge">PLANNED INTEGRATION</text>
+  <text x="1260" y="851" class="label">Supplied API specifications only</text>
+  <text x="1260" y="878" class="small">Server-side adapter still required</text>
+  <text x="1260" y="901" class="small">No live company data connection</text>
+  <path d="M1150 667 L1190 667 L1190 845 L1240 845" class="planned"/>
+  <text x="1205" y="716" class="small">Future adapter</text>
+  <text x="58" y="951" class="small">Browser CRM state and PostgreSQL mock clients are separate datasets. Matching is for adviser review; it does not authorise outreach.</text>
+  <rect x="32" y="999" width="1536" height="208" rx="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="58" y="1031" class="badge">OPTIONAL DEVELOPMENT INFRASTRUCTURE - LOCAL EMULATION</text>
+  <rect x="60" y="1057" width="285" height="121" rx="12" fill="#fff" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="80" y="1087" class="heading">setup.sh + Terraform</text>
+  <text x="80" y="1115" class="label">Provision resources + create tables</text>
+  <text x="80" y="1141" class="label">Seed synthetic data</text>
+  <text x="80" y="1164" class="small">Optional image build / push / deploy</text>
+  <path d="M345 1118 L416 1118" class="arrow"/>
+  <rect x="416" y="1057" width="584" height="121" rx="12" fill="#fff" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="436" y="1087" class="heading">FakeCloud AWS emulation :4566</text>
+  <rect x="436" y="1105" width="165" height="56" rx="7" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+  <text x="448" y="1127" class="label">ECR</text>
+  <text x="448" y="1148" class="small">API image registry</text>
+  <rect x="619" y="1105" width="165" height="56" rx="7" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+  <text x="631" y="1127" class="label">ECS</text>
+  <text x="631" y="1148" class="small">API + MCP task</text>
+  <rect x="802" y="1105" width="178" height="56" rx="7" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+  <text x="814" y="1127" class="label">RDS</text>
+  <text x="814" y="1148" class="small">PostgreSQL instance</text>
+  <text x="1060" y="1082" class="heading">Alternative local provisioning path</text>
+  <text x="1060" y="1111" class="label">Uses the same backend image and database schema.</text>
+  <text x="1060" y="1138" class="small">ECS execution is optional; native services can use the DB.</text>
+  <text x="1060" y="1164" class="small">Production AWS networking / deployment is not implemented.</text>
+  <path d="M60 1239 L105 1239" class="arrow"/>
+  <text x="118" y="1244" class="small">Implemented runtime flow</text>
+  <path d="M365 1239 L410 1239" class="planned"/>
+  <text x="424" y="1244" class="small">Planned integration</text>
+  <text x="710" y="1244" class="small">Outreach, consent enforcement, follow-up and outcomes still need backend integration.</text>
 </svg>
