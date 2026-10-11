@@ -23,6 +23,7 @@ from app.tools.implementations import (
 
 from app.campaigns.repository import CAMPAIGN_ID_PATTERN
 from app.tools.campaign import execute_recommendation
+from app.tools.discovery import CampaignField, CampaignId, CampaignName, execute_discovery
 
 # Initialize the FastMCP server instance
 mcp = FastMCP(name="FastMCP Server")
@@ -122,6 +123,33 @@ def campaign_follow_up(
         "candidates": client_profiles,
         "additional_instructions": additional_instructions,
     }
+
+
+def _discovery_metadata(ctx: Context) -> dict | None:
+    request = ctx.request_context
+    metadata = request.meta if request is not None else None
+    return metadata if metadata is None or isinstance(metadata, dict) else metadata.model_dump()
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
+def get_active_campaigns(
+    ctx: Context,
+    campaign_ids: Annotated[list[CampaignId] | None, Field(max_length=100)] = None,
+    campaign_names: Annotated[list[CampaignName] | None, Field(max_length=100)] = None,
+    fields: Annotated[list[CampaignField] | None, Field(min_length=1, max_length=12)] = None,
+    limit: Annotated[int, Field(ge=1, le=1000, strict=True)] = 1000,
+) -> dict:
+    """List accessible synthetic campaigns active today in Singapore as a table.
+    Optional exact IDs/names restrict campaigns (both filters intersect).
+    Omit fields unless the user explicitly requests particular details. Defaults:
+    campaign_id, name, start_date, end_date, age_groups, genders, cash_bands.
+    Name is always included; campaign_id is an allowed output field.
+    Active is a filter, not a request to show only status. User identity (fa_id)
+    comes only from API metadata. Report empty results and truncation.
+    """
+    logger.info("MCP tool called: get_active_campaigns")
+    return execute_discovery('get_active_campaigns', dict(campaign_ids=campaign_ids,
+        campaign_names=campaign_names, fields=fields, limit=limit), _discovery_metadata(ctx))
 
 
 # 3. Run the Server

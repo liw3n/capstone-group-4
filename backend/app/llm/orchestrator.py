@@ -31,6 +31,26 @@ the campaign named in the current user message; if none is named, ask which
 campaign they mean rather than guessing.
 """
 
+# Add discovery guidance without replacing the recommendation/follow-up prompt.
+SYSTEM_PROMPT += """
+For active campaign discovery, call get_active_campaigns. This operation can list
+all accessible active campaigns without a selected campaign; the instructions above
+requiring a named/selected campaign apply to recommendation and follow-up tools.
+Use exact campaign IDs/names only when the current user requests particular campaigns.
+Do not narrow a general listing to the currently selected campaign or old history.
+Set fields only when the latest user explicitly requests particular details;
+otherwise omit fields or use null for campaign_id, name, start_date, end_date,
+age_groups, genders, cash_bands. Active is a filter, not a status-only projection.
+Campaign discovery uses today's Singapore date for active status;
+the existing recommendation tool retains its fixed demo date.
+Display the returned Markdown table in full, preserving its values and readable
+headers with spaces (Campaign ID, Name, Start Date, etc.).
+Campaign IDs are allowed in discovery output; names must also be shown. State
+empty results, disclose truncation and label synthetic data. Campaign details are
+for adviser review, not a product suitability assessment or financial advice.
+Do not interpret discovery as checking consent or authorising communications.
+"""
+
 class ToolExecutor(Protocol):
     def bind_scope(
         self, scope: RequestScope, campaign_id: str | None = None

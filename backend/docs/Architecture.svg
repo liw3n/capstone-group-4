@@ -63,9 +63,9 @@
   <text x="867" y="525" class="heading">FastMCP :8001 /mcp</text>
   <text x="867" y="550" class="label">Tools + shared domain logic</text>
   <text x="867" y="575" class="label">Scoped PostgreSQL data access</text>
-  <text x="867" y="602" class="small">Matching + demo / placeholder tools</text>
+  <text x="867" y="602" class="small">Discovery / matching / follow-up</text>
   <path d="M806 563 L848 563" class="arrow"/>
-  <text x="526" y="657" class="small">API calls tools over MCP HTTP; tools return structured results.</text>
+  <text x="526" y="657" class="small">API calls tools over MCP HTTP; tools return structured results + tables.</text>
   <text x="526" y="678" class="small">FA + tenant metadata is supplied separately from model arguments.</text>
   <rect x="1240" y="323" width="290" height="160" rx="12" fill="#fff1f2" stroke="#fecdd3" stroke-width="1.5"/>
   <text x="1260" y="356" class="heading">Groq / LLM provider</text>

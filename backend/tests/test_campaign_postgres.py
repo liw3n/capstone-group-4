@@ -179,3 +179,20 @@ def test_api_to_mcp_recommendation_persists_chat_in_postgres(database, monkeypat
     assert database.execute("SELECT count(*) FROM campaign_chat_sessions").fetchone()[0] == 1
     assert database.execute("SELECT count(*) FROM campaign_chat_messages").fetchone()[0] == 4
     assert len(store.get_history(store.latest_session(DEMO_FA).session_id)) == 4
+
+
+def test_active_discovery_filters_dates_and_assignments_in_postgres(database):
+    from datetime import date
+    scope = RequestScope(DEMO_FA)
+    assert len(repository.list_active_campaigns(scope, date(2026, 8, 26))) == 2
+    assert len(repository.list_active_campaigns(scope, date(2026, 8, 1))) == 2
+    assert len(repository.list_active_campaigns(scope, date(2026, 12, 31))) == 2
+    assert repository.list_active_campaigns(scope, date(2027, 1, 1)) == ()
+    assert repository.list_active_campaigns(RequestScope('adv-other-demo'), date(2026, 8, 26)) == ()
+    assert repository.list_active_campaigns(RequestScope(DEMO_FA, 'other-demo-tenant'), date(2026, 8, 26)) == ()
+    assert repository.list_active_campaigns(scope, date(2026, 8, 26), []) == ()
+    selected = repository.list_active_campaigns(scope, date(2026, 8, 26),
+                                               campaign_names=['LEGACY PROTECTION REFRESH'])
+    assert [c.campaign_id for c in selected] == ['camp-1']
+    database.execute("UPDATE mock_campaign SET status = 'paused' WHERE campaign_id = 'camp-1'")
+    assert [c.campaign_id for c in repository.list_active_campaigns(scope, date(2026, 8, 26))] == ['camp-2']

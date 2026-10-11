@@ -149,3 +149,54 @@ retrieving unreplied clients.
 See [campaign_recommendations.md](campaign_recommendations.md) for fake table
 assumptions, shared Make setup, expected frontend results and automated tests
 that work without Groq.
+
+
+### MCP: get_active_campaigns
+
+This read-only tool shares the existing MCP HTTP endpoint and does not change
+recommendation or follow-up tools. No new REST routes, SQL tables, ports or
+provisioning steps are required.
+
+The user ID `fa_id` and organisation boundary `tenant_id` come from API request
+metadata (`pulse_scope`), never model arguments. Campaigns must have a matching
+`mock_campaign_advisor` assignment. Caller-supplied adviser identity remains a
+prototype mechanism, not authenticated identity.
+
+Active means status `active` and inclusive start/end dates containing today's
+Singapore date. The recommendation tool retains its fixed demo date.
+
+Arguments: optional `campaign_ids` (exact IDs, at most 100), `campaign_names`
+(case-insensitive exact names, at most 100), `fields`, and `limit` (strict integer
+1–1000, default 1000). Supplying both campaign filters intersects them. An empty
+filter list returns no rows. A selected campaign does not narrow general
+campaign discovery; use explicit filters for a particular campaign.
+
+Default fields: `campaign_id`, `name`, `start_date`, `end_date`, `age_groups`,
+`genders`, `cash_bands`. Other selectable fields: `status`, `age_min`, `age_max`,
+`cash_min`, `cash_max`. Campaign name is always included. For general listings,
+PULSE is instructed to omit `fields` or pass null to show all default details;
+"active" is a filter, not a request for only name and status.
+
+Output: `data_source: synthetic`, `as_of_date`, `columns`, `rows`, a Markdown
+`table`, `total_count`, `returned_count`, `truncated`, and a disclaimer.
+Structured keys use snake_case; display headers have spaces (Campaign ID,
+Start Date, Cash Bands). Empty array criteria display as Any; absent optional
+values display as Unknown. Results above the limit are marked truncated;
+narrow campaign filters for smaller results.
+
+Missing/inaccessible/inactive campaigns return no rows without disclosing their
+existence. Missing scope and database failures return safe structured errors
+(`missing_context`, `storage_unavailable`), without connection details or
+fabricated fallback records.
+
+Example arguments:
+
+```json
+{"campaign_names": ["Legacy Protection Refresh"], "fields": ["name", "end_date"]}
+```
+
+Discovery is a synthetic review tool, not a product suitability or consent
+check. It does not send communications or mutate CRM records. Client matching
+remains available through `recommend_clients_for_campaign`. Consent checks,
+authorised outreach, interaction logging, follow-up task creation and outcome
+measurement remain separate workflow work.

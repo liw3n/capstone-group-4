@@ -35,12 +35,13 @@ def test_schema_exposes_only_campaign_and_bounded_limit():
         for item in schemas
         if item["function"]["name"] == "campaign_follow_up"
     )
-    assert names == {"recommend_clients_for_campaign", "campaign_follow_up"}
+    assert names == {"recommend_clients_for_campaign", "campaign_follow_up",
+                     "get_active_campaigns"}
     assert set(schema["properties"]) == {"campaign_id", "limit"}
     assert schema["properties"]["limit"]["minimum"] == 1
     assert schema["properties"]["limit"]["maximum"] == 100
     assert set(follow_up_schema["properties"]) == {"campaign", "limit"}
-    assert "fa_id" not in follow_up_schema["required"]
+    assert "fa_id" not in follow_up_schema.get("required", [])
 
 
 def test_campaign_implementations_read_dict_rows(monkeypatch):
@@ -103,6 +104,9 @@ def test_campaign_follow_up_returns_limited_profiles(monkeypatch):
         return {"client_id": client_id, "name": "Demo Client B", "age": 70}
 
     monkeypatch.setattr(server_module, "get_campaign_id", get_campaign)
+    monkeypatch.setattr(server_module, "get_campaign_info", lambda campaign_id: {
+        "campaign_id": campaign_id, "campaign_name": "Legacy Protection Refresh",
+    })
     monkeypatch.setattr(server_module, "get_client_follow_up_list", get_clients)
     monkeypatch.setattr(server_module, "fetch_client_portfolio", get_portfolio)
     monkeypatch.setattr(server_module, "fetch_client_profile", get_profile)
@@ -112,11 +116,15 @@ def test_campaign_follow_up_returns_limited_profiles(monkeypatch):
         "campaign_follow_up", '{"campaign":"camp-1","limit":1}'
     ))
 
+    assert result["campaign_info"] == {
+        "campaign_id": "camp-1", "campaign_name": "Legacy Protection Refresh",
+    }
     assert result["total_unreplied_clients"] == 2
     assert result["requested_limit"] == 1
     assert result["candidates"] == [{
         "client_id": "client-002",
         "portfolio_data": {"client_id": "client-002", "portfolio_value": 125000},
+        "profile_data": {"client_id": "client-002", "name": "Demo Client B", "age": 70},
         "last_engagement_date": engagement_date.isoformat(),
     }]
     assert portfolio_requests == ["client-002"]

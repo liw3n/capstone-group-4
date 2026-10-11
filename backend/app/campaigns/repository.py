@@ -151,3 +151,38 @@ def _load_clients(scope: RequestScope) -> tuple[Client, ...]:
 def list_clients_for_fa(scope: RequestScope) -> tuple[Client, ...]:
     """Filter ownership in SQL before any matching or counting. No fixture fallback."""
     return _load_clients(scope)
+
+
+def list_active_campaigns(scope: RequestScope, as_of: date,
+                          campaign_ids: list[str] | None = None,
+                          campaign_names: list[str] | None = None) -> tuple[Campaign, ...]:
+    """Active campaigns assigned to this user (fa_id) in this tenant; exact filters."""
+    with _connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT c.campaign_id, c.tenant_id, c.name, c.status, c.start_date, c.end_date,
+                   c.age_groups, c.genders, c.cash_bands,
+                   c.age_min, c.age_max, c.cash_min, c.cash_max
+            FROM mock_campaign AS c
+            JOIN mock_campaign_advisor AS a
+              ON a.tenant_id = c.tenant_id AND a.campaign_id = c.campaign_id
+            WHERE c.tenant_id = %s AND a.fa_id = %s AND c.status = 'active'
+              AND c.start_date <= %s AND c.end_date >= %s
+              AND (%s::text[] IS NULL OR c.campaign_id = ANY(%s::text[]))
+              AND (%s::text[] IS NULL OR lower(c.name) = ANY(%s::text[]))
+            ORDER BY c.campaign_id
+            """,
+            (scope.tenant_id, scope.fa_id, as_of, as_of, campaign_ids, campaign_ids,
+             campaign_names, [name.lower() for name in campaign_names]
+             if campaign_names is not None else None),
+        ).fetchall()
+    return tuple(Campaign(
+        campaign_id=row['campaign_id'], name=row['name'], tenant_id=row['tenant_id'],
+        fa_ids=(scope.fa_id,), status=row['status'], start_date=row['start_date'], end_date=row['end_date'],
+        criteria=Criteria(
+            age_groups=tuple(row['age_groups']), genders=tuple(row['genders']),
+            cash_bands=tuple(row['cash_bands']), age_min=row['age_min'], age_max=row['age_max'],
+            cash_min=float(row['cash_min']) if row['cash_min'] is not None else None,
+            cash_max=float(row['cash_max']) if row['cash_max'] is not None else None,
+        ),
+    ) for row in rows)
