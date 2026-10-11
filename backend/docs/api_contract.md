@@ -135,5 +135,13 @@ arguments are rejected by the API-side argument model or MCP input validation.
 Tool errors are passed back to the LLM as errors, never successful audience results.
 Recommendations are not communication consent or product suitability approval.
 
+### MCP: campaign_follow_up
+
+Model-facing arguments: `campaign` (required) and `limit` (integer 1-100,
+default 5). The API supplies the adviser identity through `_meta.pulse_scope`;
+`fa_id` is not a model argument and is never requested from the adviser by the
+assistant. The tool uses that scoped adviser ID when retrieving unreplied
+clients.
+
 See [campaign_recommendations.md](campaign_recommendations.md) for fake table
 assumptions, SQL setup, expected results and commands that work without Groq.

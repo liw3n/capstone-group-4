@@ -24,11 +24,9 @@ outreach consent or authorise sending communications; adviser confirmation and
 separate channel consent checks are required before outreach.
 
 For campaign follow-up, call campaign_follow_up to get unreplied clients and their
-portfolio profiles. Use this to identify high-value follow-ups. Do not invent
-portfolio data or client information. If the tool returns an error, explain it without inventing client results.
-This tool does not check outreach consent or authorise sending communications; adviser confirmation and separate channel consent checks are required before outreach.
+portfolio profiles. Use this to do a suitability assessment and identify high-value follow-ups. 
+Do not invent client results. If a tool returns an error, explain it without inventing client results.
 """
-
 
 class ToolExecutor(Protocol):
     def bind_scope(self, scope: RequestScope) -> "ToolExecutor": ...

@@ -30,10 +30,17 @@ def test_schema_exposes_only_campaign_and_bounded_limit():
     names = {item["function"]["name"] for item in schemas}
     schema = next(item["function"]["parameters"] for item in schemas
                   if item["function"]["name"] == "recommend_clients_for_campaign")
+    follow_up_schema = next(
+        item["function"]["parameters"]
+        for item in schemas
+        if item["function"]["name"] == "campaign_follow_up"
+    )
     assert names == {"recommend_clients_for_campaign", "campaign_follow_up"}
     assert set(schema["properties"]) == {"campaign_id", "limit"}
     assert schema["properties"]["limit"]["minimum"] == 1
     assert schema["properties"]["limit"]["maximum"] == 100
+    assert set(follow_up_schema["properties"]) == {"campaign", "limit"}
+    assert "fa_id" not in follow_up_schema["required"]
 
 
 def test_campaign_implementations_read_dict_rows(monkeypatch):
@@ -55,7 +62,7 @@ def test_campaign_implementations_read_dict_rows(monkeypatch):
             if "SELECT campaign_id" in query:
                 assert parameters == ("%Legacy Protection Refresh%",)
                 return FakeResult(rows=[{"campaign_id": "camp-1"}])
-            assert parameters == ("camp-1",)
+            assert parameters == ("camp-1", DEMO_FA)
             return FakeResult(rows=[{
                 "client_id": "client-002",
                 "last_engagement_date": engagement_date,
@@ -66,20 +73,22 @@ def test_campaign_implementations_read_dict_rows(monkeypatch):
     )
 
     assert implementations.get_campaign_id("Legacy Protection Refresh") == "camp-1"
-    assert implementations.get_client_follow_up_list("camp-1") == [
+    assert implementations.get_client_follow_up_list("camp-1", DEMO_FA) == [
         ("client-002", engagement_date)
     ]
 
 
 def test_campaign_follow_up_returns_limited_profiles(monkeypatch):
     engagement_date = datetime(2026, 8, 2, 11, 0)
+    requested_fa_ids = []
 
     def get_campaign(campaign):
         assert campaign == "camp-1"
         return campaign
 
-    def get_clients(campaign_id):
+    def get_clients(campaign_id, fa_id):
         assert campaign_id == "camp-1"
+        requested_fa_ids.append(fa_id)
         return [("client-002", engagement_date)]
 
     def get_portfolio(client_id):
@@ -88,19 +97,34 @@ def test_campaign_follow_up_returns_limited_profiles(monkeypatch):
     monkeypatch.setattr(server_module, "get_campaign_id", get_campaign)
     monkeypatch.setattr(server_module, "get_client_follow_up_list", get_clients)
     monkeypatch.setattr(server_module, "fetch_client_portfolio", get_portfolio)
+    monkeypatch.setattr(
+        server_module, "fetch_client_profile",
+        lambda client_id: {"client_id": client_id, "name": "Demo Client"},
+    )
 
-    registry = MCPToolRegistry(server)
+    registry = MCPToolRegistry(server).bind_scope(RequestScope(DEMO_FA))
     result = json.loads(registry.execute(
         "campaign_follow_up", '{"campaign":"camp-1","limit":5}'
     ))
 
+    assert requested_fa_ids == [DEMO_FA]
     assert result["total_unreplied_clients"] == 1
     assert result["requested_limit"] == 5
     assert result["candidates"] == [{
         "client_id": "client-002",
         "portfolio_data": {"client_id": "client-002", "portfolio_value": 125000},
+        "profile_data": {"client_id": "client-002", "name": "Demo Client"},
         "last_engagement_date": engagement_date.isoformat(),
     }]
+
+
+def test_campaign_follow_up_requires_server_bound_adviser_context():
+    registry = MCPToolRegistry(server)
+    result = json.loads(registry.execute(
+        "campaign_follow_up", '{"campaign":"camp-1","limit":5}'
+    ))
+
+    assert result["error_code"] == "missing_context"
 
 
 def test_real_mcp_protocol_returns_structured_matches(caplog):

@@ -16,7 +16,8 @@ from app.tools.implementations import (
     get_campaign_id,
     get_client_follow_up_list,
     fetch_client_portfolio,
-    fetch_client_profile
+    fetch_client_profile,
+    get_campaign_info
 )
 
 from app.campaigns.repository import CAMPAIGN_ID_PATTERN
@@ -50,16 +51,30 @@ def campaign_follow_up(
         str,
         Field(description="The identifier for the campaign. Can be either the campaign name (e.g., 'Spring Promo') or the campaign ID (e.g., 'camp-12345').")
     ],
+    ctx: Context,
     limit: Annotated[int, Field(ge=1, le=100, strict=True)] = 5,
 ) -> dict:
     """
     Return unreplied clients and their detailed portfolio profiles for a given campaign
-    so high-value follow-ups can be identified.
+    so high-value and suitable follow-ups can be identified.
     """
     logger.info("MCP tool called: campaign_follow_up")
+    request = ctx.request_context
+    metadata = request.meta if request is not None else None
+    if metadata is not None and not isinstance(metadata, dict):
+        metadata = metadata.model_dump()
+    pulse_scope = metadata.get("pulse_scope") if isinstance(metadata, dict) else None
+    fa_id = pulse_scope.get("fa_id") if isinstance(pulse_scope, dict) else None
+    if not isinstance(fa_id, str) or not fa_id.strip():
+        return {
+            "error": "Adviser request context is required",
+            "error_code": "missing_context",
+        }
+
     # 1. Get campaign and unreplied client IDs
     campaign_id = get_campaign_id(campaign)
-    client_info = get_client_follow_up_list(campaign_id)
+    campaign_info = get_campaign_info(campaign_id)
+    client_info = get_client_follow_up_list(campaign_id, fa_id)
     limited_client_info = client_info[:limit]
 
     # 2. Fetch portfolio info for these clients
@@ -74,12 +89,20 @@ def campaign_follow_up(
             "last_engagement_date": last_engagement_date.isoformat() if last_engagement_date else None
         })
 
+    additional_instructions = (
+        "Based on the provided campaign and client information, identify the purpose of the campaign and the target audience for the campaign."
+        "Evaluate the customer profile and portfolio to identify the most suitable clients that are high-value to follow-up on for the campaign"
+        "to ensure that the campaign is effective and reaches the right audience. " 
+        "Note: This tool does not check outreach consent or authorise sending communications; adviser confirmation and separate channel consent checks are required before outreach."
+    )
+
     # 3. Return the rich data back to the LLM
     return {
-        "campaign_name": campaign,
+        "campaign_info": campaign_info,
         "total_unreplied_clients": len(client_info),
         "requested_limit": limit,
-        "candidates": client_profiles
+        "candidates": client_profiles,
+        "additional_instructions": additional_instructions,
     }
 
 

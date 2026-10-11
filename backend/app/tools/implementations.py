@@ -26,10 +26,37 @@ def get_campaign_id(campaign: str) -> str:
         raise ValueError(f"Multiple campaigns found with name: {campaign}")
     return rows[0]["campaign_id"]
 
-
-def get_client_follow_up_list(campaign_id: str) -> list[tuple[str, datetime]]:
+def get_campaign_info(campaign_id: str) -> dict:
     """
-    Query the client follow-up list for a given campaign ID.
+    Query the campaign information based on the campaign ID.
+    """
+    with _connection() as connection:
+        row = connection.execute(
+            """
+            SELECT campaign_id, name, start_date, end_date, age_groups, genders, cash_bands
+            FROM mock_campaign
+            WHERE campaign_id = %s
+            """,
+            (campaign_id,),
+        ).fetchone()
+
+    if not row:
+        raise ValueError(f"No campaign information found for campaign ID: {campaign_id}")
+
+    return {
+        "campaign_id": row["campaign_id"],
+        "campaign_name": row["name"],
+        "start_date": row["start_date"].isoformat() if row["start_date"] else None,
+        "end_date": row["end_date"].isoformat() if row["end_date"] else None,
+        "age_group": row["age_groups"],
+        "genders": row["genders"],
+        "cash_bands": row["cash_bands"]
+    }
+
+
+def get_client_follow_up_list(campaign_id: str, fa_id: str) -> list[tuple[str, datetime]]:
+    """
+    Query the client follow-up list for a given campaign ID and FA ID.
     """
     with _connection() as connection:
         # Engagement Status: 0 = Contacted, 1 = Engaged, 2 = Rejected
@@ -37,9 +64,9 @@ def get_client_follow_up_list(campaign_id: str) -> list[tuple[str, datetime]]:
             """
             SELECT client_id, last_engagement_date
             FROM mock_campaign_engagement
-            WHERE campaign_id = %s and engagement_status = 0
+            WHERE campaign_id = %s and fa_id = %s and engagement_status = 0
             """,
-            (campaign_id,),
+            (campaign_id, fa_id),
         ).fetchall()
 
     if not rows:
