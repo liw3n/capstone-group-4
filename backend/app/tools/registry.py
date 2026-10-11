@@ -33,7 +33,9 @@ class ToolRegistry:
             definition.name: definition for definition in (definitions or [])
         }
 
-    def bind_scope(self, _scope: RequestScope) -> "ToolRegistry":
+    def bind_scope(
+        self, _scope: RequestScope, campaign_id: str | None = None
+    ) -> "ToolRegistry":
         # These local demonstration tools do not access adviser-owned records.
         return self
 

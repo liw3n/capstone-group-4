@@ -1,4 +1,5 @@
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -47,11 +48,11 @@ def recommend_clients_for_campaign(
 
 @mcp.tool()
 def campaign_follow_up(
-    campaign: Annotated[
-        str,
-        Field(description="The identifier for the campaign. Can be either the campaign name (e.g., 'Spring Promo') or the campaign ID (e.g., 'camp-12345').")
-    ],
     ctx: Context,
+    campaign: Annotated[
+        str | None,
+        Field(description="Campaign name or ID from the current user message. Used only when no campaign is selected."),
+    ] = None,
     limit: Annotated[int, Field(ge=1, le=100, strict=True)] = 5,
 ) -> dict:
     """
@@ -72,7 +73,24 @@ def campaign_follow_up(
         }
 
     # 1. Get campaign and unreplied client IDs
-    campaign_id = get_campaign_id(campaign)
+    selected_campaign_id = metadata.get("campaign_id") if isinstance(metadata, dict) else None
+    if selected_campaign_id is not None:
+        if (not isinstance(selected_campaign_id, str)
+                or re.fullmatch(CAMPAIGN_ID_PATTERN, selected_campaign_id) is None):
+            return {
+                "error": "Selected campaign context is invalid",
+                "error_code": "invalid_campaign_context",
+            }
+        campaign_query = selected_campaign_id
+    else:
+        campaign_query = campaign
+    if not isinstance(campaign_query, str) or not campaign_query.strip():
+        return {
+            "error": "A selected campaign or campaign name from the current message is required",
+            "error_code": "missing_campaign",
+        }
+
+    campaign_id = get_campaign_id(campaign_query)
     campaign_info = get_campaign_info(campaign_id)
     client_info = get_client_follow_up_list(campaign_id, fa_id)
     limited_client_info = client_info[:limit]

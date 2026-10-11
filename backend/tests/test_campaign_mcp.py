@@ -123,6 +123,35 @@ def test_campaign_follow_up_returns_limited_profiles(monkeypatch):
     assert profile_requests == ["client-002"]
 
 
+def test_campaign_follow_up_prefers_selected_campaign_context(monkeypatch):
+    resolved_campaigns = []
+
+    def get_campaign(campaign):
+        resolved_campaigns.append(campaign)
+        return campaign
+
+    monkeypatch.setattr(server_module, "get_campaign_id", get_campaign)
+    monkeypatch.setattr(server_module, "get_campaign_info", lambda _campaign_id: {})
+    monkeypatch.setattr(server_module, "get_client_follow_up_list", lambda *_args: [])
+
+    registry = MCPToolRegistry(server).bind_scope(
+        RequestScope(DEMO_FA), campaign_id="camp-2"
+    )
+    result = json.loads(registry.execute(
+        "campaign_follow_up", '{"campaign":"Spring Promo"}'
+    ))
+
+    assert resolved_campaigns == ["camp-2"]
+    assert result["total_unreplied_clients"] == 0
+
+
+def test_campaign_follow_up_requires_campaign_when_no_selection():
+    registry = MCPToolRegistry(server).bind_scope(RequestScope(DEMO_FA))
+    result = json.loads(registry.execute("campaign_follow_up", "{}"))
+
+    assert result["error_code"] == "missing_campaign"
+
+
 def test_campaign_follow_up_requires_server_bound_adviser_context():
     registry = MCPToolRegistry(server)
     result = json.loads(registry.execute(

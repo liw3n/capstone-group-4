@@ -13,14 +13,18 @@ from app.tools.campaign import RecommendationArguments
 
 class MCPToolRegistry:
     def __init__(self, transport: Any, timeout_seconds: float = 30.0,
-                 scope: RequestScope | None = None) -> None:
+                 scope: RequestScope | None = None,
+                 campaign_id: str | None = None) -> None:
         self.transport = transport
         self.timeout_seconds = timeout_seconds
         self.scope = scope
+        self.campaign_id = campaign_id
 
-    def bind_scope(self, scope: RequestScope) -> "MCPToolRegistry":
+    def bind_scope(
+        self, scope: RequestScope, campaign_id: str | None = None
+    ) -> "MCPToolRegistry":
         # The cached orchestrator never stores mutable per-adviser context.
-        return MCPToolRegistry(self.transport, self.timeout_seconds, scope)
+        return MCPToolRegistry(self.transport, self.timeout_seconds, scope, campaign_id)
 
     async def _list_tools(self) -> list[Any]:
         async with Client(self.transport, timeout=self.timeout_seconds) as client:
@@ -32,6 +36,8 @@ class MCPToolRegistry:
             if self.scope is not None:
                 metadata = {"pulse_scope": {"fa_id": self.scope.fa_id,
                                             "tenant_id": self.scope.tenant_id}}
+                if self.campaign_id is not None:
+                    metadata["campaign_id"] = self.campaign_id
             return await client.call_tool(name, arguments, meta=metadata, raise_on_error=False)
 
     def schemas(self) -> list[dict[str, Any]]:

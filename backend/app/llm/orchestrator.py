@@ -26,10 +26,15 @@ separate channel consent checks are required before outreach.
 For campaign follow-up, call campaign_follow_up to get unreplied clients and their
 portfolio profiles. Use this to do a suitability assessment and identify high-value follow-ups. 
 Do not invent client results. If a tool returns an error, explain it without inventing client results.
+Use the currently selected campaign context when one is provided. Otherwise use
+the campaign named in the current user message; if none is named, ask which
+campaign they mean rather than guessing.
 """
 
 class ToolExecutor(Protocol):
-    def bind_scope(self, scope: RequestScope) -> "ToolExecutor": ...
+    def bind_scope(
+        self, scope: RequestScope, campaign_id: str | None = None
+    ) -> "ToolExecutor": ...
 
     def schemas(self) -> list[dict[str, Any]]: ...
 
@@ -49,7 +54,11 @@ class ChatOrchestrator:
 
     def run(self, user_message: str, history: list[ChatHistoryItem], *,
             scope: RequestScope | None = None, campaign_id: str | None = None) -> str:
-        registry = self.registry.bind_scope(scope) if scope is not None else self.registry
+        registry = (
+            self.registry.bind_scope(scope, campaign_id)
+            if scope is not None
+            else self.registry
+        )
         prompt = SYSTEM_PROMPT
         if scope is not None:
             prompt += "\nCurrent campaign context (server-validated): " + json.dumps(

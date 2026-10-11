@@ -137,11 +137,14 @@ Recommendations are not communication consent or product suitability approval.
 
 ### MCP: campaign_follow_up
 
-Model-facing arguments: `campaign` (required) and `limit` (integer 1-100,
-default 5). The API supplies the adviser identity through `_meta.pulse_scope`;
-`fa_id` is not a model argument and is never requested from the adviser by the
-assistant. The tool uses that scoped adviser ID when retrieving unreplied
-clients.
+Model-facing arguments: `campaign` (optional campaign name or ID from the
+current user message) and `limit` (integer 1-100, default 5). When the API
+request includes a selected `campaign_id`, that server-bound context takes
+precedence over the model argument; otherwise the campaign from the current
+message is used. The API supplies the adviser identity through
+`_meta.pulse_scope`; `fa_id` is not a model argument and is never requested
+from the adviser by the assistant. The tool uses that scoped adviser ID when
+retrieving unreplied clients.
 
 See [campaign_recommendations.md](campaign_recommendations.md) for fake table
 assumptions, shared Make setup, expected frontend results and automated tests
