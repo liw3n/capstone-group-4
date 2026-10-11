@@ -21,21 +21,24 @@ current form.
 
 ## Run it
 
-For a new teammate checkout, follow the [complete application setup guide](../README.md#teammate-setup-and-running-the-whole-application-windows--docker).
-It covers PostgreSQL and mock data, FastAPI/MCP, environment settings and startup.
-
-Start the FastAPI service on port `4000` as documented in `../backend/README.md`,
-then run the frontend with Node.js 22.12 or newer:
+Use the [shared team setup guide](../README.md#team-setup-and-development-workflow).
+After bootstrapping and configuring the backend key, run from the repository root
+in the team's macOS/Linux/WSL Bash environment:
 
 ```bash
-npm ci
-npm run dev
+make provision
+make dev
 ```
 
-Open http://localhost:3000. Vite proxies `/api` calls to
-`http://localhost:4000`. For a separately hosted backend, copy `.env.example`
-to `.env.local` and set `VITE_API_BASE_URL` to its public origin. LLM credentials
-belong only in the backend environment and must never use the `VITE_` prefix.
+`make dev` starts FastAPI :4000, FastMCP :8001 and Vite :3000 together. Open
+http://localhost:3000 and demonstrate MCP features through the existing CRM/PULSE
+interface. Do not create a separate feature demo application.
+
+For frontend-only work with the shared backend already running, use
+`make frontend-dev` from the repository root. Vite proxies `/api` to
+`http://localhost:4000`. For a separately hosted backend, set `VITE_API_BASE_URL`
+in `.env.local`; provider credentials belong only in the backend and must never
+use the `VITE_` prefix.
 
 | Script | Does |
 | --- | --- |
@@ -630,9 +633,9 @@ table and simulated outreach remain independent.
 
 See [backend prototype documentation](../backend/docs/campaign_recommendations.md)
 for the expected matches, assumptions and manual verification. Chat requires the
-existing backend, database and provider setup; matching can also be tested with
-the backend's standalone Python command against PostgreSQL. Focused automated
-chat rendering checks are available as described below.
+shared backend, database and provider setup through `make provision` / `make dev`.
+Matching also has automated backend tests; no standalone tool demo script is
+required. Focused chat rendering checks are available as described below.
 
 Assistant answers render Markdown headings, emphasis, lists and tables. Client
 recommendation and missing-profile tables display as compact cards in the chat

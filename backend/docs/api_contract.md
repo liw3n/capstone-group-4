@@ -144,4 +144,5 @@ assistant. The tool uses that scoped adviser ID when retrieving unreplied
 clients.
 
 See [campaign_recommendations.md](campaign_recommendations.md) for fake table
-assumptions, SQL setup, expected results and commands that work without Groq.
+assumptions, shared Make setup, expected frontend results and automated tests
+that work without Groq.

@@ -6,79 +6,60 @@ frontend submits the selected campaign ID; FastAPI verifies access and active
 status; the LLM calls the read-only MCP tool; the tool returns criteria matches
 and missing information with counts and explanations. There is no ranking.
 
-## Local PostgreSQL setup and testing
+## Shared setup and frontend demonstration
 
-The recommendation repository reads PostgreSQL, using the same `DATABASE_URL`
-as chat storage. There is no automatic fallback to Python data. The mock table
-names make the synthetic prototype separate from the unfinished company schema.
+Use the [team Make workflow](../../README.md#team-setup-and-development-workflow).
+From the repository root in the team's macOS/Linux/WSL Bash environment, bootstrap
+dependencies, configure the local Groq key, then run:
 
-With the local `pulse-postgres` container running, run from `backend/`:
-
-```powershell
-docker cp .\tables\create_campaign_chat_sessions.sql pulse-postgres:/tmp/chat.sql
-docker exec pulse-postgres psql -U postgres -d pulse -v ON_ERROR_STOP=1 -f /tmp/chat.sql
-docker cp .\tables\create_mock_campaign_tables.sql pulse-postgres:/tmp/mock-tables.sql
-docker exec pulse-postgres psql -U postgres -d pulse -v ON_ERROR_STOP=1 -f /tmp/mock-tables.sql
-docker cp .\tables\seed_mock_campaign_data.sql pulse-postgres:/tmp/mock-seed.sql
-docker exec pulse-postgres psql -U postgres -d pulse -v ON_ERROR_STOP=1 -f /tmp/mock-seed.sql
+```bash
+make provision
+make dev
 ```
 
-The schema and seed scripts are additive and repeatable. Seeds use
-`ON CONFLICT DO NOTHING`: rerunning them preserves edits to existing demo rows.
-They do not reset profiles. No production schema compatibility is claimed.
+Provisioning runs `backend/setup.sh`. Its ordered SQL loop applies
+`create_campaign_chat_sessions.sql`, `create_mock_campaign_tables.sql`,
+`seed_mock_campaign_data.sql`, then `create_mock_campaign_engagement.sql` from
+`backend/tables/`. Every teammate loads the same
+synthetic records into their own local database. The schema and seeds are additive
+and repeatable; `ON CONFLICT DO NOTHING` preserves existing edits. Use explicit
+migration/update SQL when changing existing fields or records.
 
-Copy `.env.example` to the ignored `.env` yourself and configure the database:
+`setup.sh` generates `DATABASE_URL` for the provisioned database. The prior
+`pulse-postgres:5432` Docker-network address is not the configuration for native
+Make-started services. Install the standalone `fakecloud` executable using its
+[official installer](https://fakecloud.dev/docs/getting-started/install/) as
+described in the shared setup guide. The `localstack` Python dependency does
+not provide FakeCloud. With Docker running, `make provision` starts the
+emulator automatically and loads the mock tables and data.
 
-- For Python running on Windows: use host `127.0.0.1`, port `55432`, database `pulse`.
-- For the API container attached to Docker network `pulse-dev`: use host
-  `pulse-postgres`, port `5432`, database `pulse`.
-- Set the username/password to those chosen when creating your local database.
+`make dev` starts Vite :3000, FastAPI :4000 and MCP :8001 using the shared startup
+script. Demonstrate the tool in PULSE at **http://localhost:3000**. No standalone
+feature demo program is needed. `matching.py` and `repository.py` are runtime
+implementation modules imported by the MCP tool, not separate demo applications.
 
-To run the full application using Docker, set `DATABASE_URL` in `.env` to
-`postgresql://<user>:<password>@pulse-postgres:5432/pulse`, set your actual
-`GROQ_API_KEY`, and keep `MCP_SERVER_URL=http://127.0.0.1:8001/mcp`. Then run from
-`backend/`:
-
-```powershell
-docker build -t pulse-chat-api .
-docker run --rm --name pulse-api --network pulse-dev --env-file .env -p 127.0.0.1:4000:4000 pulse-chat-api
-```
-
-Keep that terminal running. In another terminal, start Vite from `frontend/`
-with `npm run dev`, then open `http://localhost:3000`. The API and MCP run in the
-same container; MCP does not need a Windows port mapping. This path uses the
-local database container and does not require the FakeCloud setup script.
-
-Install locked dependencies with `uv sync --frozen`. To test recommendations
-without a Groq key or running the API/MCP services:
-
-```powershell
-uv run python -B -m app.campaigns.demo camp-1
-uv run python -B -m app.campaigns.demo camp-2
-```
-
-These commands read persisted table rows and print the same structured result as
-the MCP tool. A new invocation sees committed database edits. Age calculations
-still use the fixed frontend demo date; they do not use the wall clock.
-
-`uv run pytest` tests the matcher, MCP and API without a database or provider key
-using test-only repository doubles. PostgreSQL integration tests are opt-in:
-set `PULSE_TEST_DATABASE_URL` to a local test database before running pytest.
-They create/drop only uniquely named `pulse_campaign_test_*` schemas in that
-specified database; they do not change its public tables. Integration checks
-cover repeatable SQL, ownership, criteria conversion, stored edits, constraints
-and the complete API-to-MCP-to-PostgreSQL chat path with a fake AI provider.
-
-Expected demo results as of **2026-08-26**:
+Expected untouched seed results on the fixed demo date **2026-08-26**:
 
 | Campaign | Evaluated | Matched | Incomplete | Excluded |
 | --- | ---: | ---: | ---: | ---: |
 | camp-1: Legacy Protection Refresh | 12 | 4 (A, B, C, L) | 2 (J, K) | 6 |
 | camp-2: First Home Starter Bundle | 12 | 3 (F, G, H) | 2 (J, K) | 7 |
 
-There are 14 seeded synthetic clients: 12 in the demo adviser's book, one owned by another
+There are 14 synthetic clients: 12 in the demo adviser's book, one owned by another
 adviser and one in another tenant. Out-of-scope clients are never counted or
-returned. Every name and identifier in these seed rows is synthetic.
+returned. Every name and identifier is synthetic.
+
+## Automated verification
+
+Run `uv run pytest` from `backend/`. Unit tests inject test-only rows and mock the
+provider; runtime recommendations always read PostgreSQL. No Groq key or running
+API/MCP processes are needed for those unit tests.
+
+PostgreSQL integration tests are opt-in: set `PULSE_TEST_DATABASE_URL` to a local
+test database. They create/drop uniquely named `pulse_campaign_test_*` schemas,
+without changing public demo tables. They cover repeatable SQL, ownership, stored
+edits, constraints and API-to-MCP-to-PostgreSQL chat with a fake model provider.
+The frontend presentation check remains the shared application flow below.
 
 ## Mock table assumptions
 
@@ -166,7 +147,7 @@ from suitability assessment and financial advice.
 
 Manual check with the existing backend/database/provider setup:
 
-1. Run frontend TypeScript checking and build; start the frontend and backend.
+1. Complete provisioning, run the checks, and start the shared stack with `make dev`.
 2. Sign in as Financial Advisor; open Campaigns > Legacy Protection Refresh.
 3. Open PULSE; check the selected campaign name and synthetic-client notice.
 4. Click Ask for recommended clients, then send. Expect A/B/C/L, with age/cash
@@ -180,8 +161,10 @@ Manual check with the existing backend/database/provider setup:
 
 Chat history remains adviser/session-based and can contain earlier campaign
 answers. The visible selection and system context apply to the next question.
-There is no frontend automated test harness; use the manual flow above.
+Focused chat rendering tests run with `npm run test:chat` from `frontend/`; there
+is no complete frontend component/end-to-end harness. Use the manual flow above
+for the interim presentation.
 
 The general system architecture is in `Architecture.svg`, covering CRM state,
-chat, AI/MCP, PostgreSQL and optional development infrastructure. The rendered
+chat, AI/MCP, PostgreSQL and the shared development provisioning workflow. The rendered
 `Architecture.png` is an older export.
