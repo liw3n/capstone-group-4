@@ -2,6 +2,8 @@ import pytest
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
+from datetime import datetime
 import importlib.util
 import json
 from pathlib import Path
@@ -11,6 +13,7 @@ from fastmcp import Client
 pytestmark = pytest.mark.usefixtures("campaign_rows")
 
 from app.campaigns.repository import DEMO_FA, RequestScope
+from app.tools import implementations
 from app.tools.campaign import execute_recommendation
 from app.tools.mcp_registry import MCPToolRegistry
 
@@ -33,7 +36,75 @@ def test_schema_exposes_only_campaign_and_bounded_limit():
     assert schema["properties"]["limit"]["maximum"] == 100
 
 
-def test_real_mcp_protocol_returns_structured_matches():
+def test_campaign_implementations_read_dict_rows(monkeypatch):
+    engagement_date = datetime(2026, 8, 2, 11, 0)
+
+    class FakeResult:
+        def __init__(self, row=None, rows=None):
+            self.row = row
+            self.rows = rows or []
+
+        def fetchone(self):
+            return self.row
+
+        def fetchall(self):
+            return self.rows
+
+    class FakeConnection:
+        def execute(self, query, parameters):
+            if "SELECT campaign_id" in query:
+                assert parameters == ("%Legacy Protection Refresh%",)
+                return FakeResult(rows=[{"campaign_id": "camp-1"}])
+            assert parameters == ("camp-1",)
+            return FakeResult(rows=[{
+                "client_id": "client-002",
+                "last_engagement_date": engagement_date,
+            }])
+
+    monkeypatch.setattr(
+        implementations, "_connection", lambda: nullcontext(FakeConnection())
+    )
+
+    assert implementations.get_campaign_id("Legacy Protection Refresh") == "camp-1"
+    assert implementations.get_client_follow_up_list("camp-1") == [
+        ("client-002", engagement_date)
+    ]
+
+
+def test_campaign_follow_up_returns_limited_profiles(monkeypatch):
+    engagement_date = datetime(2026, 8, 2, 11, 0)
+
+    def get_campaign(campaign):
+        assert campaign == "camp-1"
+        return campaign
+
+    def get_clients(campaign_id):
+        assert campaign_id == "camp-1"
+        return [("client-002", engagement_date)]
+
+    def get_portfolio(client_id):
+        return {"client_id": client_id, "portfolio_value": 125000}
+
+    monkeypatch.setattr(server_module, "get_campaign_id", get_campaign)
+    monkeypatch.setattr(server_module, "get_client_follow_up_list", get_clients)
+    monkeypatch.setattr(server_module, "fetch_client_portfolio", get_portfolio)
+
+    registry = MCPToolRegistry(server)
+    result = json.loads(registry.execute(
+        "campaign_follow_up", '{"campaign":"camp-1","limit":5}'
+    ))
+
+    assert result["total_unreplied_clients"] == 1
+    assert result["requested_limit"] == 5
+    assert result["candidates"] == [{
+        "client_id": "client-002",
+        "portfolio_data": {"client_id": "client-002", "portfolio_value": 125000},
+        "last_engagement_date": engagement_date.isoformat(),
+    }]
+
+
+def test_real_mcp_protocol_returns_structured_matches(caplog):
+    caplog.set_level("INFO")
     registry = MCPToolRegistry(server).bind_scope(RequestScope(DEMO_FA))
     result = json.loads(registry.execute("recommend_clients_for_campaign", '{"campaign_id":"camp-1"}'))
     assert result["data_source"] == "synthetic"
@@ -41,6 +112,7 @@ def test_real_mcp_protocol_returns_structured_matches():
     assert result["returned_count"] == 4
     assert result["evaluated_count"] == 12
     assert result["clients"][0]["contact_id"] == "client-001"
+    assert "MCP tool called: recommend_clients_for_campaign" in caplog.text
 
 
 def test_tool_requires_metadata_and_checks_access():

@@ -1,3 +1,4 @@
+import logging
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -15,6 +16,7 @@ from app.tools.implementations import (
     get_campaign_id,
     get_client_follow_up_list,
     fetch_client_portfolio,
+    fetch_client_profile
 )
 
 from app.campaigns.repository import CAMPAIGN_ID_PATTERN
@@ -22,6 +24,7 @@ from app.tools.campaign import execute_recommendation
 
 # Initialize the FastMCP server instance
 mcp = FastMCP(name="FastMCP Server")
+logger = logging.getLogger(__name__)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
@@ -34,6 +37,7 @@ def recommend_clients_for_campaign(
     Read-only; no ranking or product suitability assessment. Adviser and tenant
     scope come from API request metadata, never from model arguments.
     """
+    logger.info("MCP tool called: recommend_clients_for_campaign")
     request = ctx.request_context
     metadata = request.meta if request is not None else None
     if metadata is not None and not isinstance(metadata, dict):
@@ -52,6 +56,7 @@ def campaign_follow_up(
     Return unreplied clients and their detailed portfolio profiles for a given campaign
     so high-value follow-ups can be identified.
     """
+    logger.info("MCP tool called: campaign_follow_up")
     # 1. Get campaign and unreplied client IDs
     campaign_id = get_campaign_id(campaign)
     client_info = get_client_follow_up_list(campaign_id)
@@ -61,9 +66,11 @@ def campaign_follow_up(
     client_profiles = []
     for client_id, last_engagement_date in limited_client_info:
         portfolio = fetch_client_portfolio(client_id)
+        profile = fetch_client_profile(client_id)
         client_profiles.append({
             "client_id": client_id,
             "portfolio_data": portfolio,
+            "profile_data": profile,
             "last_engagement_date": last_engagement_date.isoformat() if last_engagement_date else None
         })
 
@@ -78,4 +85,5 @@ def campaign_follow_up(
 
 # 3. Run the Server
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     mcp.run(transport="http", host="0.0.0.0", port=8001)
