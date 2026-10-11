@@ -80,7 +80,6 @@ def test_campaign_implementations_read_dict_rows(monkeypatch):
 
 def test_campaign_follow_up_returns_limited_profiles(monkeypatch):
     engagement_date = datetime(2026, 8, 2, 11, 0)
-    requested_fa_ids = []
     portfolio_requests = []
     profile_requests = []
 
