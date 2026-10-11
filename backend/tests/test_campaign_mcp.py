@@ -73,6 +73,8 @@ def test_campaign_implementations_read_dict_rows(monkeypatch):
 
 def test_campaign_follow_up_returns_limited_profiles(monkeypatch):
     engagement_date = datetime(2026, 8, 2, 11, 0)
+    portfolio_requests = []
+    profile_requests = []
 
     def get_campaign(campaign):
         assert campaign == "camp-1"
@@ -80,27 +82,39 @@ def test_campaign_follow_up_returns_limited_profiles(monkeypatch):
 
     def get_clients(campaign_id):
         assert campaign_id == "camp-1"
-        return [("client-002", engagement_date)]
+        return [
+            ("client-002", engagement_date),
+            ("client-003", engagement_date),
+        ]
 
     def get_portfolio(client_id):
+        portfolio_requests.append(client_id)
         return {"client_id": client_id, "portfolio_value": 125000}
+
+    def get_profile(client_id):
+        profile_requests.append(client_id)
+        return {"client_id": client_id, "name": "Demo Client B", "age": 70}
 
     monkeypatch.setattr(server_module, "get_campaign_id", get_campaign)
     monkeypatch.setattr(server_module, "get_client_follow_up_list", get_clients)
     monkeypatch.setattr(server_module, "fetch_client_portfolio", get_portfolio)
+    monkeypatch.setattr(server_module, "fetch_client_profile", get_profile)
 
     registry = MCPToolRegistry(server)
     result = json.loads(registry.execute(
-        "campaign_follow_up", '{"campaign":"camp-1","limit":5}'
+        "campaign_follow_up", '{"campaign":"camp-1","limit":1}'
     ))
 
-    assert result["total_unreplied_clients"] == 1
-    assert result["requested_limit"] == 5
+    assert result["total_unreplied_clients"] == 2
+    assert result["requested_limit"] == 1
     assert result["candidates"] == [{
         "client_id": "client-002",
         "portfolio_data": {"client_id": "client-002", "portfolio_value": 125000},
+        "profile_data": {"client_id": "client-002", "name": "Demo Client B", "age": 70},
         "last_engagement_date": engagement_date.isoformat(),
     }]
+    assert portfolio_requests == ["client-002"]
+    assert profile_requests == ["client-002"]
 
 
 def test_real_mcp_protocol_returns_structured_matches(caplog):
