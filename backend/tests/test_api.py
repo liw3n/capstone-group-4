@@ -48,6 +48,26 @@ def test_health_reports_llm_configuration_without_secret(monkeypatch):
     }
 
 
+def test_orchestrator_uses_configured_mcp_server(monkeypatch):
+    from app.config import Settings
+    from app.tools.mcp_registry import MCPToolRegistry
+
+    settings = Settings(
+        _env_file=None,
+        groq_api_key="test-key",
+        mcp_server_url="http://mcp.internal:8001/mcp",
+    )
+    monkeypatch.setattr(main, "get_settings", lambda: settings)
+    monkeypatch.setattr(main, "LLMClient", lambda _settings: object())
+    main.get_orchestrator.cache_clear()
+    try:
+        orchestrator = main.get_orchestrator()
+        assert isinstance(orchestrator.registry, MCPToolRegistry)
+        assert orchestrator.registry.transport == "http://mcp.internal:8001/mcp"
+    finally:
+        main.get_orchestrator.cache_clear()
+
+
 def test_query_calls_llm_and_persists_exchange(monkeypatch):
     orchestrator = FakeOrchestrator()
     persisted = []

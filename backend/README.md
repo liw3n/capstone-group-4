@@ -85,10 +85,10 @@ See `docs/api_contract.md` for request and response details.
 ## Tools
 
 The FastMCP server registers tools in `mcp/server.py`; the API retrieves their
-schemas and calls them through `app/tools/mcp_registry.py`. Business logic lives
-in `app/tools/implementations.py`. `search_database` remains an explicit
-placeholder; replace its implementation before using it with production
-campaign data.
+schemas and calls them through `app/tools/mcp_registry.py`. Configure
+`MCP_SERVER_URL` to the server's Streamable HTTP `/mcp` endpoint; it defaults to
+`http://127.0.0.1:8001/mcp` when the API and MCP server run on the same host.
+Tool handlers can use shared implementations under `app/tools/`.
 
 Run only the MCP server from this directory with:
 

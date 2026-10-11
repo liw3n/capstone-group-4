@@ -12,8 +12,9 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.tools.implementations import (
-    calculate_sum as calculate_sum_impl,
-    search_database as search_database_impl,
+    get_campaign_id,
+    get_client_follow_up_list,
+    fetch_client_portfolio,
 )
 
 from app.campaigns.repository import CAMPAIGN_ID_PATTERN
@@ -21,19 +22,6 @@ from app.tools.campaign import execute_recommendation
 
 # Initialize the FastMCP server instance
 mcp = FastMCP(name="FastMCP Server")
-
-
-# Register a Tool using the @mcp.tool decorator
-@mcp.tool()
-def search_database(query: str, limit: int = 5) -> dict:
-    """Search campaign data (placeholder implementation)."""
-    return search_database_impl(query, limit)
-
-
-@mcp.tool()
-def calculate_sum(a: float, b: float) -> float:
-    """Adds two numbers together."""
-    return calculate_sum_impl(a, b)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
@@ -51,6 +39,41 @@ def recommend_clients_for_campaign(
     if metadata is not None and not isinstance(metadata, dict):
         metadata = metadata.model_dump()
     return execute_recommendation(campaign_id, limit, metadata)
+
+@mcp.tool()
+def campaign_follow_up(
+    campaign: Annotated[
+        str,
+        Field(description="The identifier for the campaign. Can be either the campaign name (e.g., 'Spring Promo') or the campaign ID (e.g., 'camp-12345').")
+    ],
+    limit: Annotated[int, Field(ge=1, le=100, strict=True)] = 5,
+) -> dict:
+    """
+    Return unreplied clients and their detailed portfolio profiles for a given campaign
+    so high-value follow-ups can be identified.
+    """
+    # 1. Get campaign and unreplied client IDs
+    campaign_id = get_campaign_id(campaign)
+    client_info = get_client_follow_up_list(campaign_id)
+    limited_client_info = client_info[:limit]
+
+    # 2. Fetch portfolio info for these clients
+    client_profiles = []
+    for client_id, last_engagement_date in limited_client_info:
+        portfolio = fetch_client_portfolio(client_id)
+        client_profiles.append({
+            "client_id": client_id,
+            "portfolio_data": portfolio,
+            "last_engagement_date": last_engagement_date.isoformat() if last_engagement_date else None
+        })
+
+    # 3. Return the rich data back to the LLM
+    return {
+        "campaign_name": campaign,
+        "total_unreplied_clients": len(client_info),
+        "requested_limit": limit,
+        "candidates": client_profiles
+    }
 
 
 # 3. Run the Server

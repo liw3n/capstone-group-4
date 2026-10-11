@@ -23,8 +23,11 @@ server = server_module.mcp
 
 
 def test_schema_exposes_only_campaign_and_bounded_limit():
-    schema = next(item["function"]["parameters"] for item in MCPToolRegistry(server).schemas()
+    schemas = MCPToolRegistry(server).schemas()
+    names = {item["function"]["name"] for item in schemas}
+    schema = next(item["function"]["parameters"] for item in schemas
                   if item["function"]["name"] == "recommend_clients_for_campaign")
+    assert names == {"recommend_clients_for_campaign", "campaign_follow_up"}
     assert set(schema["properties"]) == {"campaign_id", "limit"}
     assert schema["properties"]["limit"]["minimum"] == 1
     assert schema["properties"]["limit"]["maximum"] == 100

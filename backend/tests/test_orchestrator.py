@@ -1,11 +1,35 @@
 from types import SimpleNamespace
 
 import pytest
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import Settings
 from app.llm.errors import LLMProviderError, LLMToolLoopError
 from app.llm.orchestrator import ChatOrchestrator
 from app.store import ChatHistoryItem
+from app.tools.registry import ToolDefinition, ToolRegistry
+
+
+class CalculateSumArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    a: float = Field()
+    b: float = Field()
+
+
+def calculate_sum(a: float, b: float) -> float:
+    return a + b
+
+
+def tool_registry():
+    return ToolRegistry([
+        ToolDefinition(
+            name="calculate_sum",
+            description="Add two numbers.",
+            arguments_model=CalculateSumArguments,
+            handler=calculate_sum,
+        )
+    ])
 
 
 def message(content=None, tool_calls=None):
@@ -47,7 +71,7 @@ def settings(**overrides):
 
 def test_returns_plain_model_answer():
     client = FakeClient([completion(message(content="A real answer"))])
-    orchestrator = ChatOrchestrator(client, settings())
+    orchestrator = ChatOrchestrator(client, settings(), tool_registry())
 
     result = orchestrator.run("Hello", [])
 
@@ -66,7 +90,7 @@ def test_executes_tool_and_returns_follow_up_answer():
             completion(message(content="The total is 5.")),
         ]
     )
-    orchestrator = ChatOrchestrator(client, settings())
+    orchestrator = ChatOrchestrator(client, settings(), tool_registry())
 
     result = orchestrator.run("What is two plus three?", [])
 
@@ -79,7 +103,7 @@ def test_executes_tool_and_returns_follow_up_answer():
 
 def test_preserves_user_and_assistant_history():
     client = FakeClient([completion(message(content="Next answer"))])
-    orchestrator = ChatOrchestrator(client, settings())
+    orchestrator = ChatOrchestrator(client, settings(), tool_registry())
     history = [
         ChatHistoryItem("2026-01-01T00:00:00Z", "fa-1", "Earlier question"),
         ChatHistoryItem("2026-01-01T00:00:01Z", False, "Earlier answer"),
@@ -93,7 +117,7 @@ def test_preserves_user_and_assistant_history():
 
 def test_rejects_empty_provider_response():
     client = FakeClient([completion(message())])
-    orchestrator = ChatOrchestrator(client, settings())
+    orchestrator = ChatOrchestrator(client, settings(), tool_registry())
 
     with pytest.raises(LLMProviderError, match="empty answer"):
         orchestrator.run("Hello", [])
@@ -107,6 +131,7 @@ def test_stops_after_maximum_tool_rounds():
     orchestrator = ChatOrchestrator(
         client,
         settings(llm_max_tool_rounds=2),
+        tool_registry(),
     )
 
     with pytest.raises(LLMToolLoopError, match="round limit"):
@@ -115,12 +140,13 @@ def test_stops_after_maximum_tool_rounds():
 
 def test_selected_campaign_context_overrides_history_without_mutating_registry():
     from app.campaigns.repository import DEMO_FA, RequestScope
-    from app.tools import DEFAULT_TOOL_REGISTRY
+
     client = FakeClient([completion(message(content="Use camp-2"))])
-    orchestrator = ChatOrchestrator(client, settings())
+    registry = tool_registry()
+    orchestrator = ChatOrchestrator(client, settings(), registry)
     history = [ChatHistoryItem("2026-08-25T00:00:00Z", False, "Earlier results for camp-1")]
     orchestrator.run("What about this campaign?", history,
                      scope=RequestScope(DEMO_FA), campaign_id="camp-2")
     assert '"campaign_id": "camp-2"' in client.calls[0]["messages"][0]["content"]
     assert client.calls[0]["messages"][1]["content"] == "Earlier results for camp-1"
-    assert orchestrator.registry is DEFAULT_TOOL_REGISTRY
+    assert orchestrator.registry is registry

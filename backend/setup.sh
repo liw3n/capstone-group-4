@@ -76,7 +76,7 @@ printf 'DATABASE_URL=%s\n' "$database_url" >> "$env_temp_file"
 mv "$env_temp_file" "$env_file"
 
 ##### Create AWS RDS Tables #####
-for table_script in create_campaign_chat_sessions.sql create_mock_campaign_tables.sql seed_mock_campaign_data.sql; do
+for table_script in create_campaign_chat_sessions.sql create_mock_campaign_tables.sql seed_mock_campaign_data.sql create_mock_campaign_engagement.sql; do
     PGPASSWORD=testpassword psql \
         --host "$rds_host" \
         --port "$rds_port" \

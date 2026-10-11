@@ -1,3 +1,3 @@
-from .registry import DEFAULT_TOOL_REGISTRY, ToolRegistry
+from .registry import ToolRegistry
 
-__all__ = ["DEFAULT_TOOL_REGISTRY", "ToolRegistry"]
+__all__ = ["ToolRegistry"]

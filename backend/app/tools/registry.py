@@ -2,24 +2,9 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.campaigns.repository import RequestScope
-from app.tools.implementations import calculate_sum, search_database
-
-
-class CalculateSumArguments(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    a: float = Field(description="The first number to add.")
-    b: float = Field(description="The second number to add.")
-
-
-class SearchDatabaseArguments(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    query: str = Field(min_length=1, description="The text to search for.")
-    limit: int = Field(default=5, ge=1, le=20, description="Maximum result count.")
 
 
 @dataclass(frozen=True)
@@ -69,24 +54,3 @@ class ToolRegistry:
             return json.dumps({"error": "Invalid tool arguments", "details": str(exc)})
         except Exception:  # Do not leak tool internals or connection details to the model.
             return json.dumps({"error": "Tool execution failed"})
-
-
-DEFAULT_TOOL_REGISTRY = ToolRegistry(
-    [
-        ToolDefinition(
-            name="calculate_sum",
-            description="Add two numbers and return their sum.",
-            arguments_model=CalculateSumArguments,
-            handler=calculate_sum,
-        ),
-        ToolDefinition(
-            name="search_database",
-            description=(
-                "Search the campaign database. This is currently a placeholder tool "
-                "for integration testing and does not return production data."
-            ),
-            arguments_model=SearchDatabaseArguments,
-            handler=search_database,
-        ),
-    ]
-)

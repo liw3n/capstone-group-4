@@ -5,7 +5,6 @@ from app.campaigns.repository import RequestScope
 from app.config import Settings
 from app.llm.errors import LLMProviderError, LLMToolLoopError
 from app.store import ChatHistoryItem
-from app.tools import DEFAULT_TOOL_REGISTRY
 
 
 SYSTEM_PROMPT = """You are PULSE, an assistant for financial advisers.
@@ -38,7 +37,7 @@ class ChatOrchestrator:
         self,
         client: Any,
         settings: Settings,
-        registry: ToolExecutor = DEFAULT_TOOL_REGISTRY,
+        registry: ToolExecutor,
     ) -> None:
         self.client = client
         self.settings = settings
