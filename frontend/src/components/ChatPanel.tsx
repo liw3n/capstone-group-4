@@ -43,6 +43,10 @@ function formatSessionTimestamp(timestamp: string): string {
   }).format(date);
 }
 
+function titleFromMessage(message: string): string {
+  return `${message.split(/\s+/).slice(0, 5).join(' ')}...`;
+}
+
 export default function ChatPanel({ advisorId, campaignId, campaignName }: ChatPanelProps) {
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -223,6 +227,13 @@ export default function ChatPanel({ advisorId, campaignId, campaignName }: ChatP
         campaignId,
       );
       if (controller.signal.aborted) return;
+      setSessions((current) =>
+        current.map((session) =>
+          session.session_id === sessionId && session.session_title === 'New chat'
+            ? { ...session, session_title: titleFromMessage(content) }
+            : session,
+        ),
+      );
       setMessages((current) => [
         ...current,
         {

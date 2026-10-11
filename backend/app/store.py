@@ -160,6 +160,7 @@ def append_exchange(
     assistant_item: ChatHistoryItem,
 ) -> None:
     """Persist one user/assistant exchange atomically."""
+    session_title = " ".join(user_item.message_content.split()[:5]) + "..."
     with _connection() as connection:
         connection.execute(
             """
@@ -173,6 +174,15 @@ def append_exchange(
                 str(user_item.user),
                 user_item.message_content,
             ),
+        )
+        connection.execute(
+            """
+            UPDATE campaign_chat_sessions
+            SET session_title = %s
+            WHERE session_id = %s
+              AND (session_title IS NULL OR session_title = 'New chat')
+            """,
+            (session_title, session_id),
         )
         connection.execute(
             """
