@@ -136,4 +136,5 @@ Tool errors are passed back to the LLM as errors, never successful audience resu
 Recommendations are not communication consent or product suitability approval.
 
 See [campaign_recommendations.md](campaign_recommendations.md) for fake table
-assumptions, SQL setup, expected results and commands that work without Groq.
+assumptions, shared Make setup, expected frontend results and automated tests
+that work without Groq.
