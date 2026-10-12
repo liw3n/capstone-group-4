@@ -42,7 +42,7 @@ def test_contacts_link_to_existing_campaign_names_and_keep_first_date(database):
     database.execute(CONTACT_EVENT_SEED_SQL.read_text())
     database.execute(CONTACT_EVENT_TABLE_SQL.read_text())
     database.execute(CONTACT_EVENT_SEED_SQL.read_text())
-    assert database.execute("SELECT count(*) FROM mock_campaign_contact_event").fetchone()[0] == 12
+    assert database.execute("SELECT count(*) FROM mock_campaign_contact_event").fetchone()[0] == 20
 
     rows = database.execute("""
         SELECT c.name, e.contact_id, min(e.contacted_at), count(*)
@@ -52,13 +52,21 @@ def test_contacts_link_to_existing_campaign_names_and_keep_first_date(database):
         WHERE e.tenant_id = 'pulse-demo' AND e.fa_id = 'adv-steven-raynaldi'
         GROUP BY c.name, e.contact_id
     """).fetchall()
-    assert len(rows) == 10  # Repeated contacts count as one client per campaign.
+    assert len(rows) == 13  # Repeated contacts count as one client per campaign.
     by_campaign_client = {(name, client_id): (first, count)
                           for name, client_id, first, count in rows}
     first, count = by_campaign_client[("Legacy Protection Refresh", "client-005")]
     assert first == datetime.fromisoformat("2026-08-05T13:00:00+08:00")
     assert count == 2
     assert ("First Home Starter Bundle", "client-009") in by_campaign_client
+    first, count = by_campaign_client[("Legacy Protection Refresh", "client-011")]
+    assert first == datetime.fromisoformat("2026-10-07T14:00:00+08:00")
+    assert count == 2
+    first, count = by_campaign_client[("First Home Starter Bundle", "client-006")]
+    assert first == datetime.fromisoformat("2026-09-21T09:30:00+08:00")
+    assert count == 2
+    assert ("Legacy Protection Refresh", "client-010") in by_campaign_client
+    assert ("First Home Starter Bundle", "client-010") in by_campaign_client
 
 
 def test_contact_cannot_use_another_advisors_client_or_campaign(database):
@@ -110,20 +118,21 @@ def test_real_mcp_counts_contacts_within_period_and_adviser_scope(database, monk
     camp1 = json.loads(registry.execute("get_campaign_contact_performance",
                                         '{"campaign":"Legacy Protection Refresh"}'))
     assert (camp1["contacted_clients_total"], camp1["contacted_clients_this_week"],
-            camp1["first_contacted_clients_this_week"]) == (6, 1, 1)
+            camp1["first_contacted_clients_this_week"]) == (8, 1, 1)
     camp2 = json.loads(registry.execute("get_campaign_contact_performance",
                                         '{"campaign":"camp-2"}'))
     assert (camp2["contacted_clients_total"], camp2["contacted_clients_this_week"],
-            camp2["first_contacted_clients_this_week"]) == (4, 2, 2)
+            camp2["first_contacted_clients_this_week"]) == (5, 2, 2)
     last_week = json.loads(registry.execute("get_campaign_contact_performance",
         '{"campaign":"camp-2","period":"last_week"}'))
     assert last_week["requested_period"] == "last_week"
     assert (last_week["contacted_clients_last_week"],
-            last_week["first_contacted_clients_last_week"]) == (2, 2)
+            last_week["first_contacted_clients_last_week"]) == (3, 2)
     assert last_week["last_week_start_date"] == "2026-10-05"
     assert last_week["last_week_end_date"] == "2026-10-11"
-    assert "2 clients were contacted last week" in last_week["summary"]
-    assert camp1["contacted_clients_last_week"] == 0
+    assert "3 clients were contacted last week" in last_week["summary"]
+    assert (camp1["contacted_clients_last_week"],
+            camp1["first_contacted_clients_last_week"]) == (2, 1)
     other = MCPToolRegistry(server).bind_scope(RequestScope("adv-other-demo"))
     denied = json.loads(other.execute("get_campaign_contact_performance",
                                       '{"campaign":"camp-1"}'))
@@ -160,7 +169,7 @@ def test_chat_routes_pass_contact_performance_tool_result(database, monkeypatch)
                 "performance-pg", "get_campaign_contact_performance", "{}"
             )])),
             completion(message(content=("Legacy Protection Refresh is ongoing. "
-                "As of 12 October 2026, 6 clients have been contacted. "
+                "As of 12 October 2026, 8 clients have been contacted. "
                 "1 was contacted this week. (Synthetic data.)"))),
         ])
         orchestrator = ChatOrchestrator(provider, settings(), MCPToolRegistry(server))
@@ -170,9 +179,9 @@ def test_chat_routes_pass_contact_performance_tool_result(database, monkeypatch)
             "message_content": "How many clients have been contacted this week?",
         })
         assert response.status_code == 200
-        assert "6 clients" in response.json()["ai_answer"]
+        assert "8 clients" in response.json()["ai_answer"]
         tool_result = json.loads(provider.calls[1]["messages"][-1]["content"])
-        assert tool_result["contacted_clients_total"] == 6
+        assert tool_result["contacted_clients_total"] == 8
         assert tool_result["contacted_clients_this_week"] == 1
 
 
@@ -203,7 +212,7 @@ def test_chat_route_passes_last_week_selection_to_tool(database, monkeypatch):
             "performance-last-week", "get_campaign_contact_performance",
             '{"period":"last_week"}'
         )])),
-        completion(message(content="2 clients were contacted last week (synthetic data).")),
+        completion(message(content="3 clients were contacted last week (synthetic data).")),
     ])
     orchestrator = ChatOrchestrator(provider, settings(), MCPToolRegistry(server))
     monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
@@ -212,7 +221,7 @@ def test_chat_route_passes_last_week_selection_to_tool(database, monkeypatch):
         "message_content": "How many did I contact for this campaign last week?",
     })
     assert response.status_code == 200
-    assert "2 clients" in response.json()["ai_answer"]
+    assert "3 clients" in response.json()["ai_answer"]
     tool_result = json.loads(provider.calls[1]["messages"][-1]["content"])
     assert tool_result["requested_period"] == "last_week"
-    assert tool_result["contacted_clients_last_week"] == 2
+    assert tool_result["contacted_clients_last_week"] == 3

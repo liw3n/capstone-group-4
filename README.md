@@ -157,7 +157,7 @@ campaigns and 14 synthetic clients. The contact-event table stores synthetic
 outreach dates for those campaigns and the assigned adviser; campaign names come
 from `mock_campaign`, not duplicated contact rows. Each row is one contact, so
 repeat contacts can be distinguished from a client's first campaign contact.
-Every teammate loads the same checked-in SQL into their own local database;
+Every member loads the same checked-in SQL into their own local database;
 database edits are not automatically shared.
 
 The scripts are repeatable. Seed inserts preserve existing records using
