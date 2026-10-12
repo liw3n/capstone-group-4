@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1270" viewBox="0 0 1600 1270" role="img" aria-labelledby="diagram-title diagram-description">
   <title id="diagram-title">PULSE system architecture</title>
-  <desc id="diagram-description">Current local prototype: a React CRM served by Vite connects to FastAPI chat, contact and campaign endpoints. make dev starts local FastAPI, FastMCP and Vite processes together. Groq provides inference. FastMCP includes read-only retrieval from an approved synthetic campaign pattern catalogue. PostgreSQL stores chat, scoped CRM contacts, campaign records and campaign UI state. Simulated task and pipeline actions remain in the browser. make provision uses Terraform and FakeCloud for local infrastructure and PostgreSQL; emulated ECS image deployment is optional. Company CRM integration is planned.</desc>
+  <desc id="diagram-description">Current local prototype: a React CRM served by Vite connects to FastAPI chat, contact and campaign endpoints. make dev starts local FastAPI, FastMCP and Vite processes together. Groq provides inference. FastMCP includes read-only retrieval from an approved synthetic campaign pattern catalogue and deterministic validation of generated campaign drafts. PostgreSQL stores chat, scoped CRM contacts, campaign records and campaign UI state; generated drafts are not yet persisted. Simulated task and pipeline actions remain in the browser. make provision uses Terraform and FakeCloud for local infrastructure and PostgreSQL; emulated ECS image deployment is optional. Company CRM integration is planned.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="4" orient="auto"><path d="M0,0 L0,8 L9,4 z" fill="#64748b"/></marker>
     <marker id="planned-arrow" markerWidth="10" markerHeight="10" refX="9" refY="4" orient="auto"><path d="M0,0 L0,8 L9,4 z" fill="#94a3b8"/></marker>
@@ -63,7 +63,7 @@
   <text x="867" y="525" class="heading">FastMCP :8001 /mcp</text>
   <text x="867" y="550" class="label">Tools + shared domain logic</text>
   <text x="867" y="575" class="label">Scoped PostgreSQL data access</text>
-  <text x="867" y="602" class="small">Discovery / matching / references</text>
+  <text x="867" y="602" class="small">Matching / references / draft validation</text>
   <path d="M806 563 L848 563" class="arrow"/>
   <text x="526" y="657" class="small">API calls tools over MCP HTTP; tools return structured results + tables.</text>
   <text x="526" y="678" class="small">FA + tenant metadata is supplied separately from model arguments.</text>

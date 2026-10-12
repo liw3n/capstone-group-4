@@ -285,13 +285,87 @@ restart invalidates outstanding tokens; deployments may provide
 Safe failures use `missing_context`, `invalid_arguments` or
 `catalogue_unavailable` and never expose parser details, file paths or secrets.
 
+### MCP: prepare_campaign_draft
+
+This read-only, non-destructive tool validates and packages one model-generated
+campaign proposal. It must be called after `find_campaign_references`; it never
+inserts a draft or campaign row, changes campaign status, selects clients,
+activates outreach or sends a communication.
+
+Direct MCP arguments are the original `objective`, the returned
+`retrievalToken`, up to three `referencesUsed` citations containing only
+`referenceId` and `version`, and one strict `draft`. The draft contains name,
+description, client message, age/gender/cash criteria, demographic summary,
+field-level rationale, assumptions and disclaimer. Unknown fields and unsupported
+enum values are rejected. Adviser and tenant scope remain trusted MCP metadata,
+not tool arguments.
+
+For clear API-orchestrated campaign-generation requests, the server identifies
+the intent and calls reference retrieval before model inference; the model does
+not author either MCP call. Inference uses strict JSON Schema output without
+tools and supplies only `referencesUsed` and `draft`; the request-scoped registry
+injects the exact retained objective and token before the server calls
+preparation. This removes provider failures caused by malformed retrieval or
+nested preparation calls. Inference receives the current objective and bounded
+reference fields, but not the signed token or prior tool-call protocol messages.
+The direct MCP contract still requires all four arguments.
+
+The handler verifies the token signature, expiry, objective hash, adviser and
+tenant scope, catalogue version and allowed citation set. `referencesUsed` must
+be a subset of the exact retrieval result; an empty retrieval result permits only
+an empty citation list.
+
+Deterministic policy checks reject guarantees, risk-free or regulatory-approval
+claims, invented percentage claims, instructions that bypass adviser review,
+email addresses, phone/identity/account identifiers, insufficient educational
+and individual-review language, and targeting text that contradicts the
+structured criteria. Cited catalogue-specific prohibited claims are also
+enforced. Ambiguous terms, unsupported demographic restrictions and material
+assumptions become concrete adviser-review warnings rather than numeric model
+confidence scores.
+
+Missing educational, non-advice or individual-review wording is repaired before
+policy validation: the server appends a standard notice only to each incomplete
+`clientMessage` or `disclaimer` field and adds a concrete validation warning.
+The model-authored content remains intact, the addition is visible in the
+returned draft, and adviser review is still required. This omission therefore
+does not normally produce a blocking `missing_disclaimer` response.
+
+The guarantee, risk-free, regulatory-approval and catalogue phrase checks are
+negation-aware: explicit warnings such as "returns are not guaranteed" are
+allowed, while affirmative claims remain blocked. Numeric percentage or currency
+claims remain blocked even when negated because the figure itself is ungrounded.
+An unsupported-claim error may include a safe `field` path and `rule` identifier
+without echoing the generated sentence.
+
+A successful result has `type: campaign_draft`, `data_source: ai_generated`, the
+objective, exact citations, validated draft, `validation` with
+`schema_valid: true`, `policy_valid: true` and warnings,
+`requires_adviser_review: true`, and `created: false`. No draft ID, revision,
+campaign status, creator or timestamp exists at this stage because nothing has
+been persisted.
+
+Safe failures use `missing_context`, `invalid_draft`,
+`invalid_retrieval_token`, `expired_retrieval_token`, `scope_mismatch`,
+`invalid_reference_citation`, `unsupported_claim`, `missing_disclaimer`,
+`inconsistent_targeting` or `catalogue_unavailable`. They do not echo unsafe
+draft text, secrets, parser details or storage information.
+
+The chat system prompt requires reference retrieval before preparation and
+prohibits claiming that a returned proposal was created, approved, activated or
+sent. After successful preparation, the orchestrator validates the returned
+artifact again, stops the model loop and deterministically renders every field
+as Markdown. The stored `ai_answer` therefore includes the description and all
+other draft sections without relying on a model-authored summary. The current
+chat API still exposes that rendering as `ai_answer`; returning the structured
+artifact in the HTTP response and persisting revisions remain later stages.
+
 ### Campaign generation contracts and ownership
 
-Stages 1-4 define the later draft workflow without enabling campaign creation.
+Stages 1-5 define and validate the draft workflow without enabling campaign creation.
 The lifecycle values are `generated`, `reviewed`, `confirmed`, `rejected` and
-`expired`. The current retrieval tool stops before `generated`: draft preparation,
-revision, preview, confirmation and PostgreSQL persistence remain subsequent
-stages.
+`expired`. The preparation tool returns an unpersisted generated artifact;
+revision, preview, confirmation and PostgreSQL persistence remain subsequent stages.
 
 - Model-generated, adviser-reviewable content: campaign name, description,
   client message, age groups, genders, cash bands, demographic summary,

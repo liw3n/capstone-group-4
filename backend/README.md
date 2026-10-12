@@ -84,7 +84,8 @@ schemas and calls them through `app/tools/mcp_registry.py`. Configure
 
 The registered tools include `recommend_clients_for_campaign`,
 `get_active_campaigns`, `get_campaign_contact_performance`,
-`get_campaign_contact_ranking`, `find_campaign_references`, and
+`get_campaign_contact_ranking`, `find_campaign_references`,
+`prepare_campaign_draft`, and
 `campaign_follow_up`. Campaign matching and scoped data access live in
 `app/campaigns/`; shared follow-up handlers live in
 `app/tools/implementations.py`. Follow-up handlers query the mock engagement
@@ -97,6 +98,27 @@ read-only and never queries client records or campaign tables. When
 `PULSE_CAMPAIGN_RETRIEVAL_SECRET` is not set, the local prototype uses a random
 process secret, so outstanding tokens intentionally become invalid when the MCP
 process restarts.
+
+`prepare_campaign_draft` verifies that token, permits only retrieved reference
+citations and applies deterministic schema, disclaimer, targeting, unsupported-
+claim and personal-data checks. It returns one review-required structured
+artifact with `created: false`; it does not write a draft or campaign record.
+Claim checks distinguish affirmative promises from explicit risk warnings such
+as "returns are not guaranteed". Unsupported numeric rates and amounts remain
+blocked, and claim failures identify only the safe field and rule name.
+If generated client messaging or disclaimer text omits the required educational,
+non-advice or individual-review language, the server appends a standard notice
+and records a visible adviser-review warning instead of rejecting the draft.
+After a successful preparation, the API renders every validated field with a
+deterministic Markdown formatter and stops the model tool loop. This prevents a
+later model summary from dropping fields and avoids an additional provider call.
+For clear campaign-generation requests, the orchestrator invokes retrieval
+server-side instead of asking the model to author a retrieval tool call. The
+model then produces draft content and citations through Groq's strict JSON
+Schema response mode with no tools. The API retains and injects the exact
+objective and signed retrieval token before calling preparation itself. This
+prevents model changes to trusted values and removes provider-side tool-call
+generation from the campaign workflow.
 
 The MCP server serves `http://127.0.0.1:8001/mcp` using Streamable HTTP. Use
 `make dev` or `make backend-dev` from the repository root to start the shared

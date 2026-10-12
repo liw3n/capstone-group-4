@@ -633,11 +633,18 @@ normal test suite flaky.
 
 Complete each stage and its exit criteria before beginning a dependent stage.
 
-Implementation status as of 12 October 2026: Stages 1-4 are implemented and
+Implementation status as of 13 October 2026: Stages 1-5 are implemented and
 covered by deterministic backend tests. They add shared contracts, a versioned
 12-entry synthetic catalogue, scoped deterministic retrieval, signed retrieval
-tokens and the read-only `find_campaign_references` MCP tool. They do not yet
-generate or persist a campaign draft; that begins in Stage 5.
+tokens, the read-only `find_campaign_references` MCP tool and the read-only
+`prepare_campaign_draft` validation boundary. Preparation returns an unpersisted
+review artifact with `created = false`. Successful artifacts are rendered
+deterministically into complete chat Markdown without an additional model call;
+the API retains and injects the retrieval objective/token and uses strict JSON
+Schema output for draft generation before invoking preparation server-side.
+Clear generation requests are routed into this pipeline deterministically, so
+campaign generation does not depend on provider-authored tool-call JSON.
+Structured HTTP retention, revision and persistence begin in later stages.
 
 ### Stage 1 Define shared contracts and lifecycle boundaries
 
