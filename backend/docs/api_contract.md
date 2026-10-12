@@ -249,6 +249,65 @@ See [campaign_recommendations.md](campaign_recommendations.md) for fake table
 assumptions, shared Make setup, expected frontend results and automated tests
 that work without Groq.
 
+### MCP: find_campaign_references
+
+This read-only, non-destructive tool is the implemented retrieval boundary for
+campaign generation. It searches a checked-in catalogue of approved synthetic
+campaign patterns. It does not read client or campaign tables, create a campaign,
+select an audience, assess suitability or send outreach.
+
+Model-facing arguments are `objective` (required, 10-2,000 characters), optional
+`categories` (up to five values from `retirement`, `protection`, `education`,
+`legacy`, `property`, `other`) and `limit` (strict integer 1-3, default 3).
+`fa_id`, `tenant_id` and MCP context are forbidden arguments. The API supplies
+adviser and tenant scope through `_meta.pulse_scope`.
+
+The service filters tenant access, approval state and the Singapore-date validity
+window before applying transparent category, objective-tag and bounded lexical
+scoring. Ties use stable reference ID and version ordering. An irrelevant
+objective returns a successful empty result rather than a fabricated match.
+
+Successful results contain `type: campaign_references`,
+`data_source: synthetic_curated_catalogue`, the query, catalogue version, a
+short-lived `retrievalToken`, up to three references, `returnedCount` and
+`truncated`. Each reference includes its stable ID and version, category,
+matched tags, match reasons, approved description and messaging patterns,
+typical criteria, targeting rationale and required disclaimers. Tenant allowlists
+and prohibited-claim governance fields stay server-side.
+
+The HMAC-signed retrieval token binds the normalized objective hash, adviser and
+tenant scope, catalogue version, returned reference IDs and versions, issue time
+and expiry. Later draft preparation must reject altered, expired, cross-scope or
+stale tokens. The local fallback signing key is process-scoped, so a FastMCP
+restart invalidates outstanding tokens; deployments may provide
+`PULSE_CAMPAIGN_RETRIEVAL_SECRET`.
+
+Safe failures use `missing_context`, `invalid_arguments` or
+`catalogue_unavailable` and never expose parser details, file paths or secrets.
+
+### Campaign generation contracts and ownership
+
+Stages 1-4 define the later draft workflow without enabling campaign creation.
+The lifecycle values are `generated`, `reviewed`, `confirmed`, `rejected` and
+`expired`. The current retrieval tool stops before `generated`: draft preparation,
+revision, preview, confirmation and PostgreSQL persistence remain subsequent
+stages.
+
+- Model-generated, adviser-reviewable content: campaign name, description,
+  client message, age groups, genders, cash bands, demographic summary,
+  field-level rationale, assumptions and disclaimer.
+- Adviser-edited content: the same reviewable fields plus later builder metadata
+  such as dates, audience source and routing, once those endpoints are built.
+- Server-owned content: tenant and adviser ownership, draft and campaign IDs,
+  revision and lifecycle state, campaign status, creator, timestamps, hashes,
+  signing tokens and idempotency state.
+
+Model-facing contracts reject unknown fields and cannot accept tenant, adviser,
+campaign status, creator or creation timestamps. The existing campaign status
+constraint already supports `draft`, but stages 1-4 do not write campaigns or
+change the current activation behavior. A later confirmation path must force
+`status = draft` on the server.
+
 
 ### MCP: get_active_campaigns
 

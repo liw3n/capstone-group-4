@@ -6,6 +6,7 @@ from fastmcp import Client
 
 from pydantic import ValidationError
 
+from app.campaigns.models import CampaignReferenceQuery
 from app.campaigns.repository import RequestScope
 from app.llm.errors import LLMProviderError
 from app.tools.campaign import RecommendationArguments
@@ -99,6 +100,22 @@ class MCPToolRegistry:
                 arguments = ContactRankingArguments.model_validate(arguments).model_dump()
             except ValidationError:
                 return json.dumps({"error": "Invalid tool arguments"})
+
+        if name == "find_campaign_references":
+            if self.scope is None:
+                return json.dumps({
+                    "data_source": "synthetic_curated_catalogue",
+                    "error_code": "missing_context",
+                    "error": "Adviser request context is required",
+                })
+            try:
+                arguments = CampaignReferenceQuery.model_validate(arguments).model_dump()
+            except ValidationError:
+                return json.dumps({
+                    "data_source": "synthetic_curated_catalogue",
+                    "error_code": "invalid_arguments",
+                    "error": "Invalid tool arguments",
+                })
 
         try:
             result = asyncio.run(self._call_tool(name, arguments))

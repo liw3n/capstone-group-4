@@ -84,11 +84,19 @@ schemas and calls them through `app/tools/mcp_registry.py`. Configure
 
 The registered tools include `recommend_clients_for_campaign`,
 `get_active_campaigns`, `get_campaign_contact_performance`,
-`get_campaign_contact_ranking`, and
+`get_campaign_contact_ranking`, `find_campaign_references`, and
 `campaign_follow_up`. Campaign matching and scoped data access live in
 `app/campaigns/`; shared follow-up handlers live in
 `app/tools/implementations.py`. Follow-up handlers query the mock engagement
 table and currently return simulated client profile and portfolio data.
+
+`find_campaign_references` searches a checked-in, approved synthetic pattern
+catalogue before campaign drafting. It returns at most three explainable matches
+and a five-minute signed token bound to the objective and request scope. It is
+read-only and never queries client records or campaign tables. When
+`PULSE_CAMPAIGN_RETRIEVAL_SECRET` is not set, the local prototype uses a random
+process secret, so outstanding tokens intentionally become invalid when the MCP
+process restarts.
 
 The MCP server serves `http://127.0.0.1:8001/mcp` using Streamable HTTP. Use
 `make dev` or `make backend-dev` from the repository root to start the shared

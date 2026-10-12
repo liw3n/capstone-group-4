@@ -22,7 +22,9 @@ from app.tools.implementations import (
 )
 
 from app.campaigns.repository import CAMPAIGN_ID_PATTERN
+from app.campaigns.models import CampaignCategory
 from app.tools.campaign import execute_recommendation
+from app.tools.campaign_references import execute_find_campaign_references
 from app.tools.discovery import CampaignField, CampaignId, CampaignName, execute_discovery
 from app.tools.performance import execute_contact_performance, execute_contact_ranking
 
@@ -130,6 +132,36 @@ def _request_metadata(ctx: Context) -> dict | None:
     request = ctx.request_context
     metadata = request.meta if request is not None else None
     return metadata if metadata is None or isinstance(metadata, dict) else metadata.model_dump()
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
+def find_campaign_references(
+    objective: Annotated[
+        str,
+        Field(
+            min_length=10,
+            max_length=2_000,
+            description="The adviser's plain-language campaign business objective.",
+        ),
+    ],
+    ctx: Context,
+    categories: Annotated[
+        list[CampaignCategory] | None,
+        Field(max_length=5, description="Optional campaign categories explicitly requested."),
+    ] = None,
+    limit: Annotated[int, Field(ge=1, le=3, strict=True)] = 3,
+) -> dict:
+    """Find up to three approved synthetic patterns for campaign drafting.
+
+    Read-only: it does not inspect clients, assess suitability, create a draft,
+    create a campaign or mutate CRM data. Adviser and tenant scope come only
+    from trusted API metadata, never model arguments.
+    """
+    logger.info("MCP tool called: find_campaign_references")
+    return execute_find_campaign_references(
+        {"objective": objective, "categories": categories, "limit": limit},
+        _request_metadata(ctx),
+    )
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
