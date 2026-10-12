@@ -1,0 +1,257 @@
+{
+  "catalogueVersion": 1,
+  "entries": [
+    {
+      "referenceId": "campaign-pattern-retirement-001",
+      "title": "Pre Retirement Income Readiness Review",
+      "category": "retirement",
+      "objectiveTags": ["pre-retirement", "income-readiness", "retirement-review", "long-term-planning"],
+      "descriptionPattern": "Invite clients approaching retirement to review projected income needs, existing resources and planning gaps with an adviser.",
+      "messagingPattern": "Offer an educational retirement-readiness conversation focused on understanding current arrangements and possible next steps, without implying a guaranteed outcome.",
+      "typicalCriteria": {"ageGroups": ["55to64"], "genders": [], "cashBands": ["50kTo250k", "250kTo1m", "above1m"]},
+      "targetingRationale": {
+        "ageGroups": "Clients nearing common retirement transition years may benefit from an income-readiness review.",
+        "genders": "The objective is not gender-specific.",
+        "cashBands": "Multiple cash bands keep the campaign educational and avoid assuming a single wealth profile."
+      },
+      "requiredDisclaimers": ["Educational information only; any recommendation requires an individual fact-find and suitability assessment."],
+      "prohibitedClaims": ["Guaranteed retirement income", "Guaranteed investment returns", "Risk-free outcomes"],
+      "approvalStatus": "approved",
+      "version": 1,
+      "validFrom": "2026-01-01",
+      "validUntil": null,
+      "tenantIds": ["pulse-demo"]
+    },
+    {
+      "referenceId": "campaign-pattern-retirement-002",
+      "title": "Retirement Healthcare Cost Check",
+      "category": "retirement",
+      "objectiveTags": ["retirement-healthcare", "health-costs", "retirement-readiness", "annual-review"],
+      "descriptionPattern": "Encourage older clients to review how healthcare expenses and existing protection may affect their retirement plan.",
+      "messagingPattern": "Invite a review of healthcare funding assumptions and existing coverage, while making clear that coverage and needs vary by individual.",
+      "typicalCriteria": {"ageGroups": ["55to64", "65plus"], "genders": [], "cashBands": []},
+      "targetingRationale": {
+        "ageGroups": "Healthcare funding is commonly relevant near and during retirement.",
+        "genders": "The educational topic applies regardless of gender.",
+        "cashBands": "No cash threshold is inferred from the objective."
+      },
+      "requiredDisclaimers": ["Coverage, exclusions and suitability depend on individual circumstances and must be reviewed with an adviser."],
+      "prohibitedClaims": ["Full medical coverage", "No out-of-pocket cost", "Guaranteed claim approval"],
+      "approvalStatus": "approved",
+      "version": 1,
+      "validFrom": "2026-01-01",
+      "validUntil": null,
+      "tenantIds": ["pulse-demo"]
+    },
+    {
+      "referenceId": "campaign-pattern-protection-001",
+      "title": "Annual Family Protection Review",
+      "category": "protection",
+      "objectiveTags": ["family-protection", "annual-review", "coverage-gap", "life-event"],
+      "descriptionPattern": "Invite clients to review whether existing protection still reflects their dependants, liabilities and current life stage.",
+      "messagingPattern": "Frame the outreach as a no-obligation coverage review and explain that any gap analysis requires up-to-date personal information.",
+      "typicalCriteria": {"ageGroups": ["under35", "35to44", "45to54"], "genders": [], "cashBands": []},
+      "targetingRationale": {
+        "ageGroups": "Working-age clients may experience changing family and liability needs.",
+        "genders": "Protection needs should not be inferred from gender.",
+        "cashBands": "Protection review relevance is not limited to a cash band."
+      },
+      "requiredDisclaimers": ["Any protection recommendation is subject to fact-finding, affordability and suitability review."],
+      "prohibitedClaims": ["Complete protection", "Guaranteed approval", "Best policy"],
+      "approvalStatus": "approved",
+      "version": 1,
+      "validFrom": "2026-01-01",
+      "validUntil": null,
+      "tenantIds": ["pulse-demo"]
+    },
+    {
+      "referenceId": "campaign-pattern-protection-002",
+      "title": "Income Resilience Conversation",
+      "category": "protection",
+      "objectiveTags": ["income-resilience", "disability-planning", "emergency-readiness", "coverage-review"],
+      "descriptionPattern": "Start an educational review of how a temporary or extended loss of income could affect essential commitments.",
+      "messagingPattern": "Use scenario-based questions to help clients understand income risks and invite an adviser-led review of existing safeguards.",
+      "typicalCriteria": {"ageGroups": ["under35", "35to44", "45to54"], "genders": [], "cashBands": ["under50k", "50kTo250k"]},
+      "targetingRationale": {
+        "ageGroups": "The theme is most directly relevant during working years.",
+        "genders": "Income resilience is not gender-specific.",
+        "cashBands": "Lower and middle liquid-cash bands may have less buffer, but individual circumstances still require review."
+      },
+      "requiredDisclaimers": ["This is general education and not a conclusion about any client's protection gap or suitable product."],
+      "prohibitedClaims": ["Guaranteed income replacement", "Universal eligibility", "Zero financial impact"],
+      "approvalStatus": "approved",
+      "version": 1,
+      "validFrom": "2026-01-01",
+      "validUntil": null,
+      "tenantIds": ["pulse-demo"]
+    },
+    {
+      "referenceId": "campaign-pattern-education-001",
+      "title": "Early Education Funding Checkpoint",
+      "category": "education",
+      "objectiveTags": ["education-funding", "young-family", "regular-saving", "goal-planning"],
+      "descriptionPattern": "Help parents or prospective parents estimate education goals, time horizons and existing savings before considering solutions.",
+      "messagingPattern": "Invite clients to an educational planning session that compares their goal timeline with current savings assumptions.",
+      "typicalCriteria": {"ageGroups": ["under35", "35to44"], "genders": [], "cashBands": ["under50k", "50kTo250k", "250kTo1m"]},
+      "targetingRationale": {
+        "ageGroups": "These age bands commonly include clients starting or raising families, without assuming parental status.",
+        "genders": "Education planning applies to all parents and guardians.",
+        "cashBands": "A broad range supports goal-setting without presuming affordability."
+      },
+      "requiredDisclaimers": ["Illustrations are not guarantees; recommendations require a personal affordability and suitability assessment."],
+      "prohibitedClaims": ["Guaranteed education funding", "Guaranteed returns", "No shortfall"],
+      "approvalStatus": "approved",
+      "version": 1,
+      "validFrom": "2026-01-01",
+      "validUntil": null,
+      "tenantIds": ["pulse-demo"]
+    },
+    {
+      "referenceId": "campaign-pattern-education-002",
+      "title": "Tertiary Education Goal Review",
+      "category": "education",
+      "objectiveTags": ["tertiary-education", "goal-review", "funding-gap", "time-horizon"],
+      "descriptionPattern": "Review progress toward a stated tertiary-education goal and identify assumptions that need updating as the target date approaches.",
+      "messagingPattern": "Ask clients to revisit the expected timing, cost range and current resources for an education goal before discussing options.",
+      "typicalCriteria": {"ageGroups": ["35to44", "45to54"], "genders": [], "cashBands": ["50kTo250k", "250kTo1m"]},
+      "targetingRationale": {
+        "ageGroups": "These age bands may include households with medium-term education goals, subject to confirmation.",
+        "genders": "The goal is not gender-specific.",
+        "cashBands": "The selected bands are a starting hypothesis, not an affordability decision."
+      },
+      "requiredDisclaimers": ["Costs and returns are uncertain; planning assumptions and suitability must be reviewed individually."],
+      "prohibitedClaims": ["Certain admission funding", "Guaranteed growth", "Exact future education cost"],
+      "approvalStatus": "approved",
+      "version": 1,
+      "validFrom": "2026-01-01",
+      "validUntil": null,
+      "tenantIds": ["pulse-demo"]
+    },
+    {
+      "referenceId": "campaign-pattern-legacy-001",
+      "title": "Beneficiary And Nomination Review",
+      "category": "legacy",
+      "objectiveTags": ["beneficiary-review", "nomination", "legacy-basics", "life-event"],
+      "descriptionPattern": "Prompt clients to check whether beneficiary and nomination records still reflect their intentions after life changes.",
+      "messagingPattern": "Offer a practical records review and explain when legal or specialist advice may be needed.",
+      "typicalCriteria": {"ageGroups": ["35to44", "45to54", "55to64", "65plus"], "genders": [], "cashBands": []},
+      "targetingRationale": {
+        "ageGroups": "Nomination reviews can become more relevant as family and asset arrangements develop.",
+        "genders": "Legacy administration is not gender-specific.",
+        "cashBands": "A nomination review can be useful regardless of liquid cash."
+      },
+      "requiredDisclaimers": ["This campaign provides general information and is not legal, tax or financial advice."],
+      "prohibitedClaims": ["Legally complete estate plan", "Guaranteed distribution", "Tax-free transfer"],
+      "approvalStatus": "approved",
+      "version": 1,
+      "validFrom": "2026-01-01",
+      "validUntil": null,
+      "tenantIds": ["pulse-demo"]
+    },
+    {
+      "referenceId": "campaign-pattern-legacy-002",
+      "title": "Estate Liquidity Education",
+      "category": "legacy",
+      "objectiveTags": ["estate-liquidity", "legacy-education", "asset-transfer", "family-planning"],
+      "descriptionPattern": "Introduce the concept of estate liquidity and invite clients to review whether intended transfers rely on assumptions that need professional advice.",
+      "messagingPattern": "Provide a plain-language overview of estate liquidity and direct clients to appropriate legal, tax or advisory professionals for personal decisions.",
+      "typicalCriteria": {"ageGroups": ["45to54", "55to64", "65plus"], "genders": [], "cashBands": ["250kTo1m", "above1m"]},
+      "targetingRationale": {
+        "ageGroups": "Later life stages may make legacy intentions more immediate, without excluding earlier planning.",
+        "genders": "The topic applies regardless of gender.",
+        "cashBands": "Higher liquid-asset bands may indicate more complex transfer considerations, but do not establish need or suitability."
+      },
+      "requiredDisclaimers": ["General education only; obtain qualified legal and tax advice for estate arrangements."],
+      "prohibitedClaims": ["Avoid all estate costs", "Guaranteed tax outcome", "Probate-free transfer"],
+      "approvalStatus": "approved",
+      "version": 1,
+      "validFrom": "2026-01-01",
+      "validUntil": null,
+      "tenantIds": ["pulse-demo"]
+    },
+    {
+      "referenceId": "campaign-pattern-property-001",
+      "title": "First Home Financial Readiness",
+      "category": "property",
+      "objectiveTags": ["first-home", "property-readiness", "cashflow", "housing-goal"],
+      "descriptionPattern": "Help prospective first-home buyers review cash flow, emergency reserves and protection considerations before committing to a purchase.",
+      "messagingPattern": "Invite clients to map the financial commitments around a home purchase and identify questions for the relevant property, lending and advisory professionals.",
+      "typicalCriteria": {"ageGroups": ["under35", "35to44"], "genders": [], "cashBands": ["under50k", "50kTo250k", "250kTo1m"]},
+      "targetingRationale": {
+        "ageGroups": "Younger adult groups commonly contain first-home prospects, but intent must be confirmed.",
+        "genders": "Home-buying readiness is not gender-specific.",
+        "cashBands": "Several bands support education across different deposit and reserve positions."
+      },
+      "requiredDisclaimers": ["This is general financial education, not lending, property, legal or tax advice."],
+      "prohibitedClaims": ["Guaranteed loan approval", "Property prices always rise", "Affordable for everyone"],
+      "approvalStatus": "approved",
+      "version": 1,
+      "validFrom": "2026-01-01",
+      "validUntil": null,
+      "tenantIds": ["pulse-demo"]
+    },
+    {
+      "referenceId": "campaign-pattern-property-002",
+      "title": "Mortgage Commitment Protection Check",
+      "category": "property",
+      "objectiveTags": ["mortgage-protection", "property-owner", "liability-review", "income-resilience"],
+      "descriptionPattern": "Invite property owners to review how existing arrangements would support mortgage commitments during adverse life events.",
+      "messagingPattern": "Use an educational checklist covering outstanding liabilities, household income dependency and existing protection before any recommendation.",
+      "typicalCriteria": {"ageGroups": ["35to44", "45to54", "55to64"], "genders": [], "cashBands": []},
+      "targetingRationale": {
+        "ageGroups": "These groups may be more likely to have ongoing property liabilities, subject to confirmation.",
+        "genders": "Liability reviews should not be targeted by gender.",
+        "cashBands": "Mortgage commitments cannot be inferred from available cash alone."
+      },
+      "requiredDisclaimers": ["Any recommendation depends on verified liabilities, existing coverage, affordability and suitability."],
+      "prohibitedClaims": ["Mortgage always paid off", "Guaranteed claim", "Complete debt protection"],
+      "approvalStatus": "approved",
+      "version": 1,
+      "validFrom": "2026-01-01",
+      "validUntil": null,
+      "tenantIds": ["pulse-demo"]
+    },
+    {
+      "referenceId": "campaign-pattern-general-001",
+      "title": "Emergency Savings Resilience Review",
+      "category": "other",
+      "objectiveTags": ["emergency-savings", "cashflow", "financial-resilience", "budgeting"],
+      "descriptionPattern": "Encourage clients to review essential spending, accessible reserves and priorities for improving short-term financial resilience.",
+      "messagingPattern": "Offer a practical educational check-in on emergency savings and cash-flow assumptions without prescribing a product.",
+      "typicalCriteria": {"ageGroups": ["under35", "35to44", "45to54", "55to64"], "genders": [], "cashBands": ["under50k", "50kTo250k"]},
+      "targetingRationale": {
+        "ageGroups": "Financial resilience can be relevant throughout working life.",
+        "genders": "The topic is not gender-specific.",
+        "cashBands": "Lower available-cash bands may make reserve planning more immediately relevant, without proving a shortfall."
+      },
+      "requiredDisclaimers": ["General education only; an individual review is required before taking financial action."],
+      "prohibitedClaims": ["One-size-fits-all reserve", "Guaranteed financial security", "No future hardship"],
+      "approvalStatus": "approved",
+      "version": 1,
+      "validFrom": "2026-01-01",
+      "validUntil": null,
+      "tenantIds": ["pulse-demo"]
+    },
+    {
+      "referenceId": "campaign-pattern-general-002",
+      "title": "Mid Career Financial Plan Checkpoint",
+      "category": "other",
+      "objectiveTags": ["mid-career", "financial-review", "goal-prioritisation", "portfolio-checkpoint"],
+      "descriptionPattern": "Invite mid-career clients to revisit competing goals, existing arrangements and changes since their last financial review.",
+      "messagingPattern": "Position the conversation as an educational checkpoint that updates facts and priorities before any advice is considered.",
+      "typicalCriteria": {"ageGroups": ["35to44", "45to54"], "genders": [], "cashBands": ["50kTo250k", "250kTo1m", "above1m"]},
+      "targetingRationale": {
+        "ageGroups": "Mid-career years often involve several competing goals and changing responsibilities.",
+        "genders": "The review objective is not gender-specific.",
+        "cashBands": "Broad cash bands avoid assuming a single planning need or solution."
+      },
+      "requiredDisclaimers": ["Any recommendation requires current facts, risk profiling, affordability and suitability assessment."],
+      "prohibitedClaims": ["Guaranteed goal achievement", "Always outperform", "Risk-free portfolio"],
+      "approvalStatus": "approved",
+      "version": 1,
+      "validFrom": "2026-01-01",
+      "validUntil": null,
+      "tenantIds": ["pulse-demo"]
+    }
+  ]
+}
