@@ -5,6 +5,7 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "moduleResolution": "bundler",
     "moduleDetection": "force",
+    "types": ["vite/client"],
     "isolatedModules": true,
     "jsx": "react-jsx",
     "strict": true,

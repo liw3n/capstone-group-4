@@ -30,6 +30,8 @@ def database(monkeypatch):
             with psycopg.connect(scoped_url, autocommit=True) as connection:
                 connection.execute((TABLES / "create_mock_campaign_tables.sql").read_text())
                 connection.execute((TABLES / "seed_mock_campaign_data.sql").read_text())
+                connection.execute((TABLES / "migrate_campaign_source_of_truth.sql").read_text())
+                connection.execute((TABLES / "migrate_mock_client_crm_fields.sql").read_text())
                 monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace(database_url=scoped_url))
                 yield connection
         finally:
@@ -40,9 +42,21 @@ def database(monkeypatch):
 def test_seed_is_repeatable_and_matches_are_read_from_postgres(database):
     database.execute((TABLES / "create_mock_campaign_tables.sql").read_text())
     database.execute((TABLES / "seed_mock_campaign_data.sql").read_text())
+    database.execute((TABLES / "migrate_campaign_source_of_truth.sql").read_text())
+    database.execute((TABLES / "migrate_mock_client_crm_fields.sql").read_text())
     assert database.execute("SELECT count(*) FROM mock_campaign").fetchone()[0] == 2
     assert database.execute("SELECT count(*) FROM mock_client").fetchone()[0] == 14
     assert database.execute("SELECT count(*) FROM mock_campaign_advisor").fetchone()[0] == 2
+    assert database.execute("SELECT count(*) FROM pulse_schema_migration").fetchone()[0] == 3
+    assert database.execute(
+        "SELECT description <> '' FROM mock_campaign WHERE campaign_id = 'camp-1'"
+    ).fetchone()[0]
+    assert database.execute(
+        "SELECT advisor_ids FROM mock_campaign WHERE campaign_id = 'camp-1'"
+    ).fetchone()[0] == [DEMO_FA]
+    assert database.execute(
+        "SELECT email FROM mock_client WHERE contact_id = 'client-001'"
+    ).fetchone()[0] == "demo.client.a@example.test"
     assert database.execute("SELECT count(*) FROM mock_client WHERE opt_in_email OR opt_in_sms").fetchone()[0] == 0
     for campaign_id, ids, excluded in (
         ("camp-1", ["client-001", "client-002", "client-003", "client-012"], 6),
@@ -53,6 +67,115 @@ def test_seed_is_repeatable_and_matches_are_read_from_postgres(database):
         assert result["evaluated_count"] == 12
         assert result["incomplete_count"] == 2
         assert result["excluded_count"] == excluded
+
+
+def test_campaign_catalog_persists_frontend_state_and_enforces_assignment(database):
+    from app.campaigns import catalog
+
+    payload = {
+        "id": "catalog-test",
+        "name": "Synthetic persisted campaign",
+        "status": "active",
+        "description": "Synthetic internal brief",
+        "clientMessage": "Synthetic educational message.",
+        "origin": "marketing",
+        "audienceSource": "leads",
+        "channel": "BANCA-SG",
+        "teamIds": ["marina-bay-branch"],
+        "advisorIds": [DEMO_FA],
+        "criteria": {"ageGroups": [], "genders": [], "cashBands": []},
+        "includeIds": [],
+        "excludeIds": [],
+        "leadIds": ["lead-test"],
+        "leadStats": {"uploaded": 1, "added": 0, "removed": 0},
+        "createdBy": "Marketing",
+        "createdAt": "2026-10-12T00:00:00Z",
+        "actions": {},
+        "emailLog": [],
+        "leadContacts": [{"id": "lead-test", "name": "Synthetic Lead", "status": "lead"}],
+    }
+    created = catalog.create_campaign("marketing", None, payload)
+    assert created["startDate"] == "2026-08-26"
+    assert created["endDate"] == "2027-08-26"
+    assert created["leadContacts"][0]["name"] == "Synthetic Lead"
+    assert [item["id"] for item in catalog.list_campaigns(
+        "advisor", RequestScope(DEMO_FA)
+    )] == ["catalog-test", "camp-2", "camp-1"]
+    assert catalog.get_campaign_record(
+        "advisor", RequestScope("adv-other-demo"), "catalog-test"
+    ) is None
+
+    state = {
+        "includeIds": [], "excludeIds": [], "leadIds": ["lead-test"],
+        "leadStats": {"uploaded": 1, "added": 1, "removed": 0},
+        "actions": {"lead-test": "task"}, "emailLog": [],
+        "leadContacts": [{"id": "lead-test", "name": "Synthetic Lead", "status": "contact"}],
+    }
+    updated = catalog.update_campaign_state(
+        "advisor", RequestScope(DEMO_FA), "catalog-test", state
+    )
+    assert updated["leadStats"]["added"] == 1
+    assert catalog.get_campaign_record(
+        "marketing", None, "catalog-test"
+    )["actions"] == {"lead-test": "task"}
+
+
+def test_contact_catalog_is_the_scoped_crm_source_of_truth(database):
+    from app.contacts import catalog
+    from app import main
+    from fastapi.testclient import TestClient
+
+    scope = RequestScope(DEMO_FA)
+    contacts = catalog.list_contacts(scope)
+    assert len(contacts) == 12
+    assert contacts[0]["id"] == "client-001"
+    assert contacts[0]["email"] == "demo.client.a@example.test"
+    assert len(catalog.list_contacts(RequestScope("adv-other-demo"))) == 1
+    response = TestClient(main.app).get("/api/contacts", params={"fa_id": DEMO_FA})
+    assert response.status_code == 200
+    assert [contact["id"] for contact in response.json()] == [
+        f"client-{index:03d}" for index in range(1, 13)
+    ]
+
+    payload = {
+        "id": "contact-api-test", "name": "Synthetic New Contact",
+        "email": "new.contact@example.test", "countryCode": "+65", "phone": "",
+        "dob": None, "gender": None, "cashAmount": None, "label": "Prospect",
+        "status": "contact", "bookmarked": False, "needsAttention": False,
+        "optInEmail": False, "optInSms": False, "notes": "Synthetic note",
+        "meetings": [], "policies": [],
+    }
+    created = catalog.create_contact(scope, payload)
+    assert created["notes"] == "Synthetic note"
+    payload.update({"label": "Client", "bookmarked": True})
+    replaced = catalog.replace_contact(scope, "contact-api-test", payload)
+    assert replaced["label"] == "Client"
+    assert replaced["bookmarked"] is True
+    assert catalog.replace_contact(
+        RequestScope("adv-other-demo"), "contact-api-test", payload
+    ) is None
+
+
+def test_campaign_email_log_requires_owned_opted_in_contact(database):
+    from app.campaigns import catalog
+
+    scope = RequestScope(DEMO_FA)
+    campaign = catalog.get_campaign_record("advisor", scope, "camp-1")
+    state = {
+        "includeIds": campaign["includeIds"], "excludeIds": campaign["excludeIds"],
+        "leadIds": [], "leadStats": campaign["leadStats"], "actions": {},
+        "emailLog": [{"id": "email-1", "recipientIds": ["client-001"]}],
+        "leadContacts": [],
+    }
+    with pytest.raises(ValueError, match="email consent"):
+        catalog.update_campaign_state("advisor", scope, "camp-1", state)
+
+    database.execute(
+        """UPDATE mock_client SET opt_in_email = TRUE
+           WHERE tenant_id = 'pulse-demo' AND contact_id = 'client-001'"""
+    )
+    updated = catalog.update_campaign_state("advisor", scope, "camp-1", state)
+    assert updated["emailLog"][0]["recipientIds"] == ["client-001"]
 
 
 def test_database_filters_adviser_and_tenant_even_for_duplicate_campaign_ids(database):

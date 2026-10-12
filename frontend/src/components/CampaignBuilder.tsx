@@ -12,9 +12,9 @@ import { CriteriaPicker } from './CampaignCriteria';
 import CampaignAudiencePicker from './CampaignAudiencePicker';
 import LeadUploadPanel from './LeadUploadPanel';
 import { EMPTY_CRITERIA, criteriaCount, resolveAudience } from '../lib/targeting';
-import { CHANNELS } from '../lib/directory';
+import { CHANNELS, resolveRecipients } from '../lib/directory';
 import CampaignRoutingPicker, { Routing } from './CampaignRoutingPicker';
-import { newId, todayISO } from '../lib/format';
+import { newId } from '../lib/format';
 
 interface CampaignBuilderProps {
   /** Active contacts only — leads are never selectable as an audience. */
@@ -33,7 +33,7 @@ interface CampaignBuilderProps {
   onSubmit: (campaign: Campaign, leads?: Omit<Contact, 'id'>[]) => void;
 }
 
-/** No backend, so the banner is held in memory as a data URL. Keep it small. */
+/** Banners are persisted as data URLs in the prototype database. Keep them small. */
 const MAX_BANNER_BYTES = 1_000_000;
 
 const COPY: Record<CampaignOrigin, { heading: string; blurb: string; submit: string }> = {
@@ -167,6 +167,9 @@ export default function CampaignBuilder({
   const handleSubmit = () => {
     setTouched(true);
     if (!isValid) return;
+    const recipientIds = origin === 'marketing'
+      ? resolveRecipients(routing).map((advisor) => advisor.id)
+      : [];
 
     onSubmit(
       {
@@ -179,7 +182,9 @@ export default function CampaignBuilder({
         audienceSource: isLeadCampaign ? 'leads' : 'contacts',
         channel: origin === 'marketing' ? routing.channel : undefined,
         teamIds: origin === 'marketing' ? routing.teamIds : [],
-        advisorIds: origin === 'marketing' ? routing.advisorIds : [],
+        // Store the resolved recipient IDs so backend access checks do not
+        // depend on a second, browser-only interpretation of team routing.
+        advisorIds: recipientIds,
         createdByAdvisorId: origin === 'advisor' ? advisorId : undefined,
         criteria: isLeadCampaign ? EMPTY_CRITERIA : criteria,
         includeIds: isLeadCampaign ? [] : includeIds,
@@ -187,7 +192,7 @@ export default function CampaignBuilder({
         leadIds: [],
         leadStats: { uploaded: 0, added: 0, removed: 0 },
         createdBy,
-        createdAt: todayISO(),
+        createdAt: new Date().toISOString(),
         actions: {},
         emailLog: [],
       },

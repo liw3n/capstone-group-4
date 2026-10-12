@@ -1,13 +1,28 @@
 from functools import lru_cache
+from datetime import date, datetime
+from typing import Annotated, Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.campaigns.catalog import (
+    create_campaign as create_campaign_record,
+    get_campaign_record,
+    list_campaigns as list_campaign_records,
+    update_campaign_state,
+)
 
 from app.campaigns.repository import (
     CAMPAIGN_ID_PATTERN, CampaignInactive, CampaignStorageUnavailable, CampaignUnavailable,
     RequestScope, get_campaign, require_active,
+)
+from app.contacts.catalog import (
+    ContactStorageUnavailable,
+    create_contact,
+    list_contacts,
+    replace_contact,
 )
 from app.config import get_settings
 from app.llm import ChatOrchestrator, LLMClient
@@ -38,14 +53,15 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
     allow_headers=["*"],
 )
 
 
 @app.exception_handler(CampaignStorageUnavailable)
+@app.exception_handler(ContactStorageUnavailable)
 @app.exception_handler(StoreUnavailableError)
-def store_unavailable_handler(_request, exc: StoreUnavailableError):
+def store_unavailable_handler(_request, exc: RuntimeError):
     return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
@@ -79,6 +95,107 @@ class QueryResponse(BaseModel):
     ai_answer: str
 
 
+class NumericRangePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    min: float | None = Field(default=None, ge=0)
+    max: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_order(self):
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError("range minimum cannot exceed maximum")
+        return self
+
+
+class CampaignCriteriaPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ageGroups: list[Literal["under35", "35to44", "45to54", "55to64", "65plus"]]
+    ageRange: NumericRangePayload | None = None
+    genders: list[Literal["male", "female"]]
+    cashBands: list[Literal["under50k", "50kTo250k", "250kTo1m", "above1m"]]
+    cashRange: NumericRangePayload | None = None
+
+
+class LeadStatsPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    uploaded: int = Field(ge=0)
+    added: int = Field(ge=0)
+    removed: int = Field(ge=0)
+
+
+class CampaignPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=69)
+    name: str = Field(min_length=1, max_length=255)
+    status: Literal["draft", "active", "paused", "completed"] = "active"
+    startDate: date | None = None
+    endDate: date | None = None
+    description: str = Field(min_length=1, max_length=10_000)
+    clientMessage: str = Field(min_length=1, max_length=10_000)
+    bannerDataUrl: str | None = Field(default=None, max_length=1_400_000)
+    origin: Literal["marketing", "advisor"]
+    audienceSource: Literal["contacts", "leads"]
+    channel: str | None = Field(default=None, max_length=64)
+    teamIds: list[str] = Field(default_factory=list, max_length=100)
+    advisorIds: list[str] = Field(default_factory=list, max_length=100)
+    createdByAdvisorId: str | None = Field(default=None, max_length=64)
+    criteria: CampaignCriteriaPayload
+    includeIds: list[str] = Field(default_factory=list, max_length=1_000)
+    excludeIds: list[str] = Field(default_factory=list, max_length=1_000)
+    leadIds: list[str] = Field(default_factory=list, max_length=1_000)
+    leadStats: LeadStatsPayload
+    createdBy: str = Field(min_length=1, max_length=255)
+    createdAt: datetime
+    actions: dict[str, Literal["pipeline", "task", "dismissed"]] = Field(default_factory=dict)
+    emailLog: list[dict] = Field(default_factory=list, max_length=1_000)
+    leadContacts: list[dict] = Field(default_factory=list, max_length=1_000)
+
+    @model_validator(mode="after")
+    def validate_dates(self):
+        if self.startDate and self.endDate and self.endDate < self.startDate:
+            raise ValueError("campaign end date cannot precede start date")
+        return self
+
+
+class CampaignStatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    includeIds: list[str] = Field(max_length=1_000)
+    excludeIds: list[str] = Field(max_length=1_000)
+    leadIds: list[str] = Field(max_length=1_000)
+    leadStats: LeadStatsPayload
+    actions: dict[str, Literal["pipeline", "task", "dismissed"]]
+    emailLog: list[dict] = Field(max_length=1_000)
+    leadContacts: list[dict] = Field(max_length=1_000)
+
+
+class ContactPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=64)
+    name: str = Field(min_length=1, max_length=255)
+    email: str = Field(max_length=320)
+    countryCode: str = Field(default="+65", max_length=8)
+    phone: str = Field(default="", max_length=32)
+    dob: date | None = None
+    gender: Literal["male", "female"] | None = None
+    cashAmount: float | None = Field(default=None, ge=0)
+    label: Literal["Prospect", "Client"] | None = None
+    status: Literal["lead", "contact"] = "contact"
+    bookmarked: bool = False
+    needsAttention: bool = False
+    optInEmail: bool = False
+    optInSms: bool = False
+    nric: str | None = Field(default=None, max_length=64)
+    notes: str | None = Field(default=None, max_length=20_000)
+    meetings: list[dict] = Field(default_factory=list, max_length=1_000)
+    profile: dict | None = None
+    policies: list[dict] = Field(default_factory=list, max_length=1_000)
+    lastContacted: str | None = Field(default=None, max_length=32)
+    source: Literal["own", "transferred", "canvassed", "referral"] | None = None
+    transferredFrom: str | None = Field(default=None, max_length=255)
+    transferredOn: str | None = Field(default=None, max_length=32)
+    introduced: bool | None = None
+
+
 @lru_cache
 def get_orchestrator() -> ChatOrchestrator:
     settings = get_settings()
@@ -97,6 +214,117 @@ def health_check():
         "llm_configured": settings.llm_configured,
         "llm_model": settings.llm_model,
     }
+
+
+def _contact_scope(fa_id: str) -> RequestScope:
+    advisor_id = fa_id.strip()
+    if not advisor_id:
+        raise HTTPException(status_code=400, detail="fa_id is required for contacts")
+    return RequestScope(advisor_id)
+
+
+@app.get("/contacts", response_model=list[ContactPayload])
+@app.get("/api/contacts", response_model=list[ContactPayload])
+def contacts_list(fa_id: str = Query(min_length=1)) -> list[ContactPayload]:
+    return [ContactPayload.model_validate(row)
+            for row in list_contacts(_contact_scope(fa_id))]
+
+
+@app.post("/contacts", response_model=ContactPayload, status_code=201)
+@app.post("/api/contacts", response_model=ContactPayload, status_code=201)
+def contact_create(payload: ContactPayload,
+                   fa_id: str = Query(min_length=1)) -> ContactPayload:
+    try:
+        row = create_contact(_contact_scope(fa_id), payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ContactPayload.model_validate(row)
+
+
+@app.put("/contacts/{contact_id}", response_model=ContactPayload)
+@app.put("/api/contacts/{contact_id}", response_model=ContactPayload)
+def contact_replace(
+    contact_id: Annotated[str, Path(pattern=CAMPAIGN_ID_PATTERN, max_length=64)],
+    payload: ContactPayload,
+    fa_id: str = Query(min_length=1),
+) -> ContactPayload:
+    if payload.id != contact_id:
+        raise HTTPException(status_code=400, detail="contact ID does not match path")
+    row = replace_contact(_contact_scope(fa_id), contact_id, payload.model_dump())
+    if row is None:
+        raise HTTPException(status_code=404, detail="contact not found")
+    return ContactPayload.model_validate(row)
+
+
+def _campaign_scope(role: Literal["advisor", "marketing"],
+                    fa_id: str | None) -> RequestScope | None:
+    if role == "marketing":
+        return None
+    advisor_id = (fa_id or "").strip()
+    if not advisor_id:
+        raise HTTPException(status_code=400, detail="fa_id is required for adviser campaigns")
+    return RequestScope(advisor_id)
+
+
+@app.get("/campaigns", response_model=list[CampaignPayload])
+@app.get("/api/campaigns", response_model=list[CampaignPayload])
+def campaigns_list(
+    role: Literal["advisor", "marketing"] = Query(),
+    fa_id: str | None = Query(default=None, min_length=1),
+) -> list[CampaignPayload]:
+    scope = _campaign_scope(role, fa_id)
+    return [CampaignPayload.model_validate(row)
+            for row in list_campaign_records(role, scope)]
+
+
+@app.get("/campaigns/{campaign_id}", response_model=CampaignPayload)
+@app.get("/api/campaigns/{campaign_id}", response_model=CampaignPayload)
+def campaign_detail(
+    campaign_id: Annotated[str, Path(pattern=CAMPAIGN_ID_PATTERN, max_length=69)],
+    role: Literal["advisor", "marketing"] = Query(),
+    fa_id: str | None = Query(default=None, min_length=1),
+) -> CampaignPayload:
+    scope = _campaign_scope(role, fa_id)
+    row = get_campaign_record(role, scope, campaign_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    return CampaignPayload.model_validate(row)
+
+
+@app.post("/campaigns", response_model=CampaignPayload, status_code=201)
+@app.post("/api/campaigns", response_model=CampaignPayload, status_code=201)
+def campaign_create(
+    payload: CampaignPayload,
+    role: Literal["advisor", "marketing"] = Query(),
+    fa_id: str | None = Query(default=None, min_length=1),
+) -> CampaignPayload:
+    scope = _campaign_scope(role, fa_id)
+    expected_origin = "advisor" if role == "advisor" else "marketing"
+    if payload.origin != expected_origin:
+        raise HTTPException(status_code=400, detail="campaign origin does not match current role")
+    try:
+        row = create_campaign_record(role, scope, payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return CampaignPayload.model_validate(row)
+
+
+@app.patch("/campaigns/{campaign_id}/state", response_model=CampaignPayload)
+@app.patch("/api/campaigns/{campaign_id}/state", response_model=CampaignPayload)
+def campaign_state_update(
+    campaign_id: Annotated[str, Path(pattern=CAMPAIGN_ID_PATTERN, max_length=69)],
+    payload: CampaignStatePayload,
+    role: Literal["advisor", "marketing"] = Query(),
+    fa_id: str | None = Query(default=None, min_length=1),
+) -> CampaignPayload:
+    scope = _campaign_scope(role, fa_id)
+    try:
+        row = update_campaign_state(role, scope, campaign_id, payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if row is None:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    return CampaignPayload.model_validate(row)
 
 
 @app.get("/chat/sessions", response_model=list[SessionResponse])

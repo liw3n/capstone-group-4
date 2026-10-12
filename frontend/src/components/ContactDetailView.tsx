@@ -375,7 +375,7 @@ function ContactInfoTab({ contact }: { contact: Contact }) {
         <Field label="Secondary Phone Number" value={display(p.secondaryPhone)} />
         <Field label="NRIC/Passport Number" value={display(contact.nric)} />
         <Field label="Date of Birth" value={display(contact.dob)} />
-        <Field label="Opt-In Email Address" value={display(p.optInEmail)} />
+        <Field label="Opt-In Email Address" value={yesNo(contact.optInEmail)} />
         <Field label="Opt-in for e-Statement?" value={yesNo(p.eStatement)} />
         <Field label="Accredited Investor" value={yesNo(p.accreditedInvestor)} />
         <Field

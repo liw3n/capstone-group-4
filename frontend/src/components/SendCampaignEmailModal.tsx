@@ -31,13 +31,16 @@ export default function SendCampaignEmailModal({
   const [stage, setStage] = useState<Stage>('review');
   const [subject, setSubject] = useState(campaign.name);
 
-  const { eligible, unreachable } = useMemo(() => {
+  const { eligible, unreachable, unconsented } = useMemo(() => {
     const eligible: Contact[] = [];
     const unreachable: Contact[] = [];
+    const unconsented: Contact[] = [];
     for (const contact of recipients) {
-      (hasUsableEmail(contact) ? eligible : unreachable).push(contact);
+      if (!hasUsableEmail(contact)) unreachable.push(contact);
+      else if (!contact.optInEmail) unconsented.push(contact);
+      else eligible.push(contact);
     }
-    return { eligible, unreachable };
+    return { eligible, unreachable, unconsented };
   }, [recipients]);
 
   /** Everyone already emailed on this campaign, so a resend is a deliberate act. */
@@ -273,7 +276,7 @@ export default function SendCampaignEmailModal({
 
             {eligible.length === 0 && (
               <p className="px-3 py-6 text-center text-[13px] text-muted">
-                No identified client has a usable email address.
+                No identified client has both a usable email address and email consent.
               </p>
             )}
           </div>
@@ -286,6 +289,18 @@ export default function SendCampaignEmailModal({
                   {unreachable.length} excluded — no email on file:
                 </span>{' '}
                 {unreachable.map((c) => c.name).join(', ')}
+              </p>
+            </div>
+          )}
+
+          {unconsented.length > 0 && (
+            <div className="flex items-start gap-2 rounded-md bg-amber-soft px-3 py-2.5">
+              <CircleAlert size={14} className="mt-0.5 shrink-0 text-amber" />
+              <p className="text-[12px] leading-snug text-amber">
+                <span className="font-semibold">
+                  {unconsented.length} excluded — no email consent:
+                </span>{' '}
+                {unconsented.map((contact) => contact.name).join(', ')}
               </p>
             </div>
           )}

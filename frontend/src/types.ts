@@ -29,7 +29,6 @@ export type TaskStatus = 'todo' | 'done';
 /** The Contact Info tab. Every field is optional — most records come in partial. */
 export interface ContactProfile {
   secondaryPhone?: string;
-  optInEmail?: string;
   eStatement?: boolean;
   accreditedInvestor?: boolean;
 
@@ -98,6 +97,9 @@ export interface Contact {
   gender?: Gender;
   /** Investable cash in SGD. Deliberately not the same thing as annual income. */
   cashAmount?: number;
+  /** Communication consent from the canonical mock_client record. */
+  optInEmail?: boolean;
+  optInSms?: boolean;
   label?: ContactLabel;
   bookmarked?: boolean;
   needsAttention?: boolean;
@@ -273,11 +275,15 @@ export interface CampaignEmail {
 export interface Campaign {
   id: string;
   name: string;
+  /** Backend lifecycle fields; PostgreSQL is authoritative. */
+  status?: 'draft' | 'active' | 'paused' | 'completed';
+  startDate?: string;
+  endDate?: string;
   /** Marketing's internal brief — what the campaign is and who it is for. */
   description: string;
   /** Client-facing copy the advisor adapts before sending. */
   clientMessage: string;
-  /** Data URL. There is no backend, so the banner lives in memory. */
+  /** Small data URL persisted with this synthetic prototype campaign. */
   bannerDataUrl?: string;
   origin: CampaignOrigin;
   audienceSource: CampaignAudienceSource;
@@ -300,6 +306,8 @@ export interface Campaign {
   excludeIds: string[];
   /** Lead campaigns only. Holds pending and promoted leads; removed ones are dropped. */
   leadIds: string[];
+  /** Persisted campaign-specific lead records returned by the backend. */
+  leadContacts?: Contact[];
   leadStats: LeadStats;
   createdBy: string;
   createdAt: string;

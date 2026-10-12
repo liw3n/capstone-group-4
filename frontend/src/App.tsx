@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import TopBar from './components/TopBar';
 import Sidebar, { TabId } from './components/Sidebar';
@@ -30,18 +30,25 @@ import {
   Task,
 } from './types';
 import { GeneratedTask } from './services/ai';
-import { SEED_CAMPAIGNS, SEED_CONTACTS, SEED_PIPELINE, SEED_TASKS } from './data/seed';
 import { addDaysISO, newId, todayISO } from './lib/format';
 import { DEFAULT_SIGN_OFF } from './lib/email';
-import { campaignReachesAdvisor } from './lib/directory';
+import {
+  createCampaign,
+  listCampaigns,
+  updateCampaignState,
+} from './services/campaignApi';
+import { createContact, listContacts, replaceContact } from './services/contactApi';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>('home');
-  const [contacts, setContacts] = useState<Contact[]>(SEED_CONTACTS);
-  const [tasks, setTasks] = useState<Task[]>(SEED_TASKS);
-  const [pipelineItems, setPipelineItems] = useState<PipelineItem[]>(SEED_PIPELINE);
-  const [campaigns, setCampaigns] = useState<Campaign[]>(SEED_CAMPAIGNS);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [pipelineItems, setPipelineItems] = useState<PipelineItem[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [campaignLoading, setCampaignLoading] = useState(false);
+  const [campaignError, setCampaignError] = useState<string | null>(null);
+  const [contactError, setContactError] = useState<string | null>(null);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
   const [buildingCampaign, setBuildingCampaign] = useState(false);
@@ -50,7 +57,6 @@ export default function App() {
   const [editingSignOff, setEditingSignOff] = useState(false);
   const [showAddContact, setShowAddContact] = useState(false);
   const [showUploadWizard, setShowUploadWizard] = useState(false);
-  const nextContactId = useRef(SEED_CONTACTS.length + 1);
 
   const selectedContact = useMemo(
     () => contacts.find((c) => c.id === selectedContactId) ?? null,
@@ -73,21 +79,14 @@ export default function App() {
     [contacts],
   );
 
-  /** Marketing never sees an advisor's private campaigns. */
+  /** The API already excludes an advisor's private campaigns for Marketing. */
   const marketingCampaigns = useMemo(
     () => campaigns.filter((c) => c.origin === 'marketing'),
     [campaigns],
   );
 
-  /**
-   * The advisor's inbox: campaigns routed to them through channel/team/advisor,
-   * plus their own private ones. Routing is resolved here rather than in the
-   * view so a campaign an advisor cannot see never reaches the component.
-   */
-  const advisorCampaigns = useMemo(() => {
-    if (!session?.advisorId) return [];
-    return campaigns.filter((c) => campaignReachesAdvisor(c, session.advisorId!));
-  }, [campaigns, session]);
+  /** Adviser ownership and routing are enforced by the campaign API. */
+  const advisorCampaigns = campaigns;
 
   const selectedPipelineItem = useMemo(
     () =>
@@ -100,6 +99,42 @@ export default function App() {
   const nextCaseId = () =>
     pipelineItems.reduce((max, item) => Math.max(max, item.caseId), 0) + 1;
 
+  useEffect(() => {
+    if (!session) {
+      setCampaigns([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    setCampaignLoading(true);
+    setCampaignError(null);
+    setContactError(null);
+    const contactRequest = session.advisorId
+      ? listContacts(session, controller.signal)
+      : Promise.resolve<Contact[]>([]);
+    Promise.all([listCampaigns(session, controller.signal), contactRequest])
+      .then(([loaded, canonicalContacts]) => {
+        setCampaigns(loaded);
+        const loadedLeads = loaded.flatMap((campaign) => campaign.leadContacts ?? []);
+        setContacts(() => {
+          const byId = new Map(canonicalContacts.map((contact) => [contact.id, contact]));
+          loadedLeads.forEach((contact) => byId.set(contact.id, contact));
+          return [...byId.values()];
+        });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        const message = error instanceof Error ? error.message : 'Unable to load application data.';
+        setCampaignError(message);
+        if (session.advisorId) setContactError(message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCampaignLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [session]);
+
   /* ---------- session ---------- */
 
   const handleSignIn = (next: Session) => {
@@ -111,11 +146,7 @@ export default function App() {
     setBuildingCampaign(false);
   };
 
-  /**
-   * Signing out drops the session but keeps the data. That is what makes the
-   * handoff demonstrable: author a campaign as Marketing, switch, and receive it
-   * as the advisor without losing anything.
-   */
+  /** Campaigns are reloaded from PostgreSQL for the next signed-in role. */
   const handleSignOut = () => {
     setSession(null);
     setSelectedContactId(null);
@@ -132,20 +163,24 @@ export default function App() {
     setActiveTab('contacts');
   };
 
-  const handleUpdateContact = (updates: Partial<Contact>) => {
-    if (!selectedContact) return;
+  const handleUpdateContact = async (updates: Partial<Contact>) => {
+    const activeSession = session;
+    if (!selectedContact || !activeSession?.advisorId) return;
+    try {
+      setContactError(null);
+      const saved = await replaceContact({ ...selectedContact, ...updates }, activeSession);
+      setContacts((prev) => prev.map((contact) => (contact.id === saved.id ? saved : contact)));
 
-    setContacts((prev) =>
-      prev.map((c) => (c.id === selectedContact.id ? { ...c, ...updates } : c)),
-    );
-
-    // Keep the pipeline card's label badge in step with the contact record.
-    if (updates.label !== undefined) {
-      setPipelineItems((prev) =>
-        prev.map((p) =>
-          p.contactId === selectedContact.id ? { ...p, contactLabel: updates.label } : p,
-        ),
-      );
+      // Keep the browser-only pipeline card's label badge in step.
+      if (updates.label !== undefined) {
+        setPipelineItems((prev) =>
+          prev.map((item) =>
+            item.contactId === saved.id ? { ...item, contactLabel: saved.label } : item,
+          ),
+        );
+      }
+    } catch (error) {
+      setContactError(error instanceof Error ? error.message : 'Unable to update contact.');
     }
   };
 
@@ -153,16 +188,26 @@ export default function App() {
    * Saving a generated meeting summary writes the timeline entry and creates a
    * task row for every item the advisor left checked.
    */
-  const handleAddMeetingSummary = (summary: MeetingSummary, generated: GeneratedTask[]) => {
-    if (!selectedContact) return;
-
-    setContacts((prev) =>
-      prev.map((c) =>
-        c.id === selectedContact.id
-          ? { ...c, meetings: [summary, ...(c.meetings ?? [])] }
-          : c,
-      ),
-    );
+  const handleAddMeetingSummary = async (
+    summary: MeetingSummary,
+    generated: GeneratedTask[],
+  ) => {
+    const activeSession = session;
+    if (!selectedContact || !activeSession?.advisorId) return;
+    let saved: Contact;
+    try {
+      setContactError(null);
+      saved = await replaceContact(
+        { ...selectedContact, meetings: [summary, ...(selectedContact.meetings ?? [])] },
+        activeSession,
+      );
+      setContacts((prev) =>
+        prev.map((contact) => (contact.id === saved.id ? saved : contact)),
+      );
+    } catch (error) {
+      setContactError(error instanceof Error ? error.message : 'Unable to save meeting summary.');
+      return;
+    }
 
     const rows: Task[] = generated.map((task) => ({
       id: newId(),
@@ -179,12 +224,22 @@ export default function App() {
     if (rows.length > 0) setTasks((prev) => [...rows, ...prev]);
   };
 
-  const handleCreateContacts = (incoming: Omit<Contact, 'id'>[]) => {
-    const created = incoming.map((contact) => ({
-      ...contact,
-      id: String(nextContactId.current++),
-    }));
-    setContacts((prev) => [...created, ...prev]);
+  const handleCreateContacts = async (incoming: Omit<Contact, 'id'>[]) => {
+    const activeSession = session;
+    if (!activeSession?.advisorId) return false;
+    try {
+      setContactError(null);
+      const created = await Promise.all(
+        incoming.map((contact) =>
+          createContact({ ...contact, id: newId(), status: 'contact' }, activeSession),
+        ),
+      );
+      setContacts((prev) => [...created, ...prev]);
+      return true;
+    } catch (error) {
+      setContactError(error instanceof Error ? error.message : 'Unable to create contacts.');
+      return false;
+    }
   };
 
   /* ---------- pipeline ---------- */
@@ -210,16 +265,26 @@ export default function App() {
     ]);
   };
 
-  const handleUpdatePipelineItem = (id: string, updates: Partial<PipelineItem>) => {
+  const handleUpdatePipelineItem = async (id: string, updates: Partial<PipelineItem>) => {
     setPipelineItems((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
 
-    // The label lives on the contact record; the card only mirrors it.
+    // The label lives in mock_client; the browser-only card only mirrors it.
     if (updates.contactLabel !== undefined) {
       const item = pipelineItems.find((p) => p.id === id);
-      if (item) {
-        setContacts((prev) =>
-          prev.map((c) => (c.id === item.contactId ? { ...c, label: updates.contactLabel } : c)),
-        );
+      const contact = contacts.find((candidate) => candidate.id === item?.contactId);
+      const activeSession = session;
+      if (contact && activeSession?.advisorId) {
+        try {
+          const saved = await replaceContact(
+            { ...contact, label: updates.contactLabel },
+            activeSession,
+          );
+          setContacts((prev) =>
+            prev.map((candidate) => (candidate.id === saved.id ? saved : candidate)),
+          );
+        } catch (error) {
+          setContactError(error instanceof Error ? error.message : 'Unable to update contact.');
+        }
       }
     }
   };
@@ -249,48 +314,91 @@ export default function App() {
   /* ---------- campaigns ---------- */
 
   /**
-   * Lead campaigns arrive with their rows parsed but unsaved. The contact
-   * records are created here, as `status: 'lead'`, and their ids become the
-   * campaign's audience.
+   * Lead campaign rows are assigned stable prototype IDs here, marked as leads,
+   * and saved with the campaign before they enter the local contact view.
    */
-  const handleCreateCampaign = (campaign: Campaign, leads?: Omit<Contact, 'id'>[]) => {
+  const handleCreateCampaign = async (
+    campaign: Campaign,
+    leads?: Omit<Contact, 'id'>[],
+  ) => {
+    if (!session) return;
     let next = campaign;
+    let created: Contact[] = [];
 
     if (leads && leads.length > 0) {
-      const created = leads.map((lead) => ({
+      created = leads.map((lead) => ({
         ...lead,
-        id: String(nextContactId.current++),
+        id: newId(),
         status: 'lead' as const,
       }));
 
-      setContacts((prev) => [...prev, ...created]);
       next = {
         ...campaign,
         leadIds: created.map((c) => c.id),
         leadStats: { uploaded: created.length, added: 0, removed: 0 },
+        leadContacts: created,
       };
     }
 
-    setCampaigns((prev) => [next, ...prev]);
-    setBuildingCampaign(false);
+    try {
+      setCampaignError(null);
+      const saved = await createCampaign(next, created, session);
+      setCampaigns((prev) => [saved, ...prev]);
+      if (created.length > 0) {
+        setContacts((prev) => [...prev, ...created]);
+      }
+      setBuildingCampaign(false);
+    } catch (error) {
+      setCampaignError(error instanceof Error ? error.message : 'Unable to create campaign.');
+    }
+  };
+
+  const persistCampaign = async (campaign: Campaign): Promise<Campaign | null> => {
+    if (!session) return null;
+    try {
+      setCampaignError(null);
+      const saved = await updateCampaignState(campaign, session);
+      setCampaigns((prev) => prev.map((item) => (item.id === saved.id ? saved : item)));
+      return saved;
+    } catch (error) {
+      setCampaignError(error instanceof Error ? error.message : 'Unable to update campaign.');
+      return null;
+    }
   };
 
   /**
    * Promotes a lead into the book. It keeps its id, so the campaign row stays
    * linked and simply reads as handled from here on.
    */
-  const handleAddLeadToContacts = (campaignId: string, contactId: string) => {
-    setContacts((prev) =>
-      prev.map((c) =>
-        c.id === contactId ? { ...c, status: 'contact' as const, label: c.label ?? 'Prospect' } : c,
-      ),
+  const handleAddLeadToContacts = async (campaignId: string, contactId: string) => {
+    const activeSession = session;
+    if (!activeSession?.advisorId) return;
+    const campaign = campaigns.find((item) => item.id === campaignId);
+    if (!campaign) return;
+    const promotedLeadContacts = (campaign.leadContacts ?? []).map((contact) =>
+      contact.id === contactId
+        ? { ...contact, status: 'contact' as const, label: contact.label ?? 'Prospect' }
+        : contact,
     );
-
-    setCampaigns((prev) =>
-      prev.map((c) =>
-        c.id === campaignId
-          ? { ...c, leadStats: { ...c.leadStats, added: c.leadStats.added + 1 } }
-          : c,
+    const promoted = promotedLeadContacts.find((contact) => contact.id === contactId);
+    if (!promoted) return;
+    try {
+      await createContact(promoted, activeSession);
+    } catch (error) {
+      setContactError(error instanceof Error ? error.message : 'Unable to promote lead.');
+      return;
+    }
+    const saved = await persistCampaign({
+      ...campaign,
+      leadContacts: promotedLeadContacts,
+      leadStats: { ...campaign.leadStats, added: campaign.leadStats.added + 1 },
+    });
+    if (!saved) return;
+    setContacts((prev) =>
+      prev.map((contact) =>
+        contact.id === contactId
+          ? { ...contact, status: 'contact' as const, label: contact.label ?? 'Prospect' }
+          : contact,
       ),
     );
   };
@@ -300,20 +408,18 @@ export default function App() {
    * only thing that survives, which is the point: the campaign still knows how
    * many names it started with and how many came to nothing.
    */
-  const handleRemoveLead = (campaignId: string, contactId: string) => {
-    setContacts((prev) => prev.filter((c) => c.id !== contactId));
-
-    setCampaigns((prev) =>
-      prev.map((c) =>
-        c.id === campaignId
-          ? {
-              ...c,
-              leadIds: c.leadIds.filter((id) => id !== contactId),
-              leadStats: { ...c.leadStats, removed: c.leadStats.removed + 1 },
-            }
-          : c,
-      ),
-    );
+  const handleRemoveLead = async (campaignId: string, contactId: string) => {
+    const campaign = campaigns.find((item) => item.id === campaignId);
+    if (!campaign) return;
+    const saved = await persistCampaign({
+      ...campaign,
+      leadIds: campaign.leadIds.filter((id) => id !== contactId),
+      leadContacts: (campaign.leadContacts ?? []).filter((contact) => contact.id !== contactId),
+      leadStats: { ...campaign.leadStats, removed: campaign.leadStats.removed + 1 },
+    });
+    if (saved) {
+      setContacts((prev) => prev.filter((contact) => contact.id !== contactId));
+    }
   };
 
   /**
@@ -321,7 +427,7 @@ export default function App() {
    * its `criteria` object identity, so the detail view's memoised audience does
    * not recompute and re-run the ranking on every click.
    */
-  const handleCampaignAction = (
+  const handleCampaignAction = async (
     campaignId: string,
     contactId: string,
     action: CampaignActionType,
@@ -331,9 +437,13 @@ export default function App() {
     const contact = contacts.find((c) => c.id === contactId);
     if (!campaign || !contact) return;
 
-    if (action === 'pipeline') {
-      addContactToPipeline(contact);
-    }
+    const saved = await persistCampaign({
+      ...campaign,
+      actions: { ...campaign.actions, [contactId]: action },
+    });
+    if (!saved) return;
+
+    if (action === 'pipeline') addContactToPipeline(contact);
 
     if (action === 'task') {
       const start = todayISO();
@@ -354,11 +464,6 @@ export default function App() {
       ]);
     }
 
-    setCampaigns((prev) =>
-      prev.map((c) =>
-        c.id === campaignId ? { ...c, actions: { ...c.actions, [contactId]: action } } : c,
-      ),
-    );
   };
 
   /**
@@ -366,7 +471,7 @@ export default function App() {
    * no mail transport in this app — but the log is what the UI reports from, so
    * it has to capture exactly what the advisor confirmed.
    */
-  const handleSendCampaignEmail = (
+  const handleSendCampaignEmail = async (
     campaignId: string,
     recipientIds: string[],
     subject: string,
@@ -383,11 +488,9 @@ export default function App() {
       signOff,
     };
 
-    setCampaigns((prev) =>
-      prev.map((c) =>
-        c.id === campaignId ? { ...c, emailLog: [entry, ...c.emailLog] } : c,
-      ),
-    );
+    const campaign = campaigns.find((item) => item.id === campaignId);
+    if (!campaign) return;
+    await persistCampaign({ ...campaign, emailLog: [entry, ...campaign.emailLog] });
   };
 
   /* ---------- render ---------- */
@@ -423,6 +526,21 @@ export default function App() {
 
         <main className="flex-1 overflow-y-auto border-l border-line bg-canvas">
           <div className="mx-auto max-w-[1400px] px-6 py-6">
+            {activeTab === 'campaigns' && campaignLoading && (
+              <div className="mb-4 rounded-lg border border-line bg-white px-4 py-3 text-sm text-muted-foreground">
+                Loading campaigns…
+              </div>
+            )}
+            {activeTab === 'campaigns' && campaignError && (
+              <div role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {campaignError}
+              </div>
+            )}
+            {!isMarketing && (activeTab === 'home' || activeTab === 'contacts') && contactError && (
+              <div role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {contactError}
+              </div>
+            )}
             {/*
               Deliberately not wrapped in AnimatePresence: `mode="wait"` holds the
               incoming view until the outgoing exit animation finishes, which never
@@ -579,9 +697,8 @@ export default function App() {
         {showAddContact && (
           <AddContactModal
             onClose={() => setShowAddContact(false)}
-            onSave={(contact) => {
-              handleCreateContacts([contact]);
-              setShowAddContact(false);
+            onSave={async (contact) => {
+              if (await handleCreateContacts([contact])) setShowAddContact(false);
             }}
           />
         )}

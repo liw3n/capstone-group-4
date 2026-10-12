@@ -1,0 +1,158 @@
+"""PostgreSQL source of truth for synthetic CRM contacts."""
+from contextlib import contextmanager
+from typing import Any, Iterator
+
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+
+from app import config
+from app.campaigns.repository import RequestScope
+
+
+class ContactStorageUnavailable(RuntimeError):
+    """Safe public error for contact storage failures."""
+
+
+@contextmanager
+def _connection() -> Iterator[Any]:
+    database_url = config.get_settings().database_url
+    if not database_url:
+        raise ContactStorageUnavailable("Contact database is not configured")
+    try:
+        with psycopg.connect(
+            database_url, row_factory=dict_row, connect_timeout=5
+        ) as connection:
+            connection.execute("SET LOCAL statement_timeout = '5s'")
+            yield connection
+    except psycopg.Error as exc:
+        raise ContactStorageUnavailable(
+            "Contact database is temporarily unavailable"
+        ) from exc
+
+
+def _number(value: Any) -> float | int | None:
+    if value is None:
+        return None
+    number = float(value)
+    return int(number) if number.is_integer() else number
+
+
+def _record(row: dict[str, Any]) -> dict[str, Any]:
+    extra = dict(row["crm_data"])
+    extra.update({
+        "id": row["contact_id"],
+        "name": row["name"],
+        "email": row["email"],
+        "countryCode": row["country_code"],
+        "phone": row["phone"],
+        "dob": row["date_of_birth"].isoformat() if row["date_of_birth"] else None,
+        "gender": row["gender"],
+        "cashAmount": _number(row["available_cash"]),
+        "label": row["label"],
+        "status": row["status"],
+        "bookmarked": row["bookmarked"],
+        "needsAttention": row["needs_attention"],
+        "optInEmail": row["opt_in_email"],
+        "optInSms": row["opt_in_sms"],
+    })
+    return extra
+
+
+SELECT_COLUMNS = """
+    contact_id, name, email, country_code, phone, date_of_birth, gender,
+    available_cash, label, status, bookmarked, needs_attention,
+    opt_in_email, opt_in_sms, crm_data
+"""
+
+
+def list_contacts(scope: RequestScope) -> list[dict[str, Any]]:
+    with _connection() as connection:
+        rows = connection.execute(
+            f"""SELECT {SELECT_COLUMNS}
+                FROM mock_client
+                WHERE tenant_id = %s AND fa_id = %s
+                ORDER BY contact_id""",
+            (scope.tenant_id, scope.fa_id),
+        ).fetchall()
+    return [_record(row) for row in rows]
+
+
+def _crm_data(payload: dict[str, Any]) -> dict[str, Any]:
+    scalar_fields = {
+        "id", "name", "email", "countryCode", "phone", "dob", "gender",
+        "cashAmount", "label", "status", "bookmarked", "needsAttention",
+        "optInEmail", "optInSms",
+    }
+    return {key: value for key, value in payload.items()
+            if key not in scalar_fields and value is not None}
+
+
+def create_contact(scope: RequestScope, payload: dict[str, Any]) -> dict[str, Any]:
+    with _connection() as connection:
+        if connection.execute(
+            "SELECT 1 FROM mock_client WHERE tenant_id = %s AND contact_id = %s",
+            (scope.tenant_id, payload["id"]),
+        ).fetchone():
+            raise ValueError("Contact ID already exists")
+        connection.execute(
+            """
+            INSERT INTO mock_client (
+                tenant_id, contact_id, fa_id, name, email, country_code, phone,
+                date_of_birth, gender, available_cash, label, status,
+                bookmarked, needs_attention, opt_in_email, opt_in_sms, crm_data
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s
+            )
+            """,
+            (
+                scope.tenant_id, payload["id"], scope.fa_id, payload["name"],
+                payload["email"], payload["countryCode"], payload["phone"],
+                payload.get("dob"), payload.get("gender"), payload.get("cashAmount"),
+                payload.get("label"), payload.get("status", "contact"),
+                payload.get("bookmarked", False), payload.get("needsAttention", False),
+                payload.get("optInEmail", False), payload.get("optInSms", False),
+                Jsonb(_crm_data(payload)),
+            ),
+        )
+        row = connection.execute(
+            f"""SELECT {SELECT_COLUMNS} FROM mock_client
+                WHERE tenant_id = %s AND fa_id = %s AND contact_id = %s""",
+            (scope.tenant_id, scope.fa_id, payload["id"]),
+        ).fetchone()
+    return _record(row)
+
+
+def replace_contact(scope: RequestScope, contact_id: str,
+                    payload: dict[str, Any]) -> dict[str, Any] | None:
+    with _connection() as connection:
+        updated = connection.execute(
+            """
+            UPDATE mock_client
+            SET name = %s, email = %s, country_code = %s, phone = %s,
+                date_of_birth = %s, gender = %s, available_cash = %s,
+                label = %s, status = %s, bookmarked = %s,
+                needs_attention = %s, opt_in_email = %s, opt_in_sms = %s,
+                crm_data = %s
+            WHERE tenant_id = %s AND fa_id = %s AND contact_id = %s
+            """,
+            (
+                payload["name"], payload["email"], payload["countryCode"],
+                payload["phone"], payload.get("dob"), payload.get("gender"),
+                payload.get("cashAmount"), payload.get("label"),
+                payload.get("status", "contact"), payload.get("bookmarked", False),
+                payload.get("needsAttention", False), payload.get("optInEmail", False),
+                payload.get("optInSms", False), Jsonb(_crm_data(payload)),
+                scope.tenant_id, scope.fa_id, contact_id,
+            ),
+        )
+        if updated.rowcount == 0:
+            return None
+        row = connection.execute(
+            f"""SELECT {SELECT_COLUMNS} FROM mock_client
+                WHERE tenant_id = %s AND fa_id = %s AND contact_id = %s""",
+            (scope.tenant_id, scope.fa_id, contact_id),
+        ).fetchone()
+    return _record(row)
