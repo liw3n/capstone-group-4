@@ -45,3 +45,20 @@ def test_client_uses_configured_openai_compatible_endpoint(monkeypatch):
     assert captured["client"]["base_url"] == "https://provider.example/openai/v1"
     assert captured["request"]["model"] == "test-model"
     assert captured["request"]["tool_choice"] == "auto"
+
+    result = client.create_structured_completion(
+        [{"role": "user", "content": "Generate a draft"}],
+        {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+    )
+
+    assert result == "completion"
+    assert "tools" not in captured["request"]
+    response_format = captured["request"]["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    assert response_format["json_schema"]["schema"]["required"] == ["name"]

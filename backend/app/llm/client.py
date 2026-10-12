@@ -43,12 +43,34 @@ class LLMClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> Any:
+        return self._create_completion(
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+        )
+
+    def create_structured_completion(
+        self,
+        messages: list[dict[str, Any]],
+        schema: dict[str, Any],
+    ) -> Any:
+        return self._create_completion(
+            messages=messages,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "campaign_draft_generation",
+                    "strict": True,
+                    "schema": schema,
+                },
+            },
+        )
+
+    def _create_completion(self, **kwargs: Any) -> Any:
         try:
             return self._client.chat.completions.create(
                 model=self.settings.llm_model,
-                messages=messages,
-                tools=tools,
-                tool_choice="auto",
+                **kwargs,
             )
         except AuthenticationError as exc:
             raise LLMAuthenticationError("LLM provider rejected its credentials") from exc

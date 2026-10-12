@@ -1,6 +1,12 @@
+from copy import deepcopy
 import json
+import re
 from typing import Any, Protocol
 
+from pydantic import ValidationError
+
+from app.campaigns.models import CampaignDraftArtifact
+from app.campaigns.presentation import render_campaign_draft
 from app.campaigns.repository import RequestScope
 from app.config import Settings
 from app.llm.errors import LLMProviderError, LLMToolLoopError
@@ -76,6 +82,149 @@ explain it without inventing figures. Never reveal another adviser's client
 relationship or imply that a missing campaign belongs to someone else.
 """
 
+SYSTEM_PROMPT += """
+For requests to generate, draft or propose a new campaign from a business
+objective, first call find_campaign_references with the objective from the latest user
+message. After retrieval, the server requests a schema-constrained draft and
+invokes prepare_campaign_draft itself with the retained objective and signed
+token. referencesUsed must contain only reference IDs and versions returned by
+that retrieval call; it may be empty when no reference was relevant. Generate
+every required structured field, make assumptions explicit, explain each
+targeting dimension and include educational, individual-review language in both
+the client message and disclaimer. Do not invent rates, returns, guarantees,
+regulatory approval, client details or unsupported targeting precision.
+
+The preparation tool validates and packages content; it does not save or create
+a campaign. Never claim the campaign was created, activated, approved or sent.
+The server renders a successful campaign_draft directly. If retrieval fails, do
+not fabricate a draft outside the tool.
+"""
+
+
+def _prepared_campaign_draft(result: str) -> CampaignDraftArtifact | None:
+    try:
+        payload = json.loads(result)
+    except json.JSONDecodeError as exc:
+        raise LLMProviderError("Campaign draft tool returned invalid JSON") from exc
+    if not isinstance(payload, dict) or payload.get("type") != "campaign_draft":
+        return None
+    try:
+        return CampaignDraftArtifact.model_validate(payload)
+    except ValidationError as exc:
+        raise LLMProviderError("Campaign draft tool returned an invalid artifact") from exc
+
+
+def _is_campaign_reference_result(result: str) -> bool:
+    try:
+        payload = json.loads(result)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(payload, dict) and payload.get("type") == "campaign_references"
+
+
+def _campaign_reference_context(result: str) -> str:
+    try:
+        payload = json.loads(result)
+    except json.JSONDecodeError as exc:
+        raise LLMProviderError("Campaign reference tool returned invalid JSON") from exc
+    if not isinstance(payload, dict) or payload.get("type") != "campaign_references":
+        raise LLMProviderError("Campaign reference tool returned an invalid result")
+    payload.pop("retrievalToken", None)
+    return json.dumps(payload, separators=(",", ":"))
+
+
+def _campaign_reference_failure(result: str) -> str:
+    try:
+        payload = json.loads(result)
+    except json.JSONDecodeError as exc:
+        raise LLMProviderError("Campaign reference tool returned invalid JSON") from exc
+    message = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(message, str):
+        raise LLMProviderError("Campaign reference tool returned an invalid result")
+    return (
+        "## Campaign draft could not be prepared\n\n"
+        f"**Reference retrieval issue:** {message}\n\n"
+        "No campaign was created."
+    )
+
+
+def _is_campaign_generation_request(message: str) -> bool:
+    normalized = " ".join(message.casefold().split())
+    return bool(
+        re.search(
+            r"\b(?:create|generate|draft|propose|design|build|launch|run)\b"
+            r".{0,100}\bcampaign\b",
+            normalized,
+        )
+        or re.search(
+            r"\bcampaign\b.{0,100}\b(?:idea|objective|proposal|draft)\b",
+            normalized,
+        )
+    )
+
+
+def _strict_campaign_generation_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Adapt the model-facing preparation schema for Groq strict JSON output."""
+    supported_keys = {
+        "type", "properties", "required", "additionalProperties", "items",
+        "enum", "description",
+    }
+
+    def supported(value: Any) -> Any:
+        if isinstance(value, list):
+            return [supported(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        cleaned = {}
+        for key, item in value.items():
+            if key == "properties" and isinstance(item, dict):
+                cleaned[key] = {
+                    property_name: supported(property_schema)
+                    for property_name, property_schema in item.items()
+                }
+            elif key in supported_keys:
+                cleaned[key] = supported(item)
+        return cleaned
+
+    strict_schema = supported(deepcopy(schema))
+    draft_schema = strict_schema["properties"]["draft"]
+    draft_schema["required"] = list(draft_schema["properties"])
+    rationale_properties = {
+        dimension: {
+            "type": "string",
+            "description": f"Rationale for the {dimension} targeting choice.",
+        }
+        for dimension in ("ageGroups", "genders", "cashBands")
+    }
+    draft_schema["properties"]["rationale"] = {
+        "type": "object",
+        "properties": rationale_properties,
+        "required": list(rationale_properties),
+        "additionalProperties": False,
+    }
+    return strict_schema
+
+
+def _campaign_draft_failure(result: str) -> str:
+    try:
+        payload = json.loads(result)
+    except json.JSONDecodeError as exc:
+        raise LLMProviderError("Campaign draft tool returned invalid JSON") from exc
+    message = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(message, str):
+        raise LLMProviderError("Campaign draft tool returned an invalid result")
+    field = payload.get("field")
+    rule = payload.get("rule")
+    diagnostic = ""
+    if isinstance(field, str) and isinstance(rule, str):
+        diagnostic = f"\n\n**Field:** `{field}`  \n**Rule:** `{rule}`"
+    return (
+        "## Campaign draft could not be prepared\n\n"
+        f"**Validation issue:** {message}{diagnostic}\n\n"
+        "No campaign was created. Revise the objective or generated content and try again."
+    )
+
+
 class ToolExecutor(Protocol):
     def bind_scope(
         self, scope: RequestScope, campaign_id: str | None = None
@@ -96,6 +245,50 @@ class ChatOrchestrator:
         self.client = client
         self.settings = settings
         self.registry = registry
+
+    def _generate_campaign_draft(
+        self,
+        *,
+        registry: ToolExecutor,
+        prompt: str,
+        user_message: str,
+        reference_result: str,
+        preparation_tool: dict[str, Any],
+    ) -> str:
+        generation_messages = [
+            {
+                "role": "system",
+                "content": (
+                    prompt
+                    + "\nReturn only the schema-constrained campaign draft. "
+                    "Use only the supplied reference IDs and versions."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Business objective:\n{user_message}\n\n"
+                    "Retrieved synthetic campaign references:\n"
+                    + _campaign_reference_context(reference_result)
+                ),
+            },
+        ]
+        generation = self.client.create_structured_completion(
+            generation_messages,
+            _strict_campaign_generation_schema(
+                preparation_tool["function"]["parameters"]
+            ),
+        )
+        if not getattr(generation, "choices", None):
+            raise LLMProviderError("LLM provider returned no choices")
+        content = getattr(generation.choices[0].message, "content", None)
+        if not content:
+            raise LLMProviderError("LLM provider returned an empty campaign draft")
+        prepared = registry.execute("prepare_campaign_draft", content)
+        artifact = _prepared_campaign_draft(prepared)
+        if artifact is not None:
+            return render_campaign_draft(artifact)
+        return _campaign_draft_failure(prepared)
 
     def run(self, user_message: str, history: list[ChatHistoryItem], *,
             scope: RequestScope | None = None, campaign_id: str | None = None) -> str:
@@ -119,7 +312,34 @@ class ChatOrchestrator:
             )
         messages.append({"role": "user", "content": user_message})
 
-        tools = registry.schemas()
+        schemas = registry.schemas()
+        preparation_tool = next(
+            (
+                tool for tool in schemas
+                if tool.get("function", {}).get("name") == "prepare_campaign_draft"
+            ),
+            None,
+        )
+        tools = [
+            tool for tool in schemas
+            if tool.get("function", {}).get("name") != "prepare_campaign_draft"
+        ]
+        if _is_campaign_generation_request(user_message):
+            if preparation_tool is None:
+                raise LLMProviderError("Campaign preparation schema is unavailable")
+            reference_result = registry.execute(
+                "find_campaign_references",
+                json.dumps({"objective": user_message, "limit": 3}),
+            )
+            if not _is_campaign_reference_result(reference_result):
+                return _campaign_reference_failure(reference_result)
+            return self._generate_campaign_draft(
+                registry=registry,
+                prompt=prompt,
+                user_message=user_message,
+                reference_result=reference_result,
+                preparation_tool=preparation_tool,
+            )
         for _ in range(self.settings.llm_max_tool_rounds):
             completion = self.client.create_chat_completion(messages, tools)
             if not getattr(completion, "choices", None):
@@ -156,6 +376,10 @@ class ChatOrchestrator:
                     tool_call.function.name,
                     tool_call.function.arguments,
                 )
+                if tool_call.function.name == "prepare_campaign_draft":
+                    artifact = _prepared_campaign_draft(result)
+                    if artifact is not None:
+                        return render_campaign_draft(artifact)
                 messages.append(
                     {
                         "role": "tool",
@@ -163,5 +387,18 @@ class ChatOrchestrator:
                         "content": result,
                     }
                 )
+                if (
+                    tool_call.function.name == "find_campaign_references"
+                    and _is_campaign_reference_result(result)
+                ):
+                    if preparation_tool is None:
+                        raise LLMProviderError("Campaign preparation schema is unavailable")
+                    return self._generate_campaign_draft(
+                        registry=registry,
+                        prompt=prompt,
+                        user_message=user_message,
+                        reference_result=result,
+                        preparation_tool=preparation_tool,
+                    )
 
         raise LLMToolLoopError("LLM exceeded the configured tool-call round limit")
