@@ -30,7 +30,8 @@ that do not advance that workflow.
 - `src/services/chatApi.ts` is the typed boundary to the backend chat API.
 - `src/services/ai.ts` contains the CRM prototype's simulated meeting and
   campaign helpers; do not confuse these with the live PULSE chat integration.
-- `src/data/seed.ts` supplies deterministic demonstration data.
+- `src/data/seed.ts` supplies only the fixed prototype date; scoped CRM contacts
+  come from PostgreSQL `mock_client` through `services/contactApi.ts`.
 
 ## Change rules
 
@@ -68,9 +69,10 @@ the frontend and backend are served separately.
 
 ## Known gaps
 
-- CRM contacts, tasks, pipeline, campaigns, role selection, and email receipts
-  still live only in React state and reset to seed data on refresh.
-- The PULSE chat is the only feature connected to the FastAPI backend.
+- Contacts, campaign definitions, lead triage, adviser actions and simulated
+  email receipts persist through FastAPI. Tasks, pipeline cards and role
+  selection remain React state.
+- PULSE chat, contacts and campaigns are connected to the FastAPI backend.
 - Chat sessions and successful user/assistant exchanges persist in PostgreSQL;
   drafts, open/closed panel state, and optimistic messages remain browser state.
 - Role selection is a prototype, not authentication or authorization.

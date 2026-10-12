@@ -19,7 +19,8 @@ make dev
 
 Provisioning runs `backend/setup.sh`. Its ordered SQL loop applies
 `create_campaign_chat_sessions.sql`, `create_mock_campaign_tables.sql`,
-`seed_mock_campaign_data.sql`, `create_mock_campaign_engagement.sql`,
+`seed_mock_campaign_data.sql`, `migrate_campaign_source_of_truth.sql`,
+`migrate_mock_client_crm_fields.sql`, `create_mock_campaign_engagement.sql`,
 `create_mock_campaign_contact_event.sql`, then
 `seed_mock_campaign_contact_events.sql` from `backend/tables/`. Every teammate loads the same
 synthetic records into their own local database. The schema and seeds are additive
@@ -81,14 +82,22 @@ These PostgreSQL tables are a **synthetic prototype**, not production GCRM DDL.
 | cash_min, cash_max | Nullable NUMERIC(18,2); inclusive custom SGD range |
 | created_at | TIMESTAMPTZ; insertion timestamp |
 
+`migrate_campaign_source_of_truth.sql` adds the CRM-facing description, client
+message, lifecycle/routing metadata, manual audience overrides, lead triage
+state, adviser actions, simulated email log and campaign-specific lead records.
+It records its backfill in `pulse_schema_migration`, making the checked-in SQL
+campaigns authoritative for the browser instead of duplicating them in
+`frontend/src/data/seed.ts`.
+
 `mock_campaign_advisor` has `tenant_id`, `campaign_id`, and `fa_id` as its primary
 key. Its composite foreign key points to the campaign in the same tenant. It
 models which adviser can access a campaign rather than client membership.
 
 `mock_client` has `tenant_id`, `contact_id` (composite primary key), `fa_id`,
-`name`, nullable `date_of_birth`, nullable `gender`, nullable `available_cash`
-(NUMERIC(18,2)), `opt_in_email`, `opt_in_sms`, and `created_at`. Available cash is
-investable SGD cash, not annual income. Both consent flags default to false.
+`name`, nullable matching fields (`date_of_birth`, `gender`, `available_cash`),
+communication consent, minimal CRM display fields, and a JSONB extension for
+synthetic notes/timeline data. Available cash is investable SGD cash, not annual
+income. Both consent flags default to false.
 Matching returns a review list and does not authorize communications; a future
 outreach tool must validate these flags for its chosen channel.
 
@@ -99,14 +108,15 @@ connection and statement timeouts. Database errors become HTTP 503 during campai
 validation or the structured MCP error `storage_unavailable`, without exposing
 connection details. There is no global data cache or fallback dataset.
 
-Both campaigns mirror the frontend seeds. The activity window and adviser access
-assignments are prototype assumptions. The backend's separate 14-client dataset
-is **not** the frontend's 75 contact records, and recommendation IDs cannot be
-used for existing frontend email/task actions. Browser-created campaigns remain
-local React state and are not inserted into these tables. Product narratives such
-as protection gaps, review dates or property ownership are not assessed unless
-explicit supported criteria are added. Replace this data-access adapter when the
-real schema is agreed; matcher and model-facing tool arguments can remain unchanged.
+The two checked-in campaigns, and campaigns created in the browser, use
+`mock_campaign` as their single campaign-record source. The activity window and
+adviser access assignments are prototype assumptions. The frontend CRM and MCP
+matching both use the same adviser/tenant-scoped `mock_client` rows, so campaign
+recommendation IDs map directly to frontend contact actions.
+Product narratives such as protection gaps, review dates or property ownership
+are not assessed unless explicit supported criteria are added. Replace this
+data-access adapter when the real schema is agreed; matcher and model-facing tool
+arguments can remain unchanged.
 
 ## Rules and output
 
@@ -156,9 +166,11 @@ Manual check with the existing backend/database/provider setup:
 5. Switch to First Home Starter Bundle and repeat; expect F/G/H.
 6. Leave a request in flight and switch campaigns: the panel is remounted and
    aborts the old request so it cannot populate the new campaign's panel.
-7. Return to the campaign list: no selection is sent; PULSE should ask for a
-   campaign when none is named. A browser-created campaign should show the
-   unavailable-campaign error instead of invented matches.
+7. Create a campaign, refresh the browser and sign in with the same role. The
+   campaign and its saved UI state should reload from PostgreSQL. PULSE can use
+   a newly created active campaign because it reads the same campaign row.
+8. Return to the campaign list: no selection is sent; PULSE should ask for a
+   campaign when none is named.
 
 Chat history remains adviser/session-based and can contain earlier campaign
 answers. The visible selection and system context apply to the next question.

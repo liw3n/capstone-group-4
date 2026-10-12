@@ -148,12 +148,15 @@ then applies these files in order:
 1. `backend/tables/create_campaign_chat_sessions.sql`
 2. `backend/tables/create_mock_campaign_tables.sql`
 3. `backend/tables/seed_mock_campaign_data.sql`
-4. `backend/tables/create_mock_campaign_engagement.sql`
-5. `backend/tables/create_mock_campaign_contact_event.sql`
-6. `backend/tables/seed_mock_campaign_contact_events.sql`
+4. `backend/tables/migrate_campaign_source_of_truth.sql`
+5. `backend/tables/migrate_mock_client_crm_fields.sql`
+6. `backend/tables/create_mock_campaign_engagement.sql`
+7. `backend/tables/create_mock_campaign_contact_event.sql`
+8. `backend/tables/seed_mock_campaign_contact_events.sql`
 
 The mock scripts create campaign, adviser-access and client tables and seed two
-campaigns and 14 synthetic clients. The contact-event table stores synthetic
+campaigns and 14 synthetic clients. `mock_client` is also the frontend CRM
+contact source; the demo adviser receives its 12 scoped rows. The contact-event table stores synthetic
 outreach dates for those campaigns and the assigned adviser; campaign names come
 from `mock_campaign`, not duplicated contact rows. Each row is one contact, so
 repeat contacts can be distinguished from a client's first campaign contact.
@@ -233,10 +236,11 @@ For untouched seed records, expect:
 | Legacy Protection Refresh (`camp-1`) | 12 | A, B, C, L (4) | 2 | 6 |
 | First Home Starter Bundle (`camp-2`) | 12 | F, G, H (3) | 2 | 7 |
 
-The matcher uses the fixed demo date **2026-08-26**. The backend's 14 synthetic
-clients are separate from the frontend CRM's 75 seed contacts. Browser-created
-campaigns are not inserted into the mock database. Recommendations explain
-criteria matches; they do not rank suitability or authorize outreach.
+The matcher uses the fixed demo date **2026-08-26**. Campaign definitions,
+campaign UI state and CRM contacts now come from PostgreSQL; the frontend has no
+duplicate campaign or contact seed. The same scoped `mock_client` IDs drive the
+CRM audience and MCP recommendations. Recommendations explain criteria matches;
+they do not rank suitability or authorize outreach.
 
 ## Adding another MCP feature
 
@@ -255,7 +259,7 @@ criteria matches; they do not rank suitability or authorize outreach.
 Browser -> React / Vite :3000 -> /api proxy -> FastAPI :4000
                                               -> Groq (HTTPS)
                                               -> FastMCP :8001/mcp -> PostgreSQL
-                                              -> chat storage -> PostgreSQL
+                                              -> contacts/campaigns/chat -> PostgreSQL
 make provision -> setup.sh -> local AWS emulator + Terraform -> database / SQL
 make dev -> run_services.sh (FastAPI + MCP) and npm run dev (Vite)
 ```
@@ -263,8 +267,8 @@ make dev -> run_services.sh (FastAPI + MCP) and npm run dev (Vite)
 ![PULSE system architecture](backend/docs/Architecture.svg)
 
 [Open the system diagram](backend/docs/Architecture.svg). The PNG is an older
-export. `frontend/` owns CRM browser state; `backend/` owns chat persistence,
-MCP tools and the separate synthetic recommendation dataset. `docs/` and
+export. `frontend/` owns browser-local task and pipeline state; PostgreSQL owns
+contacts, campaigns and chat history, while the backend owns MCP tools. `docs/` and
 `gwm_api/` contain local company references, not runnable integrations.
 
 ## Make commands and verification

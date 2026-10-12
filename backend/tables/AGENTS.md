@@ -4,8 +4,8 @@
 
 This directory contains SQL executed by `backend/setup.sh` against the local
 PostgreSQL instance. It is a prototype schema, not a verbatim copy of the
-company GCRM schema. There is currently no migration framework or migration
-history table.
+company GCRM schema. There is no migration framework; one additive campaign
+migration is tracked in `pulse_schema_migration`.
 
 ## Change rules
 
@@ -29,12 +29,11 @@ history table.
 
 ## Known gaps (current state)
 
-- Chat sessions and messages are persisted with a foreign key and time-ordered
-  indexes, but no campaign/contact/interaction/task tables support the product
-  workflow yet.
+- Chat and synthetic campaign records are persisted, but production-compatible
+  contact/interaction/task tables do not support the full workflow yet.
 - The setup script includes an in-place timestamp conversion rather than a
   versioned migration with rollback and audit history.
 - There is no adviser/user foreign key, tenant table, title/summary lifecycle,
-  retention policy, encryption-at-rest design, or synthetic seed dataset.
+  retention policy, encryption-at-rest design, or production-compatible dataset.
 - The prototype chat schema intentionally differs from the supplied GCRM chat
   tables; no compatibility mapping or migration plan is documented.

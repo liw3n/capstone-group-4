@@ -55,13 +55,19 @@ required for `make dev` or the interim presentation.
 
 [Architecture.svg](docs/Architecture.svg) shows the complete current system:
 React CRM and PULSE chat, the Vite proxy, FastAPI, LLM orchestration, FastMCP,
-Groq and PostgreSQL. It distinguishes browser-only CRM state from backend
-persistence and labels the team Terraform/FakeCloud provisioning workflow,
+Groq and PostgreSQL. It distinguishes browser-only non-campaign CRM state from
+persisted campaign/chat data and labels the team Terraform/FakeCloud provisioning workflow,
 optional ECS and planned company CRM integration. The existing PNG is an older export.
 
 ## Endpoints
 
 - `GET /health`
+- `GET /contacts?fa_id=<id>`
+- `POST /contacts?fa_id=<id>`
+- `PUT /contacts/{contact_id}?fa_id=<id>`
+- `GET /campaigns?role=<role>&fa_id=<id>`
+- `POST /campaigns?role=<role>&fa_id=<id>`
+- `PATCH /campaigns/{campaign_id}/state?role=<role>&fa_id=<id>`
 - `GET /chat/sessions?fa_id=<id>`
 - `POST /chat/new?fa_id=<id>`
 - `GET /chat/history?session_id=<id>`
@@ -99,6 +105,14 @@ network calls.
 
 
 ## Synthetic campaign recommendations
+
+The contact catalogue (`/contacts/...` and `/api/contacts/...`) exposes the same
+scoped `mock_client` rows used by MCP matching; there is no frontend contact
+fixture. The REST campaign catalogue (`/campaigns/...` and `/api/campaigns/...`) persists
+the campaign screens' definitions and mutable campaign state in the same
+`mock_campaign` rows used by the MCP tools. The frontend no longer ships a
+second campaign seed. Sends are still confirmed simulations; contacts, pipeline
+cards and tasks remain browser state.
 
 PULSE can recommend synthetic clients for the selected seeded campaign using
 `recommend_clients_for_campaign`. The model sees campaign ID and limit only;

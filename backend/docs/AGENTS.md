@@ -28,8 +28,8 @@ confidential infrastructure identifiers or PDPA examples into this directory.
 
 ## Known gaps (current state)
 
-- The API contract documents chat but no campaign/audience/action endpoints or
-  tool schemas.
+- The API contract covers chat, campaign catalogue/state endpoints and current
+  campaign tool schemas; consent-safe action endpoints remain unimplemented.
 - An editable SVG now accompanies the rendered architecture, but there are no
   architecture decision records or threat/data-flow diagrams.
 - FastMCP runs over HTTP on port `8001` beside the API process, and the API

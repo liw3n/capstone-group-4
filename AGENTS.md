@@ -94,11 +94,11 @@ checks and startup commands are in `backend/AGENTS.md`.
 
 ## Known gaps (current state)
 
-- Campaign discovery and database search are still placeholders. No backend
-  campaign, audience-selection, outreach, interaction, task, or outcome tools
-  implement the required end-to-end workflow.
-- The frontend CRM modules mostly use seed data and local React state; only chat
-  is connected to the backend.
+- Campaign records and campaign UI state now use PostgreSQL through REST, and
+  read-only MCP discovery/matching tools use those campaign rows. Consent-safe
+  outreach, interaction/task mutation, and outcome tools remain incomplete.
+- Contacts, campaigns and chat now use PostgreSQL through scoped APIs. Pipeline
+  cards and tasks created during a session remain browser-local.
 - `campaign`, `campaign_member`, `interaction`, and `task_item` are described by
   the company schema document, but their column definitions are absent. Do not
   invent a production-compatible schema without documenting the prototype
@@ -108,6 +108,7 @@ checks and startup commands are in `backend/AGENTS.md`.
 - There is no automated frontend test runner, end-to-end test suite, CI
   workflow, or pre-commit configuration.
 - FastMCP runs over HTTP on port `8001` in the API container, and the API calls
-  it through the MCP protocol. The tools still use placeholder implementations.
+  it through the MCP protocol. Implemented campaign tools remain synthetic and
+  read-only.
 - Infrastructure remains a local FakeCloud prototype, not a production AWS
   design.

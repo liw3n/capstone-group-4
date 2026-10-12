@@ -11,9 +11,9 @@ work around it.
 
 A CRM prototype for financial advisors / relationship managers (Singapore
 market) covering contacts, tasks, pipeline tracking, campaigns, and a PULSE AI
-assistant, styled to match a production reference called "MyWealth". CRM state
-still lives in React and resets to seed data on refresh. Chat sessions and
-messages are handled by the repository's FastAPI/PostgreSQL backend.
+assistant, styled to match a production reference called "MyWealth". Contacts,
+campaign records/state and chat sessions/messages use FastAPI/PostgreSQL. Tasks
+and pipeline cards remain React state and reset on refresh.
 
 Originally scaffolded in Google AI Studio as "Pulse CRM" with a working
 Gemini/Express backend, then rebuilt twice (see History below) into its
@@ -57,12 +57,13 @@ on demand for the upload wizard only — keeps it out of the main bundle).
 
 ```
 src/
-  App.tsx              all application state + tab routing (no router library)
+  App.tsx              browser CRM state + tab routing (no router library)
   types.ts             domain model
-  data/seed.ts         generated book of business — 75 contacts, 183 tasks,
-                        2 pipeline cases, 2 campaigns, deterministic (seeded PRNG)
+  data/seed.ts         fixed prototype date only; no CRM records
   services/ai.ts       simulated CRM meeting/campaign AI helpers
   services/chatApi.ts  typed client for the persisted PULSE chat API
+  services/campaignApi.ts typed client for persisted campaign records/state
+  services/contactApi.ts typed client for scoped mock_client CRM records
   lib/format.ts        date, phone, due-in, empty-value formatting
   lib/targeting.ts     campaign criteria matching — RULES, not AI
   lib/directory.ts     channel -> FA team -> FA routing (who RECEIVES a campaign)
@@ -235,16 +236,17 @@ deliberately: tagging most of the book "Own contact" would be noise.
   of them has not touched a campaign is the point of sending it. **New Campaign** opens a full-page builder: name,
   internal description, client-facing messaging, banner upload, the three
   targeting criteria, and a channel. A live **Estimated audience** panel
-  recomputes on every criteria change (75 → 27 → 9 → 1 as you narrow), warns
+  recomputes on every criteria change against loaded mock clients, warns
   when nothing matches, and separately reports how many contacts were excluded
-  for incomplete profiles. Banner is held in memory as a data URL, capped at
-  1MB — there is no file storage behind this.
+  for incomplete profiles. The banner is a data URL persisted with the synthetic
+  campaign, capped at 1MB; there is no separate file storage.
 - **Distribution routing** — Marketing sends down a three-level hierarchy:
   **Channel → FA Team → FA**. Each level narrows the one above and leaving a
   level untouched means all of it, so a whole-channel send is one click and a
   three-named-advisor send is still possible. Resolution lives in
-  `lib/directory.ts`; the advisor's inbox is filtered by it in `App.tsx`, so a
-  campaign an advisor is not routed to never reaches the component at all.
+  `lib/directory.ts`; the builder resolves the final adviser IDs and the backend
+  stores/enforces those assignments, so an inaccessible campaign never reaches
+  the component.
   Teams are modelled the way each channel is actually organised — bancassurance
   by branch, tied agency by group, partnership by partner firm. In the builder,
   channel is the decision and everything under it is an exception: the team and
@@ -259,7 +261,7 @@ deliberately: tagging most of the book "Own contact" would be noise.
   ranking and mass-email flow. Own campaigns carry a purple **Your campaign**
   chip, read "Created by you · not sent to anyone", and label the description
   field *Your notes* rather than *Campaign brief*. **Marketing never sees them**
-  — its list and stats filter to `origin === 'marketing'`. The detail view shows
+  — the backend returns only marketing-origin campaigns. The detail view shows
   the campaign's banner, brief, messaging, and criteria, then **Identified
   clients**: the matched audience, ordered by AI, each row expandable to a
   "why this client" rationale (with the raw score) and a personalised draft
@@ -301,8 +303,9 @@ deliberately: tagging most of the book "Own contact" would be noise.
   already emailed, or dismissed, is deselected by default but can still be
   picked for a deliberate resend. Sends are recorded on `emailLog`, surfaced as
   "Emailed" chips per row and as counts on both the advisor inbox and
-  Marketing's cards. **Nothing is transmitted** — there is no mail transport,
-  and the confirm and receipt screens both say so.
+  Marketing's cards. The log persists with the campaign in PostgreSQL. **Nothing
+  is transmitted** — there is no mail transport, and the confirm and receipt
+  screens both say so.
 - **Email sign-off** — set from the **Email sign-off** button on the advisor's
   campaign inbox, or inline from the send flow. It belongs to the advisor, not
   to a campaign: one template, reused by every send. Supports
@@ -366,32 +369,13 @@ model-provider key.
   the manual Add/Edit Task modal and the generated-task editor. (The
   original reference screenshots showed a task starting *after* its own due
   date — treated as a bug in the source material, not reproduced.)
-- **Seed data** is generated by a seeded `mulberry32` PRNG in
-  `src/data/seed.ts`, so the book of business is byte-identical on every
-  load. Change the seed constant to reshuffle; six "anchor" contacts
-  (Steven, Joseph Rahman, etc.) and ten anchor tasks are hardcoded to match
-  a specific reference screenshot set and should stay first in their arrays.
-- **Seed enrichment runs on its own PRNG.** `enrichTargeting()` in
-  `data/seed.ts` backfills DOB, `gender`, and `cashAmount` as a *separate pass*
-  drawing from `mulberry32(20260901)`, not the shared `rand` above it.
-  `enrichProvenance()` does the same for `policies`/`lastContacted`/`source`,
-  on its own stream (`mulberry32(20260915)`). Adding draws to the *shared*
-  sequence would shift every value after them and reshuffle all 75 contacts,
-  breaking the anchored numbers the QA runbook checks (710 days overdue, 25
-  bookmarked, 183 tasks) — this happened for real once, when a parallel branch's
-  provenance generator drew from the shared stream inline (see History §10) and
-  had to be rewritten as its own pass before it could be merged in. If you add
-  generated fields, follow the same pattern — new stream, separate pass, never
-  inline.
-- **Some records are incomplete on purpose.** Five contacts have no
-  `cashAmount` and three have no `gender`, fixed by index (`NO_CASH_AMOUNT` /
-  `NO_GENDER`), so the "Incomplete profiles" path in campaign targeting always
-  has something real to show. Anchor contacts 1-6 stay complete — they carry
-  the demo. Separately, two anchors (index 0 and 4) carry hand-picked
-  `policies`/`lastContacted`/`source` rather than generated values, so specific
-  narrative demos — Steven's existing Prudential policy, Kayden O'Connor's
-  transferred-and-not-introduced banner — are guaranteed rather than left to
-  the dice.
+- **Contact data comes from PostgreSQL.** `mock_client` is the only CRM contact
+  dataset. The demo adviser receives 12 of the 14 synthetic rows; the other
+  adviser and tenant rows are excluded by the API query. The same DOB, gender,
+  cash and contact IDs drive both `lib/targeting.ts` and MCP recommendations.
+- **Some records are incomplete on purpose.** The checked-in mock clients include
+  missing DOB, cash and gender values so the campaign incomplete-profile path is
+  exercised without the frontend inventing replacements.
 - **Custom ranges OR with their bands.** Age and cash each accept a custom
   range alongside their bands, and a contact matches that dimension on *either*.
   This is the same OR rule that already applies between bands, so the semantics
@@ -410,10 +394,8 @@ model-provider key.
   *which advisors see a campaign*. It does not decide *which clients are in it* —
   that is still criteria over the book (`lib/targeting.ts`). Keep the two apart:
   they are different questions with different answers.
-- **Contacts still have no owning advisor.** Every advisor sees the same book of
-  75, so an advisor who receives a campaign sees the same matched clients as any
-  other recipient would. Client ownership is the prerequisite for making that
-  per-advisor, and it is not built.
+- **Contact ownership is enforced in SQL.** The contact API requires an adviser
+  scope and filters by both tenant and `fa_id` before returning records.
 - **Seeded campaigns route to the demo advisor on purpose.** Both land in
   Bancassurance, one channel-wide and one narrowed to Marina Bay Branch, because
   routing that silently emptied the demo inbox would read as a bug rather than a
@@ -458,11 +440,13 @@ model-provider key.
   floating adviser-only panel instead. The Campaigns module was removed
   in the MyWealth rebuild and then rebuilt from scratch to a new spec; the
   original version is not coming back.
-- **Campaigns do not survive a refresh**, like all other state.
+- **Tasks and pipeline cards do not survive a refresh.** Contacts, campaign
+  definitions, lead triage, adviser actions and simulated email receipts do.
 - **Advisor campaigns cannot be edited or deleted** once created, and neither
   can Marketing's. Nothing in the module edits an existing campaign yet.
 - **Leads cannot be edited, and more cannot be added to an existing lead
-  campaign.** The upload happens once, in the builder.
+  campaign.** The upload happens once, in the builder; its resulting lead rows
+  persist with the campaign.
 - **Removing a lead is unrecoverable** and there is no undo anywhere in the app.
   Only the counter survives; the names of removed leads are not kept.
 - **No duplicate detection on lead-list import**, by explicit decision — a
@@ -472,8 +456,8 @@ model-provider key.
   Contacts above). Wiring the same check into lead imports is a natural
   follow-up, not attempted here to keep the two upload paths' scope apart.
 - **No email is ever sent.** There is no mail transport, no SMTP, no provider
-  key. The mass-email flow records a `CampaignEmail` against the campaign and
-  nothing more; the confirm and receipt screens state this plainly and should
+  key. The mass-email flow persists a `CampaignEmail` against the campaign and
+  does nothing more; the confirm and receipt screens state this plainly and should
   keep doing so. Wiring a real provider in means replacing `handleSendCampaignEmail`
   in `App.tsx` — the composition and confirmation UI already produce everything
   a send would need (from, to, subject, body).
@@ -614,9 +598,9 @@ should become a real backend integration.
 
 MIT — see [`LICENSE`](LICENSE).
 
-Every name, email address, phone number, NRIC and policy in this repository
-is generated by the seeded PRNG in `src/data/seed.ts`. There is no real client
-data here, and CRM records are not sent to the chat backend.
+Every contact is synthetic and checked into the local PostgreSQL seed/migration
+SQL. There is no real client data here. CRM contact IDs and matching attributes
+are shared with MCP, but raw records are not placed into model context by default.
 
 
 ## PULSE campaign recommendations
@@ -626,10 +610,9 @@ clients**. The selected campaign ID is included in chat requests; the backend
 retrieves the criteria and the MCP tool returns explained synthetic matches.
 Switching campaign remounts the panel and aborts pending requests.
 
-This uses a separate 14-client synthetic PostgreSQL dataset, not the CRM table's
-75 contacts. Only seeded camp-1 and camp-2 exist in the mock tables; campaigns
-created in browser state are not shared with it. The existing identified-client
-table and simulated outreach remain independent.
+Campaign definitions and contacts come from the same scoped PostgreSQL rows used
+by the MCP tools. Newly created active campaigns are available to PULSE, and
+recommendation IDs map directly to the CRM contact rows shown in the frontend.
 
 See [backend prototype documentation](../backend/docs/campaign_recommendations.md)
 for the expected matches, assumptions and manual verification. Chat requires the

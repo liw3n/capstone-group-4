@@ -1,6 +1,7 @@
 # PULSE Chat API contract
 
-All chat routes are also available with an `/api` prefix.
+All chat routes are also available with an `/api` prefix. Campaign routes
+likewise support both `/campaigns/...` and `/api/campaigns/...`.
 
 ## `GET /health`
 
@@ -12,6 +13,104 @@ Example response:
 ```json
 {"status":"ok","llm_configured":true,"llm_model":"openai/gpt-oss-20b"}
 ```
+
+## Campaign catalogue and UI state
+
+These endpoints use the synthetic PostgreSQL campaign catalogue as the source
+of truth for both the CRM campaign screens and MCP campaign tools. They do not
+provide production authentication: `role` and `fa_id` are supplied by the
+prototype client, and the tenant is fixed to `pulse-demo`.
+
+### `GET /campaigns?role=<advisor|marketing>&fa_id=<id>`
+
+Returns campaigns newest first. `fa_id` is required for the adviser role; the
+query returns only campaigns created by or assigned to that adviser. Marketing
+receives marketing-origin campaigns and must omit `fa_id`. A storage failure
+returns `503`.
+
+### `GET /campaigns/{campaign_id}?role=<advisor|marketing>&fa_id=<id>`
+
+Returns one campaign subject to the same role and adviser access predicate.
+Unknown or inaccessible campaigns both return `404`.
+
+### `POST /campaigns?role=<advisor|marketing>&fa_id=<id>`
+
+Creates a synthetic campaign. The body is the complete frontend campaign model,
+including criteria, resolved adviser routing, description, client copy,
+lifecycle dates, lead statistics, and optional campaign-specific synthetic lead
+records. The request `origin` must match `role`. Adviser-created campaigns are
+assigned only to the supplied adviser.
+
+Minimal contact-audience example:
+
+```json
+{
+  "id": "campaign-demo-1",
+  "name": "Synthetic review campaign",
+  "status": "active",
+  "startDate": "2026-10-12",
+  "endDate": "2026-12-31",
+  "description": "Internal synthetic campaign brief.",
+  "clientMessage": "Educational outreach copy for adviser review.",
+  "origin": "advisor",
+  "audienceSource": "contacts",
+  "teamIds": [],
+  "advisorIds": [],
+  "criteria": {"ageGroups": [], "genders": [], "cashBands": []},
+  "includeIds": [],
+  "excludeIds": [],
+  "leadIds": [],
+  "leadStats": {"uploaded": 0, "added": 0, "removed": 0},
+  "createdBy": "Demo Adviser",
+  "createdAt": "2026-10-12T00:00:00Z",
+  "actions": {},
+  "emailLog": [],
+  "leadContacts": []
+}
+```
+
+A duplicate ID returns `409`; role/origin mismatch returns `400`; invalid IDs,
+date/range ordering, fields, or bounds return `422`; storage failure returns
+`503`.
+
+### `PATCH /campaigns/{campaign_id}/state?role=<advisor|marketing>&fa_id=<id>`
+
+Persists mutable campaign UI state after a user interaction: `includeIds`,
+`excludeIds`, `leadIds`, `leadStats`, `actions`, `emailLog`, and `leadContacts`.
+It returns the complete saved campaign. Access is checked before the update;
+missing or inaccessible campaigns return `404` and storage failure returns
+`503`.
+
+The email log records a user-confirmed **simulation**. Adviser updates are
+rejected unless every recipient is an owned `mock_client` row with email consent;
+Marketing cannot record adviser sends. The endpoint does not send a message,
+write a production CRM interaction, or create a backend task.
+
+## CRM contacts
+
+Contact routes support both direct and `/api`-prefixed forms. They expose
+tenant/adviser-scoped synthetic `mock_client` records—the same IDs and matching
+attributes used by campaign MCP tools. `fa_id` is required and remains a
+caller-supplied prototype identity rather than authentication.
+
+### `GET /contacts?fa_id=<id>`
+
+Returns that adviser's contacts ordered by stable contact ID. For the untouched
+seed, the demo adviser receives 12 rows; the other-adviser and other-tenant rows
+are excluded in SQL. A storage failure returns `503`.
+
+### `POST /contacts?fa_id=<id>`
+
+Creates one synthetic contact. Core identity, targeting and consent fields are
+stored as typed columns; optional CRM-only presentation data is stored in the
+prototype JSONB extension. Duplicate IDs return `409`, invalid bodies return
+`422`, and storage failure returns `503`.
+
+### `PUT /contacts/{contact_id}?fa_id=<id>`
+
+Replaces one contact after enforcing tenant/adviser ownership. The body ID must
+match the path or the API returns `400`. Unknown and inaccessible contacts both
+return `404`. The frontend uses this for contact edits and meeting summaries.
 
 ## `GET /chat/sessions?fa_id=<id>`
 
