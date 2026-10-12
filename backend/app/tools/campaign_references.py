@@ -10,7 +10,7 @@ from app.campaigns.reference_repository import (
 from app.campaigns.repository import RequestScope
 
 
-def _scope_from_metadata(metadata: dict | None) -> RequestScope | None:
+def scope_from_metadata(metadata: dict | None) -> RequestScope | None:
     context = metadata.get("pulse_scope") if isinstance(metadata, dict) else None
     if not isinstance(context, dict):
         return None
@@ -27,7 +27,7 @@ def execute_find_campaign_references(
     metadata: dict | None,
     repository: CampaignReferenceRepository | None = None,
 ) -> dict:
-    scope = _scope_from_metadata(metadata)
+    scope = scope_from_metadata(metadata)
     if scope is None:
         return {
             "data_source": "synthetic_curated_catalogue",

@@ -22,8 +22,13 @@ from app.tools.implementations import (
 )
 
 from app.campaigns.repository import CAMPAIGN_ID_PATTERN
-from app.campaigns.models import CampaignCategory
+from app.campaigns.models import (
+    CampaignCategory,
+    CampaignDraft,
+    CampaignReferenceCitation,
+)
 from app.tools.campaign import execute_recommendation
+from app.tools.campaign_draft import execute_prepare_campaign_draft
 from app.tools.campaign_references import execute_find_campaign_references
 from app.tools.discovery import CampaignField, CampaignId, CampaignName, execute_discovery
 from app.tools.performance import execute_contact_performance, execute_contact_ranking
@@ -160,6 +165,39 @@ def find_campaign_references(
     logger.info("MCP tool called: find_campaign_references")
     return execute_find_campaign_references(
         {"objective": objective, "categories": categories, "limit": limit},
+        _request_metadata(ctx),
+    )
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
+def prepare_campaign_draft(
+    objective: Annotated[
+        str,
+        Field(
+            min_length=10,
+            max_length=2_000,
+            description="The same campaign objective used to retrieve references.",
+        ),
+    ],
+    retrievalToken: Annotated[str, Field(min_length=20, max_length=8_000)],
+    referencesUsed: Annotated[list[CampaignReferenceCitation], Field(max_length=3)],
+    draft: CampaignDraft,
+    ctx: Context,
+) -> dict:
+    """Validate and package one AI-generated campaign draft for adviser review.
+
+    Requires a valid reference-retrieval token and accepts citations only from
+    that retrieval result. Read-only: it does not persist, create, activate or
+    send a campaign and always returns created=false on success.
+    """
+    logger.info("MCP tool called: prepare_campaign_draft")
+    return execute_prepare_campaign_draft(
+        {
+            "objective": objective,
+            "retrievalToken": retrievalToken,
+            "referencesUsed": [item.model_dump() for item in referencesUsed],
+            "draft": draft.model_dump(),
+        },
         _request_metadata(ctx),
     )
 

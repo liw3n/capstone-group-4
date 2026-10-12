@@ -26,7 +26,7 @@ CampaignDraftStatus = Literal[
 CampaignGenerationErrorCode = Literal[
     "invalid_arguments", "missing_context", "catalogue_unavailable",
     "invalid_retrieval_token", "expired_retrieval_token", "scope_mismatch",
-    "invalid_draft", "unsupported_claim", "missing_disclaimer",
+    "invalid_reference_citation", "invalid_draft", "unsupported_claim", "missing_disclaimer",
     "inconsistent_targeting", "stale_revision", "confirmation_required",
 ]
 
@@ -191,6 +191,15 @@ class PrepareCampaignDraftArguments(StrictModel):
     referencesUsed: list[CampaignReferenceCitation] = Field(max_length=3)
     draft: CampaignDraft
 
+    @model_validator(mode="after")
+    def reject_duplicate_citations(self):
+        citations = [
+            (citation.referenceId, citation.version) for citation in self.referencesUsed
+        ]
+        if len(citations) != len(set(citations)):
+            raise ValueError("referencesUsed must not contain duplicates")
+        return self
+
 
 class ReviseCampaignDraftArguments(StrictModel):
     currentDraft: CampaignDraft
@@ -214,16 +223,20 @@ class CampaignDraftConfirmationRequest(CampaignDraftPreviewRequest):
     idempotencyKey: str = Field(min_length=8, max_length=128)
 
 
+class CampaignDraftValidation(StrictModel):
+    schema_valid: Literal[True] = True
+    policy_valid: Literal[True] = True
+    warnings: list[str] = Field(default_factory=list, max_length=10)
+
+
 class CampaignDraftArtifact(StrictModel):
     type: Literal["campaign_draft"] = "campaign_draft"
     data_source: Literal["ai_generated"] = "ai_generated"
-    draftId: str = Field(min_length=1, max_length=128)
-    revision: int = Field(ge=1, strict=True)
-    status: CampaignDraftStatus
     objective: str = Field(min_length=10, max_length=2_000)
     referencesUsed: list[CampaignReferenceCitation] = Field(max_length=3)
     draft: CampaignDraft
-    requiresAdviserReview: Literal[True] = True
+    validation: CampaignDraftValidation
+    requires_adviser_review: Literal[True] = True
     created: Literal[False] = False
 
 

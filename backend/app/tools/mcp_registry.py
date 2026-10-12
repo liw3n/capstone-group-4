@@ -1,4 +1,5 @@
 import asyncio
+from copy import deepcopy
 import json
 from typing import Any
 
@@ -6,7 +7,7 @@ from fastmcp import Client
 
 from pydantic import ValidationError
 
-from app.campaigns.models import CampaignReferenceQuery
+from app.campaigns.models import CampaignReferenceQuery, PrepareCampaignDraftArguments
 from app.campaigns.repository import RequestScope
 from app.llm.errors import LLMProviderError
 from app.tools.campaign import RecommendationArguments
@@ -22,6 +23,7 @@ class MCPToolRegistry:
         self.timeout_seconds = timeout_seconds
         self.scope = scope
         self.campaign_id = campaign_id
+        self._campaign_retrieval_context: dict[str, str] | None = None
 
     def bind_scope(
         self, scope: RequestScope, campaign_id: str | None = None
@@ -49,17 +51,35 @@ class MCPToolRegistry:
         except Exception as exc:
             raise LLMProviderError("Could not connect to the MCP tool server") from exc
 
-        return [
-            {
+        schemas = []
+        for tool in tools:
+            parameters = deepcopy(tool.input_schema)
+            description = tool.description or ""
+            if tool.name == "prepare_campaign_draft":
+                # The signed token and exact query stay server-side after
+                # retrieval. The model supplies only generated content and
+                # citations, which makes the tool call smaller and prevents
+                # token/objective tampering.
+                parameters.get("properties", {}).pop("objective", None)
+                parameters.get("properties", {}).pop("retrievalToken", None)
+                parameters["required"] = [
+                    field for field in parameters.get("required", [])
+                    if field not in {"objective", "retrievalToken"}
+                ]
+                description = (
+                    "Validate and package one AI-generated campaign draft after "
+                    "reference retrieval. Supply only retrieved citations and the "
+                    "complete draft; the server supplies the objective and signed token."
+                )
+            schemas.append({
                 "type": "function",
                 "function": {
                     "name": tool.name,
-                    "description": tool.description or "",
-                    "parameters": tool.input_schema,
+                    "description": description,
+                    "parameters": parameters,
                 },
-            }
-            for tool in tools
-        ]
+            })
+        return schemas
 
     def execute(self, name: str, arguments_json: str) -> str:
         try:
@@ -117,6 +137,31 @@ class MCPToolRegistry:
                     "error": "Invalid tool arguments",
                 })
 
+        if name == "prepare_campaign_draft":
+            if self.scope is None:
+                return json.dumps({
+                    "data_source": "ai_generated",
+                    "error_code": "missing_context",
+                    "error": "Adviser request context is required",
+                    "created": False,
+                })
+            if self._campaign_retrieval_context is not None:
+                arguments = {
+                    **arguments,
+                    **self._campaign_retrieval_context,
+                }
+            try:
+                arguments = PrepareCampaignDraftArguments.model_validate(
+                    arguments
+                ).model_dump()
+            except ValidationError:
+                return json.dumps({
+                    "data_source": "ai_generated",
+                    "error_code": "invalid_draft",
+                    "error": "Campaign draft arguments are invalid",
+                    "created": False,
+                })
+
         try:
             result = asyncio.run(self._call_tool(name, arguments))
         except Exception as exc:
@@ -124,7 +169,9 @@ class MCPToolRegistry:
 
         structured_content = getattr(result, "structured_content", getattr(result, "structuredContent", None))
         if structured_content is not None:
-            return json.dumps(structured_content, default=str)
+            serialized = json.dumps(structured_content, default=str)
+            self._retain_campaign_retrieval(name, arguments, structured_content)
+            return serialized
 
         content = [
             getattr(item, "text", str(item))
@@ -133,3 +180,20 @@ class MCPToolRegistry:
         if getattr(result, "is_error", getattr(result, "isError", False)):
             return json.dumps({"error": content})
         return json.dumps({"result": content})
+
+    def _retain_campaign_retrieval(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        result: Any,
+    ) -> None:
+        if (
+            name == "find_campaign_references"
+            and isinstance(result, dict)
+            and result.get("type") == "campaign_references"
+            and isinstance(result.get("retrievalToken"), str)
+        ):
+            self._campaign_retrieval_context = {
+                "objective": arguments["objective"],
+                "retrievalToken": result["retrievalToken"],
+            }
