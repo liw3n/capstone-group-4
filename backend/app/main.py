@@ -13,6 +13,7 @@ from app.campaigns.catalog import (
     list_campaigns as list_campaign_records,
     update_campaign_state,
 )
+from app.campaigns.models import CampaignCriteriaPayload
 
 from app.campaigns.repository import (
     CAMPAIGN_ID_PATTERN, CampaignInactive, CampaignStorageUnavailable, CampaignUnavailable,
@@ -93,27 +94,6 @@ class QueryResponse(BaseModel):
     user: bool | str
     timestamp: str
     ai_answer: str
-
-
-class NumericRangePayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    min: float | None = Field(default=None, ge=0)
-    max: float | None = Field(default=None, ge=0)
-
-    @model_validator(mode="after")
-    def validate_order(self):
-        if self.min is not None and self.max is not None and self.min > self.max:
-            raise ValueError("range minimum cannot exceed maximum")
-        return self
-
-
-class CampaignCriteriaPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    ageGroups: list[Literal["under35", "35to44", "45to54", "55to64", "65plus"]]
-    ageRange: NumericRangePayload | None = None
-    genders: list[Literal["male", "female"]]
-    cashBands: list[Literal["under50k", "50kTo250k", "250kTo1m", "above1m"]]
-    cashRange: NumericRangePayload | None = None
 
 
 class LeadStatsPayload(BaseModel):
