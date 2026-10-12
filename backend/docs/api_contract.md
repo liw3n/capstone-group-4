@@ -205,7 +205,9 @@ measurement remain separate workflow work.
 
 This read-only tool reports recorded outreach for one accessible synthetic
 campaign. Model-facing arguments: optional `campaign` (exact name or ID, at most
-255 characters). When `/chat/query` or `/api/chat/query` includes a selected
+255 characters) and optional `period` (`this_week`, the default, or `last_week`).
+`last_week` means the previous complete Monday–Sunday in Singapore time.
+When `/chat/query` or `/api/chat/query` includes a selected
 `campaign_id`, that server-bound selection takes precedence. Otherwise the tool
 uses the campaign named in the current message. A missing or inaccessible
 campaign returns the same `campaign_unavailable` error without revealing another
@@ -219,12 +221,16 @@ time or campaign end, whichever comes first. `contacted_clients_this_week`
 counts distinct clients with any event since Monday 00:00 Singapore time; repeat
 contacts do not double count. `first_contacted_clients_this_week` counts clients
 whose earliest event during the campaign period falls this week. A future-dated
-event is never counted. No client details are returned.
+event is never counted. `contacted_clients_last_week` and
+`first_contacted_clients_last_week` use the preceding Monday 00:00 up to, but
+excluding, this Monday 00:00. The campaign-period bounds still apply. No client
+details are returned.
 
 Result keys: `data_source: synthetic`, `campaign_id`, `campaign_name`,
 `campaign_status`, `reporting_state`, `campaign_start_date`, `campaign_end_date`,
 `reporting_period_start`, `reporting_period_end`, `as_of_date`, `as_of_time`,
-`week_start_date`, the three counts, `summary`, and
+`requested_period`, `week_start_date`, `last_week_start_date`,
+`last_week_end_date`, the five counts, `summary`, and
 `metric_definition`. For the supplied sample data, the exact counts vary with
 the reporting date. The `summary` is generated from the counts, so the assistant
 can answer without estimating.

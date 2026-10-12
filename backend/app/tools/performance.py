@@ -1,6 +1,7 @@
 """Read-only synthetic campaign contact performance for one adviser."""
 from datetime import date, datetime, time, timedelta
 import re
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -17,6 +18,7 @@ SINGAPORE = ZoneInfo("Asia/Singapore")
 class ContactPerformanceArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
     campaign: str | None = Field(default=None, min_length=1, max_length=255)
+    period: Literal["this_week", "last_week"] = "this_week"
 
 
 def current_time() -> datetime:
@@ -84,9 +86,13 @@ def execute_contact_performance(arguments: dict, metadata: dict | None) -> dict:
         period_end = min(now, campaign_end)
         week_start_date = today - timedelta(days=today.weekday())
         week_start = datetime.combine(week_start_date, time.min, SINGAPORE)
-        counts = ((0, 0, 0) if period_end <= period_start else
+        last_week_start_date = week_start_date - timedelta(days=7)
+        last_week_start = datetime.combine(last_week_start_date, time.min, SINGAPORE)
+        last_week_end_date = week_start_date - timedelta(days=1)
+        counts = ((0, 0, 0, 0, 0) if period_end <= period_start else
                   repository.count_campaign_contacts(scope, campaign.campaign_id,
-                                                     period_start, period_end, week_start))
+                                                     period_start, period_end, week_start,
+                                                     last_week_start))
     except CampaignUnavailable as exc:
         return _error("campaign_unavailable", str(exc))
     except CampaignAmbiguous as exc:
@@ -94,12 +100,19 @@ def execute_contact_performance(arguments: dict, metadata: dict | None) -> dict:
     except CampaignStorageUnavailable as exc:
         return _error("storage_unavailable", str(exc))
 
-    total, this_week, first_this_week = counts
+    total, this_week, first_this_week, last_week, first_last_week = counts
     state, state_words = _state(campaign, today)
     date_words = f"{today.day} {today:%B %Y}"
-    summary = (f"{campaign.name} {state_words}. As of {date_words}, "
-               f"{total} {'client has' if total == 1 else 'clients have'} been contacted. "
-               f"{this_week} {'was' if this_week == 1 else 'were'} contacted this week.")
+    if query.period == "last_week":
+        start_words = f"{last_week_start_date.day} {last_week_start_date:%B %Y}"
+        end_words = f"{last_week_end_date.day} {last_week_end_date:%B %Y}"
+        summary = (f"{campaign.name} {state_words}. {last_week} "
+                   f"{'client was' if last_week == 1 else 'clients were'} contacted "
+                   f"last week ({start_words} to {end_words}).")
+    else:
+        summary = (f"{campaign.name} {state_words}. As of {date_words}, "
+                   f"{total} {'client has' if total == 1 else 'clients have'} been contacted. "
+                   f"{this_week} {'was' if this_week == 1 else 'were'} contacted this week.")
     return {
         "data_source": "synthetic",
         "campaign_id": campaign.campaign_id,
@@ -113,15 +126,21 @@ def execute_contact_performance(arguments: dict, metadata: dict | None) -> dict:
                                  if today >= campaign.start_date else None),
         "as_of_date": today.isoformat(),
         "as_of_time": now.isoformat(),
+        "requested_period": query.period,
         "week_start_date": week_start_date.isoformat(),
+        "last_week_start_date": last_week_start_date.isoformat(),
+        "last_week_end_date": last_week_end_date.isoformat(),
         "contacted_clients_total": total,
         "contacted_clients_this_week": this_week,
         "first_contacted_clients_this_week": first_this_week,
+        "contacted_clients_last_week": last_week,
+        "first_contacted_clients_last_week": first_last_week,
         "summary": summary,
         "metric_definition": (
             "Each count is distinct clients for this adviser and campaign. "
-            "This-week contacts include repeat contacts; first-contacted-this-week "
-            "counts clients whose earliest campaign contact is this week. "
+            "Weekly contacts include repeat contacts within that week; first-contacted "
+            "counts clients whose earliest campaign contact is in that week. "
+            "Last week is the previous Monday through Sunday in Singapore time. "
             "Only recorded synthetic contact events are included."
         ),
     }

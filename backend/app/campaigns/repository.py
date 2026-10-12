@@ -153,14 +153,17 @@ def get_campaign_by_name(name: str, scope: RequestScope) -> Campaign:
 
 def count_campaign_contacts(scope: RequestScope, campaign_id: str,
                             period_start: datetime, period_end: datetime,
-                            week_start: datetime) -> tuple[int, int, int]:
+                            week_start: datetime,
+                            last_week_start: datetime) -> tuple[int, int, int, int, int]:
     """Count distinct in-scope clients and weekly contacts from recorded events."""
     with _connection() as connection:
         row = connection.execute(
             """
             WITH contacted_clients AS (
                 SELECT contact_id, MIN(contacted_at) AS first_contacted_at,
-                       BOOL_OR(contacted_at >= %s) AS contacted_this_week
+                       BOOL_OR(contacted_at >= %s) AS contacted_this_week,
+                       BOOL_OR(contacted_at >= %s AND contacted_at < %s)
+                           AS contacted_last_week
                 FROM mock_campaign_contact_event
                 WHERE tenant_id = %s AND fa_id = %s AND campaign_id = %s
                   AND contacted_at >= %s AND contacted_at < %s
@@ -169,14 +172,22 @@ def count_campaign_contacts(scope: RequestScope, campaign_id: str,
             SELECT COUNT(*) AS contacted_clients_total,
                    COUNT(*) FILTER (WHERE contacted_this_week) AS contacted_clients_this_week,
                    COUNT(*) FILTER (WHERE first_contacted_at >= %s)
-                       AS first_contacted_clients_this_week
+                       AS first_contacted_clients_this_week,
+                   COUNT(*) FILTER (WHERE contacted_last_week)
+                       AS contacted_clients_last_week,
+                   COUNT(*) FILTER (WHERE first_contacted_at >= %s
+                                   AND first_contacted_at < %s)
+                       AS first_contacted_clients_last_week
             FROM contacted_clients
             """,
-            (week_start, scope.tenant_id, scope.fa_id, campaign_id,
-             period_start, period_end, week_start),
+            (week_start, last_week_start, week_start,
+             scope.tenant_id, scope.fa_id, campaign_id,
+             period_start, period_end, week_start, last_week_start, week_start),
         ).fetchone()
     return (row["contacted_clients_total"], row["contacted_clients_this_week"],
-            row["first_contacted_clients_this_week"])
+            row["first_contacted_clients_this_week"],
+            row["contacted_clients_last_week"],
+            row["first_contacted_clients_last_week"])
 
 
 def require_active(campaign: Campaign, as_of: date = DEMO_DATE) -> None:

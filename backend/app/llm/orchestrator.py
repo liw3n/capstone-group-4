@@ -53,6 +53,9 @@ Do not interpret discovery as checking consent or authorising communications.
 
 SYSTEM_PROMPT += """
 For campaign contact performance questions, call get_campaign_contact_performance.
+When the latest question says "last week", set period to "last_week"; this means
+the previous Monday through Sunday in Singapore time. Use the tool's last-week
+count and dates in the answer. For "this week", use period "this_week".
 Use its exact counts, reporting date and campaign state; do not estimate from
 recommendations or follow-up lists. The currently selected campaign takes
 precedence; otherwise use only the campaign named in the latest user message.

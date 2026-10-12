@@ -26,21 +26,22 @@ def call(args=None, scope=None, selected_id=None):
     return json.loads(registry.execute("get_campaign_contact_performance", json.dumps(args or {})))
 
 
-def test_model_schema_exposes_campaign_but_no_adviser_identity():
+def test_model_schema_exposes_campaign_and_period_but_no_adviser_identity():
     schemas = MCPToolRegistry(server).schemas()
     schema = next(item["function"]["parameters"] for item in schemas
                   if item["function"]["name"] == "get_campaign_contact_performance")
-    assert set(schema["properties"]) == {"campaign"}
+    assert set(schema["properties"]) == {"campaign", "period"}
 
 
 def test_selected_campaign_returns_grounded_distinct_counts(monkeypatch):
-    def counts(scope, campaign_id, start, end, week_start):
+    def counts(scope, campaign_id, start, end, week_start, last_week_start):
         assert scope.fa_id == DEMO_FA and scope.tenant_id == "pulse-demo"
         assert campaign_id == "camp-1"
         assert start.isoformat() == "2026-08-01T00:00:00+08:00"
         assert end == NOW
         assert week_start.isoformat() == "2026-10-12T00:00:00+08:00"
-        return 12, 5, 3
+        assert last_week_start.isoformat() == "2026-10-05T00:00:00+08:00"
+        return 12, 5, 3, 4, 2
     monkeypatch.setattr(repository, "count_campaign_contacts", counts)
     result = call({"campaign": "First Home Starter Bundle"}, selected_id="camp-1")
     assert result["campaign_id"] == "camp-1"  # Server selection takes precedence.
@@ -48,10 +49,24 @@ def test_selected_campaign_returns_grounded_distinct_counts(monkeypatch):
     assert result["contacted_clients_total"] == 12
     assert result["contacted_clients_this_week"] == 5
     assert result["first_contacted_clients_this_week"] == 3
+    assert result["contacted_clients_last_week"] == 4
+    assert result["last_week_end_date"] == "2026-10-11"
     assert result["summary"] == ("Legacy Protection Refresh is ongoing. "
                                  "As of 12 October 2026, 12 clients have been contacted. "
                                  "5 were contacted this week.")
     assert result["data_source"] == "synthetic"
+
+
+def test_last_week_answer_uses_previous_complete_week(monkeypatch):
+    monkeypatch.setattr(repository, "count_campaign_contacts",
+                        lambda *_: (12, 5, 3, 4, 2))
+    result = call({"period": "last_week"}, selected_id="camp-1")
+    assert result["requested_period"] == "last_week"
+    assert result["contacted_clients_last_week"] == 4
+    assert result["first_contacted_clients_last_week"] == 2
+    assert result["summary"] == ("Legacy Protection Refresh is ongoing. "
+                                 "4 clients were contacted last week "
+                                 "(5 October 2026 to 11 October 2026).")
 
 
 def test_exact_name_resolution_and_missing_campaign(monkeypatch):
@@ -59,7 +74,7 @@ def test_exact_name_resolution_and_missing_campaign(monkeypatch):
     monkeypatch.setattr(repository, "get_campaign_by_name", lambda name, scope: CAMPAIGNS[1]
                         if name.lower() == CAMPAIGNS[1].name.lower() and scope.fa_id == DEMO_FA
                         else (_ for _ in ()).throw(repository.CampaignUnavailable("Unavailable")))
-    monkeypatch.setattr(repository, "count_campaign_contacts", lambda *_: (4, 2, 2))
+    monkeypatch.setattr(repository, "count_campaign_contacts", lambda *_: (4, 2, 2, 1, 1))
     assert call({"campaign": "first home starter bundle"})["campaign_id"] == "camp-2"
     assert call()["error_code"] == "missing_campaign"
 
@@ -72,7 +87,8 @@ def test_scope_and_argument_failures_do_not_read_counts(monkeypatch):
     assert call(selected_id="camp-1", scope=RequestScope("adv-other-demo"))["error_code"] == "campaign_unavailable"
     assert call({"campaign": "bad campaign"})["error_code"] == "campaign_unavailable"
     for args in ({"fa_id": DEMO_FA}, {"tenant_id": "pulse-demo"},
-                 {"campaign": "camp-1", "ctx": {}}):
+                 {"campaign": "camp-1", "ctx": {}},
+                 {"campaign": "camp-1", "period": "yesterday"}):
         assert call(args)["error"] == "Invalid tool arguments"
     assert call({"campaign": " "})["error_code"] == "missing_campaign"
     async def unscoped():
@@ -95,7 +111,7 @@ def test_storage_failure_and_completed_period(monkeypatch):
     monkeypatch.setattr(repository, "get_campaign", lambda *_: replace(
         CAMPAIGNS[0], status="completed", end_date=NOW.date() - timedelta(days=1)))
     monkeypatch.setattr(repository, "count_campaign_contacts", lambda scope, campaign_id,
-                        start, end, week_start: (6, 0, 0))
+                        start, end, week_start, last_week_start: (6, 0, 0, 2, 1))
     completed = call(selected_id="camp-1")
     assert completed["reporting_state"] == "completed"
     assert completed["summary"].startswith("Legacy Protection Refresh has ended.")

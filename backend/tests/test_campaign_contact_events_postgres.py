@@ -115,6 +115,15 @@ def test_real_mcp_counts_contacts_within_period_and_adviser_scope(database, monk
                                         '{"campaign":"camp-2"}'))
     assert (camp2["contacted_clients_total"], camp2["contacted_clients_this_week"],
             camp2["first_contacted_clients_this_week"]) == (4, 2, 2)
+    last_week = json.loads(registry.execute("get_campaign_contact_performance",
+        '{"campaign":"camp-2","period":"last_week"}'))
+    assert last_week["requested_period"] == "last_week"
+    assert (last_week["contacted_clients_last_week"],
+            last_week["first_contacted_clients_last_week"]) == (2, 2)
+    assert last_week["last_week_start_date"] == "2026-10-05"
+    assert last_week["last_week_end_date"] == "2026-10-11"
+    assert "2 clients were contacted last week" in last_week["summary"]
+    assert camp1["contacted_clients_last_week"] == 0
     other = MCPToolRegistry(server).bind_scope(RequestScope("adv-other-demo"))
     denied = json.loads(other.execute("get_campaign_contact_performance",
                                       '{"campaign":"camp-1"}'))
@@ -165,3 +174,45 @@ def test_chat_routes_pass_contact_performance_tool_result(database, monkeypatch)
         tool_result = json.loads(provider.calls[1]["messages"][-1]["content"])
         assert tool_result["contacted_clients_total"] == 6
         assert tool_result["contacted_clients_this_week"] == 1
+
+
+def test_chat_route_passes_last_week_selection_to_tool(database, monkeypatch):
+    import json
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from fastapi.testclient import TestClient
+
+    from app import main, store
+    from app.llm.orchestrator import ChatOrchestrator
+    from app.tools import performance
+    from app.tools.mcp_registry import MCPToolRegistry
+    from test_campaign_mcp import server
+    from test_orchestrator import FakeClient, completion, message, settings, tool_call
+
+    database.execute(CONTACT_EVENT_TABLE_SQL.read_text())
+    database.execute(CONTACT_EVENT_SEED_SQL.read_text())
+    database.execute((TABLES / "create_campaign_chat_sessions.sql").read_text())
+    monkeypatch.setattr(store, "get_settings", config.get_settings)
+    monkeypatch.setattr(performance, "current_time",
+                        lambda: datetime(2026, 10, 12, 18, 0,
+                                         tzinfo=ZoneInfo("Asia/Singapore")))
+
+    provider = FakeClient([
+        completion(message(tool_calls=[tool_call(
+            "performance-last-week", "get_campaign_contact_performance",
+            '{"period":"last_week"}'
+        )])),
+        completion(message(content="2 clients were contacted last week (synthetic data).")),
+    ])
+    orchestrator = ChatOrchestrator(provider, settings(), MCPToolRegistry(server))
+    monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
+    response = TestClient(main.app).post("/chat/query", json={
+        "fa_id": "adv-steven-raynaldi", "campaign_id": "camp-2",
+        "message_content": "How many did I contact for this campaign last week?",
+    })
+    assert response.status_code == 200
+    assert "2 clients" in response.json()["ai_answer"]
+    tool_result = json.loads(provider.calls[1]["messages"][-1]["content"])
+    assert tool_result["requested_period"] == "last_week"
+    assert tool_result["contacted_clients_last_week"] == 2

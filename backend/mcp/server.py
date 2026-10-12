@@ -2,7 +2,7 @@ import logging
 import re
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastmcp import Context, FastMCP
 from pydantic import Field
@@ -161,14 +161,19 @@ def get_campaign_contact_performance(
         Field(description="Exact campaign name or ID from the current message; omit when one is selected.",
               min_length=1, max_length=255),
     ] = None,
+    period: Annotated[
+        Literal["this_week", "last_week"],
+        Field(description="Use last_week for the previous Monday through Sunday in Singapore time; defaults to this_week."),
+    ] = "this_week",
 ) -> dict:
     """Count distinct clients contacted for one accessible synthetic campaign.
 
-    Returns campaign-to-date and current-week counts from recorded outreach events.
+    Returns campaign-to-date, current-week and previous-week counts from recorded outreach events.
     Adviser and tenant scope come from API metadata, never model arguments.
     """
     logger.info("MCP tool called: get_campaign_contact_performance")
-    return execute_contact_performance({"campaign": campaign}, _request_metadata(ctx))
+    return execute_contact_performance({"campaign": campaign, "period": period},
+                                       _request_metadata(ctx))
 
 
 # 3. Run the Server
