@@ -241,3 +241,30 @@ Missing context or campaign and database outages return structured errors
 `storage_unavailable`) without counts or raw database details. The existing
 `fa_id` in the chat request is caller-supplied; this is a local prototype, not
 authenticated adviser identity. No service sales or acquisitions are counted.
+
+### MCP: get_campaign_contact_ranking
+
+This read-only tool compares **distinct clients contacted** across every
+synthetic campaign accessible to the requesting adviser and tenant. It answers
+questions such as “Which campaign has the highest number of clients?” in the
+contact-performance context. It does not rank target audience size, acquisitions,
+or sales. A selected campaign in chat does not narrow this comparison.
+
+The only model-facing argument is optional `period`: `campaign_to_date`
+(default), `this_week`, or `last_week`. Week boundaries use Singapore time;
+`last_week` is the previous complete Monday–Sunday. A contact is counted only
+inside its campaign's dates and the requested period, before the reporting time.
+Repeat contacts with the same client count once per campaign. Campaigns with no
+recorded contacts appear with zero. The database applies adviser and tenant
+scope before aggregation and returns no client details.
+
+Result keys: `data_source: synthetic`, `metric: distinct_clients_contacted`,
+`requested_period`, `period_start_date`, `period_end_date`, `as_of_time`,
+`campaign_count`, `ranking_truncated`, `leaders_truncated`,
+`ranked_campaigns` (up to 20 entries with campaign ID, name, status, and count),
+`leaders` (all visible campaigns tied for the highest count),
+`highest_contacted_clients`, `summary`, and `metric_definition`. More than 20
+accessible campaigns sets `ranking_truncated`; if the highest-place tie extends
+beyond the returned entries, `leaders_truncated` is also true. No accessible
+campaigns produce an empty ranking and a clear summary. Missing adviser context,
+invalid arguments, and database outages return structured errors without counts.

@@ -225,3 +225,108 @@ def test_chat_route_passes_last_week_selection_to_tool(database, monkeypatch):
     tool_result = json.loads(provider.calls[1]["messages"][-1]["content"])
     assert tool_result["requested_period"] == "last_week"
     assert tool_result["contacted_clients_last_week"] == 3
+
+
+def test_contact_ranking_uses_recorded_counts_and_adviser_scope(database, monkeypatch):
+    import json
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.tools import performance
+    from app.tools.mcp_registry import MCPToolRegistry
+    from app.campaigns.repository import RequestScope
+    from test_campaign_mcp import server
+
+    database.execute(CONTACT_EVENT_TABLE_SQL.read_text())
+    database.execute(CONTACT_EVENT_SEED_SQL.read_text())
+    database.execute("""
+        INSERT INTO mock_campaign
+            (tenant_id, campaign_id, name, status, start_date, end_date,
+             age_groups, genders, cash_bands)
+        VALUES ('pulse-demo', 'private-camp', 'Other Adviser Campaign', 'active',
+                '2026-08-01', '2026-12-31', ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[])
+    """)
+    database.execute("""
+        INSERT INTO mock_campaign_advisor (tenant_id, campaign_id, fa_id)
+        VALUES ('pulse-demo', 'private-camp', 'adv-other-demo')
+    """)
+    database.execute("""
+        INSERT INTO mock_campaign_contact_event
+            (tenant_id, contact_event_id, campaign_id, fa_id, contact_id, contacted_at)
+        VALUES
+            ('pulse-demo', 'private-event', 'private-camp', 'adv-other-demo',
+             'client-013', '2026-10-10 09:00:00+08'),
+            ('pulse-demo', 'future-ranking', 'camp-2', 'adv-steven-raynaldi',
+             'client-011', '2026-10-12 20:00:00+08'),
+            ('pulse-demo', 'outside-ranking', 'camp-1', 'adv-steven-raynaldi',
+             'client-006', '2027-01-01 09:00:00+08')
+    """)
+    monkeypatch.setattr(performance, "current_time",
+                        lambda: datetime(2026, 10, 12, 18, 0,
+                                         tzinfo=ZoneInfo("Asia/Singapore")))
+    registry = MCPToolRegistry(server).bind_scope(RequestScope("adv-steven-raynaldi"),
+                                                   "camp-2")
+    total = json.loads(registry.execute("get_campaign_contact_ranking", "{}"))
+    assert total["campaign_count"] == 2
+    assert [(item["campaign_id"], item["contacted_clients"])
+            for item in total["ranked_campaigns"]] == [("camp-1", 8), ("camp-2", 5)]
+    assert total["leaders"][0]["campaign_id"] == "camp-1"
+    last_week = json.loads(registry.execute("get_campaign_contact_ranking",
+                                            '{"period":"last_week"}'))
+    assert [(item["campaign_id"], item["contacted_clients"])
+            for item in last_week["ranked_campaigns"]] == [("camp-2", 3), ("camp-1", 2)]
+    this_week = json.loads(registry.execute("get_campaign_contact_ranking",
+                                            '{"period":"this_week"}'))
+    assert [(item["campaign_id"], item["contacted_clients"])
+            for item in this_week["ranked_campaigns"]] == [("camp-2", 2), ("camp-1", 1)]
+    other = MCPToolRegistry(server).bind_scope(RequestScope("adv-other-demo"))
+    other_result = json.loads(other.execute("get_campaign_contact_ranking", "{}"))
+    assert [item["campaign_id"] for item in other_result["ranked_campaigns"]] == ["private-camp"]
+    monkeypatch.setattr(performance, "current_time",
+                        lambda: datetime(2027, 1, 2, 12, 0,
+                                         tzinfo=ZoneInfo("Asia/Singapore")))
+    after_campaign = json.loads(registry.execute("get_campaign_contact_ranking", "{}"))
+    assert [(item["campaign_id"], item["contacted_clients"])
+            for item in after_campaign["ranked_campaigns"]] == [("camp-1", 8), ("camp-2", 6)]
+
+
+def test_chat_route_can_compare_campaigns_despite_selected_campaign(database, monkeypatch):
+    import json
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from fastapi.testclient import TestClient
+
+    from app import main, store
+    from app.llm.orchestrator import ChatOrchestrator
+    from app.tools import performance
+    from app.tools.mcp_registry import MCPToolRegistry
+    from test_campaign_mcp import server
+    from test_orchestrator import FakeClient, completion, message, settings, tool_call
+
+    database.execute(CONTACT_EVENT_TABLE_SQL.read_text())
+    database.execute(CONTACT_EVENT_SEED_SQL.read_text())
+    database.execute((TABLES / "create_campaign_chat_sessions.sql").read_text())
+    monkeypatch.setattr(store, "get_settings", config.get_settings)
+    monkeypatch.setattr(performance, "current_time",
+                        lambda: datetime(2026, 10, 12, 18, 0,
+                                         tzinfo=ZoneInfo("Asia/Singapore")))
+
+    provider = FakeClient([
+        completion(message(tool_calls=[tool_call(
+            "ranking", "get_campaign_contact_ranking", "{}"
+        )])),
+        completion(message(content=("Legacy Protection Refresh has the most clients "
+                                    "contacted: 8 (synthetic data)."))),
+    ])
+    orchestrator = ChatOrchestrator(provider, settings(), MCPToolRegistry(server))
+    monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
+    response = TestClient(main.app).post("/api/chat/query", json={
+        "fa_id": "adv-steven-raynaldi", "campaign_id": "camp-2",
+        "message_content": "Which campaign has the highest number of clients?",
+    })
+    assert response.status_code == 200
+    assert "Legacy Protection Refresh" in response.json()["ai_answer"]
+    tool_result = json.loads(provider.calls[1]["messages"][-1]["content"])
+    assert tool_result["highest_contacted_clients"] == 8
+    assert [item["campaign_id"] for item in tool_result["ranked_campaigns"]] == ["camp-1", "camp-2"]

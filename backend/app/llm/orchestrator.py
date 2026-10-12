@@ -52,6 +52,15 @@ Do not interpret discovery as checking consent or authorising communications.
 """
 
 SYSTEM_PROMPT += """
+For questions comparing which campaign has the most clients contacted, call
+get_campaign_contact_ranking. A question like "which campaign has the highest
+number of clients?" means distinct clients contacted in this performance
+context. Use campaign_to_date unless the user asks for this week or last week.
+Compare every campaign available to the adviser, even when one campaign is
+selected in the UI. Name ties, use exact counts, and label the data synthetic.
+Do not use the single-campaign performance tool to answer a cross-campaign
+comparison. Do not describe these counts as target audience size or sales.
+
 For campaign contact performance questions, call get_campaign_contact_performance.
 When the latest question says "last week", set period to "last_week"; this means
 the previous Monday through Sunday in Singapore time. Use the tool's last-week

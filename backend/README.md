@@ -77,7 +77,8 @@ schemas and calls them through `app/tools/mcp_registry.py`. Configure
 `http://127.0.0.1:8001/mcp` when the API and MCP server run on the same host.
 
 The registered tools include `recommend_clients_for_campaign`,
-`get_active_campaigns`, `get_campaign_contact_performance`, and
+`get_active_campaigns`, `get_campaign_contact_performance`,
+`get_campaign_contact_ranking`, and
 `campaign_follow_up`. Campaign matching and scoped data access live in
 `app/campaigns/`; shared follow-up handlers live in
 `app/tools/implementations.py`. Follow-up handlers query the mock engagement
@@ -121,9 +122,11 @@ for an adviser, campaign, and client is that client's first recorded campaign
 contact. Subsequent events represent later contacts with the same client.
 
 Foreign keys require the event's adviser to be assigned to the campaign and to
-own the client in the synthetic data. A future performance tool must also filter
-every read by the request-scoped adviser's tenant and ID. This prototype history
-is not the company's `interaction` table. The read-only
-`get_campaign_contact_performance` MCP tool now reports distinct contacted-client
-counts from these events. The API still accepts a caller-supplied FA ID, so this
-local prototype does not provide production authentication.
+own the client in the synthetic data. Both performance tools filter reads by the
+request-scoped adviser's tenant and ID. This prototype history is not the
+company's `interaction` table. The read-only
+`get_campaign_contact_performance` tool reports one campaign's distinct
+contacted-client counts; `get_campaign_contact_ranking` compares all accessible
+campaigns by that same measure, including zero-contact campaigns and ties. The
+API still accepts a caller-supplied FA ID, so this local prototype does not
+provide production authentication.

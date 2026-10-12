@@ -24,7 +24,7 @@ from app.tools.implementations import (
 from app.campaigns.repository import CAMPAIGN_ID_PATTERN
 from app.tools.campaign import execute_recommendation
 from app.tools.discovery import CampaignField, CampaignId, CampaignName, execute_discovery
-from app.tools.performance import execute_contact_performance
+from app.tools.performance import execute_contact_performance, execute_contact_ranking
 
 # Initialize the FastMCP server instance
 mcp = FastMCP(name="FastMCP Server")
@@ -174,6 +174,23 @@ def get_campaign_contact_performance(
     logger.info("MCP tool called: get_campaign_contact_performance")
     return execute_contact_performance({"campaign": campaign, "period": period},
                                        _request_metadata(ctx))
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
+def get_campaign_contact_ranking(
+    ctx: Context,
+    period: Annotated[
+        Literal["campaign_to_date", "this_week", "last_week"],
+        Field(description="Comparison period. Defaults to each campaign's start through now; last_week is the previous Monday through Sunday in Singapore time."),
+    ] = "campaign_to_date",
+) -> dict:
+    """Find which accessible synthetic campaigns contacted the most distinct clients.
+
+    Compare all campaigns available to this adviser, regardless of the selected
+    campaign. Counts come only from recorded campaign contact events.
+    """
+    logger.info("MCP tool called: get_campaign_contact_ranking")
+    return execute_contact_ranking({"period": period}, _request_metadata(ctx))
 
 
 # 3. Run the Server

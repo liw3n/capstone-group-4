@@ -190,6 +190,42 @@ def count_campaign_contacts(scope: RequestScope, campaign_id: str,
             row["first_contacted_clients_last_week"])
 
 
+def rank_campaigns_by_contacts(scope: RequestScope, period_start: datetime | None,
+                               period_end: datetime) -> tuple[dict, ...]:
+    """Rank accessible campaigns by distinct contacted clients, including zeroes."""
+    with _connection() as connection:
+        rows = connection.execute(
+            """
+            WITH campaign_counts AS (
+                SELECT c.campaign_id, c.name, c.status,
+                       COUNT(DISTINCT e.contact_id) AS contacted_clients
+                FROM mock_campaign AS c
+                JOIN mock_campaign_advisor AS a
+                  ON a.tenant_id = c.tenant_id AND a.campaign_id = c.campaign_id
+                LEFT JOIN mock_campaign_contact_event AS e
+                  ON e.tenant_id = c.tenant_id
+                 AND e.campaign_id = c.campaign_id AND e.fa_id = a.fa_id
+                 AND e.contacted_at >=
+                     (c.start_date::timestamp AT TIME ZONE 'Asia/Singapore')
+                 AND e.contacted_at <
+                     ((c.end_date + 1)::timestamp AT TIME ZONE 'Asia/Singapore')
+                 AND (%s::timestamptz IS NULL OR e.contacted_at >= %s::timestamptz)
+                 AND e.contacted_at < %s
+                WHERE c.tenant_id = %s AND a.fa_id = %s
+                GROUP BY c.campaign_id, c.name, c.status
+            )
+            SELECT campaign_id, name, status, contacted_clients,
+                   COUNT(*) OVER () AS campaign_count,
+                   COUNT(*) OVER (PARTITION BY contacted_clients) AS tie_count
+            FROM campaign_counts
+            ORDER BY contacted_clients DESC, name, campaign_id
+            LIMIT 21
+            """,
+            (period_start, period_start, period_end, scope.tenant_id, scope.fa_id),
+        ).fetchall()
+    return tuple(rows)
+
+
 def require_active(campaign: Campaign, as_of: date = DEMO_DATE) -> None:
     if campaign.status != "active" or not campaign.start_date <= as_of <= campaign.end_date:
         raise CampaignInactive("Campaign is not active on the demo date")

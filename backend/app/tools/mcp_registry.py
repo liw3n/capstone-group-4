@@ -10,7 +10,7 @@ from app.campaigns.repository import RequestScope
 from app.llm.errors import LLMProviderError
 from app.tools.campaign import RecommendationArguments
 from app.tools.discovery import ActiveCampaignArguments
-from app.tools.performance import ContactPerformanceArguments
+from app.tools.performance import ContactPerformanceArguments, ContactRankingArguments
 
 
 class MCPToolRegistry:
@@ -89,6 +89,14 @@ class MCPToolRegistry:
                 return json.dumps({"error": "Adviser request context is required"})
             try:
                 arguments = ContactPerformanceArguments.model_validate(arguments).model_dump()
+            except ValidationError:
+                return json.dumps({"error": "Invalid tool arguments"})
+
+        if name == "get_campaign_contact_ranking":
+            if self.scope is None:
+                return json.dumps({"error": "Adviser request context is required"})
+            try:
+                arguments = ContactRankingArguments.model_validate(arguments).model_dump()
             except ValidationError:
                 return json.dumps({"error": "Invalid tool arguments"})
 
