@@ -76,7 +76,8 @@ schemas and calls them through `app/tools/mcp_registry.py`. Configure
 `MCP_SERVER_URL` to the server's Streamable HTTP `/mcp` endpoint; it defaults to
 `http://127.0.0.1:8001/mcp` when the API and MCP server run on the same host.
 
-The registered tools include `recommend_clients_for_campaign` and
+The registered tools include `recommend_clients_for_campaign`,
+`get_active_campaigns`, `get_campaign_contact_performance`, and
 `campaign_follow_up`. Campaign matching and scoped data access live in
 `app/campaigns/`; shared follow-up handlers live in
 `app/tools/implementations.py`. Follow-up handlers query the mock engagement
@@ -108,3 +109,21 @@ The matching logic does not call Groq; automated unit/integration tests can veri
 it independently, without a separate demo script.
 
 See [prototype assumptions, SQL and frontend verification](docs/campaign_recommendations.md).
+
+## Synthetic campaign contact history
+
+`make provision` also creates `mock_campaign_contact_event` and loads fixed-date,
+synthetic outreach records for the two seeded campaigns. Each event references
+the existing campaign by `tenant_id` and `campaign_id`, and uses the same
+`contact_id` and `fa_id` fields as `mock_client`. A campaign's name is read from
+`mock_campaign`; it is not copied into every event. The earliest `contacted_at`
+for an adviser, campaign, and client is that client's first recorded campaign
+contact. Subsequent events represent later contacts with the same client.
+
+Foreign keys require the event's adviser to be assigned to the campaign and to
+own the client in the synthetic data. A future performance tool must also filter
+every read by the request-scoped adviser's tenant and ID. This prototype history
+is not the company's `interaction` table. The read-only
+`get_campaign_contact_performance` MCP tool now reports distinct contacted-client
+counts from these events. The API still accepts a caller-supplied FA ID, so this
+local prototype does not provide production authentication.

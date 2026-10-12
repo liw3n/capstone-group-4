@@ -51,6 +51,19 @@ for adviser review, not a product suitability assessment or financial advice.
 Do not interpret discovery as checking consent or authorising communications.
 """
 
+SYSTEM_PROMPT += """
+For campaign contact performance questions, call get_campaign_contact_performance.
+Use its exact counts, reporting date and campaign state; do not estimate from
+recommendations or follow-up lists. The currently selected campaign takes
+precedence; otherwise use only the campaign named in the latest user message.
+If neither is available, ask which campaign they mean. Distinct clients contacted
+this week may include clients first contacted earlier and contacted again this
+week. Copy the tool's short summary when it directly answers the question.
+Label these results as synthetic prototype data. If the tool returns an error,
+explain it without inventing figures. Never reveal another adviser's client
+relationship or imply that a missing campaign belongs to someone else.
+"""
+
 class ToolExecutor(Protocol):
     def bind_scope(
         self, scope: RequestScope, campaign_id: str | None = None

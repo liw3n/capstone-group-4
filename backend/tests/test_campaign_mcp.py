@@ -36,7 +36,7 @@ def test_schema_exposes_only_campaign_and_bounded_limit():
         if item["function"]["name"] == "campaign_follow_up"
     )
     assert names == {"recommend_clients_for_campaign", "campaign_follow_up",
-                     "get_active_campaigns"}
+                     "get_active_campaigns", "get_campaign_contact_performance"}
     assert set(schema["properties"]) == {"campaign_id", "limit"}
     assert schema["properties"]["limit"]["minimum"] == 1
     assert schema["properties"]["limit"]["maximum"] == 100

@@ -1,7 +1,7 @@
 """Tenant-scoped PostgreSQL reads of synthetic prototype tables."""
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 import re
 
 DEMO_DATE = date(2026, 8, 26)  # Same as frontend/data/seed.ts.
@@ -57,6 +57,10 @@ class Client:
 
 
 class CampaignUnavailable(ValueError):
+    pass
+
+
+class CampaignAmbiguous(ValueError):
     pass
 
 
@@ -122,6 +126,57 @@ def get_campaign(campaign_id: str, scope: RequestScope) -> Campaign:
     if campaign is None:
         raise CampaignUnavailable("Campaign not found or unavailable to this adviser")
     return campaign
+
+
+def get_campaign_by_name(name: str, scope: RequestScope) -> Campaign:
+    """Resolve an exact name only among this adviser's campaigns."""
+    with _connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT c.campaign_id
+            FROM mock_campaign AS c
+            JOIN mock_campaign_advisor AS a
+              ON a.tenant_id = c.tenant_id AND a.campaign_id = c.campaign_id
+            WHERE c.tenant_id = %s AND a.fa_id = %s
+              AND lower(c.name) = lower(%s)
+            ORDER BY c.campaign_id
+            LIMIT 2
+            """,
+            (scope.tenant_id, scope.fa_id, name),
+        ).fetchall()
+    if not rows:
+        raise CampaignUnavailable("Campaign not found or unavailable to this adviser")
+    if len(rows) > 1:
+        raise CampaignAmbiguous("Multiple accessible campaigns have that name; select one by ID")
+    return get_campaign(rows[0]["campaign_id"], scope)
+
+
+def count_campaign_contacts(scope: RequestScope, campaign_id: str,
+                            period_start: datetime, period_end: datetime,
+                            week_start: datetime) -> tuple[int, int, int]:
+    """Count distinct in-scope clients and weekly contacts from recorded events."""
+    with _connection() as connection:
+        row = connection.execute(
+            """
+            WITH contacted_clients AS (
+                SELECT contact_id, MIN(contacted_at) AS first_contacted_at,
+                       BOOL_OR(contacted_at >= %s) AS contacted_this_week
+                FROM mock_campaign_contact_event
+                WHERE tenant_id = %s AND fa_id = %s AND campaign_id = %s
+                  AND contacted_at >= %s AND contacted_at < %s
+                GROUP BY contact_id
+            )
+            SELECT COUNT(*) AS contacted_clients_total,
+                   COUNT(*) FILTER (WHERE contacted_this_week) AS contacted_clients_this_week,
+                   COUNT(*) FILTER (WHERE first_contacted_at >= %s)
+                       AS first_contacted_clients_this_week
+            FROM contacted_clients
+            """,
+            (week_start, scope.tenant_id, scope.fa_id, campaign_id,
+             period_start, period_end, week_start),
+        ).fetchone()
+    return (row["contacted_clients_total"], row["contacted_clients_this_week"],
+            row["first_contacted_clients_this_week"])
 
 
 def require_active(campaign: Campaign, as_of: date = DEMO_DATE) -> None:

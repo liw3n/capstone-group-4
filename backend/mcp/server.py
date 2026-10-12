@@ -24,6 +24,7 @@ from app.tools.implementations import (
 from app.campaigns.repository import CAMPAIGN_ID_PATTERN
 from app.tools.campaign import execute_recommendation
 from app.tools.discovery import CampaignField, CampaignId, CampaignName, execute_discovery
+from app.tools.performance import execute_contact_performance
 
 # Initialize the FastMCP server instance
 mcp = FastMCP(name="FastMCP Server")
@@ -125,7 +126,7 @@ def campaign_follow_up(
     }
 
 
-def _discovery_metadata(ctx: Context) -> dict | None:
+def _request_metadata(ctx: Context) -> dict | None:
     request = ctx.request_context
     metadata = request.meta if request is not None else None
     return metadata if metadata is None or isinstance(metadata, dict) else metadata.model_dump()
@@ -149,7 +150,25 @@ def get_active_campaigns(
     """
     logger.info("MCP tool called: get_active_campaigns")
     return execute_discovery('get_active_campaigns', dict(campaign_ids=campaign_ids,
-        campaign_names=campaign_names, fields=fields, limit=limit), _discovery_metadata(ctx))
+        campaign_names=campaign_names, fields=fields, limit=limit), _request_metadata(ctx))
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
+def get_campaign_contact_performance(
+    ctx: Context,
+    campaign: Annotated[
+        str | None,
+        Field(description="Exact campaign name or ID from the current message; omit when one is selected.",
+              min_length=1, max_length=255),
+    ] = None,
+) -> dict:
+    """Count distinct clients contacted for one accessible synthetic campaign.
+
+    Returns campaign-to-date and current-week counts from recorded outreach events.
+    Adviser and tenant scope come from API metadata, never model arguments.
+    """
+    logger.info("MCP tool called: get_campaign_contact_performance")
+    return execute_contact_performance({"campaign": campaign}, _request_metadata(ctx))
 
 
 # 3. Run the Server

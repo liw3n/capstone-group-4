@@ -19,8 +19,9 @@ make dev
 
 Provisioning runs `backend/setup.sh`. Its ordered SQL loop applies
 `create_campaign_chat_sessions.sql`, `create_mock_campaign_tables.sql`,
-`seed_mock_campaign_data.sql`, then `create_mock_campaign_engagement.sql` from
-`backend/tables/`. Every teammate loads the same
+`seed_mock_campaign_data.sql`, `create_mock_campaign_engagement.sql`,
+`create_mock_campaign_contact_event.sql`, then
+`seed_mock_campaign_contact_events.sql` from `backend/tables/`. Every teammate loads the same
 synthetic records into their own local database. The schema and seeds are additive
 and repeatable; `ON CONFLICT DO NOTHING` preserves existing edits. Use explicit
 migration/update SQL when changing existing fields or records.

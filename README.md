@@ -149,10 +149,16 @@ then applies these files in order:
 2. `backend/tables/create_mock_campaign_tables.sql`
 3. `backend/tables/seed_mock_campaign_data.sql`
 4. `backend/tables/create_mock_campaign_engagement.sql`
+5. `backend/tables/create_mock_campaign_contact_event.sql`
+6. `backend/tables/seed_mock_campaign_contact_events.sql`
 
 The mock scripts create campaign, adviser-access and client tables and seed two
-campaigns and 14 synthetic clients. Every teammate loads the same checked-in SQL
-into their own local database; database edits are not automatically shared.
+campaigns and 14 synthetic clients. The contact-event table stores synthetic
+outreach dates for those campaigns and the assigned adviser; campaign names come
+from `mock_campaign`, not duplicated contact rows. Each row is one contact, so
+repeat contacts can be distinguished from a client's first campaign contact.
+Every teammate loads the same checked-in SQL into their own local database;
+database edits are not automatically shared.
 
 The scripts are repeatable. Seed inserts preserve existing records using
 `ON CONFLICT DO NOTHING`; use an explicit migration/update script for changes
