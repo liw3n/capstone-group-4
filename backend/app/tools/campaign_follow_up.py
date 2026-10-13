@@ -54,29 +54,31 @@ def get_campaign_info(campaign_id: str) -> dict:
     }
 
 
+from datetime import datetime
+
 def get_client_follow_up_list(campaign_id: str, fa_id: str) -> list[tuple[str, datetime]]:
     """
     Query the client follow-up list for a given campaign ID and FA ID.
+    Returns clients whose max engagement status is 0 (contacted but not engaged/rejected),
+    along with their last contacted date.
     """
     with _connection() as connection:
-        # Engagement Status: 0 = Contacted, 1 = Engaged, 2 = Rejected
-        rows = connection.execute(
+        # Get clients that have been contacted (max status = 0) and their last contacted date
+        contacts = connection.execute(
             """
             SELECT contact_id AS client_id, MAX(contacted_at) AS last_engagement_date
             FROM mock_campaign_contact_event
-            WHERE campaign_id = %s and fa_id = %s and engagement_status = 0
+            WHERE campaign_id = %s AND fa_id = %s
             GROUP BY contact_id
+            HAVING MAX(engagement_status) = 0;
             """,
             (campaign_id, fa_id),
         ).fetchall()
 
-    if not rows:
-        raise ValueError(f"No engagement information found for campaign ID: {campaign_id}")
+    if not contacts:
+        raise ValueError(f"No unreplied clients found for campaign ID: {campaign_id}")
 
-    return [
-        (row["client_id"], row["last_engagement_date"])
-        for row in rows
-    ]
+    return [(row["client_id"], row["last_engagement_date"]) for row in contacts]
 
 def fetch_client_portfolio(client_id: str) -> dict:
     """
