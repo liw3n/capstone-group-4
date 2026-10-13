@@ -58,12 +58,84 @@ cd "$BACKEND_DIR/terraform"
 terraform init
 terraform apply -auto-approve
 
-##### Fetch Terraform Outputs #####
-rds_endpoint="$(terraform output -raw rds_endpoint)"
-ecr_repository_url="$(terraform output -raw ecr_repository_url)"
+wait_for_rds_endpoint() {
+    local attempt
+    for ((attempt = 0; attempt < 30; attempt++)); do
+        if PGPASSWORD=testpassword psql \
+            --host "$rds_host" \
+            --port "$rds_port" \
+            --username postgres \
+            --dbname pulse \
+            --no-psqlrc \
+            -v ON_ERROR_STOP=1 \
+            -tAc 'SELECT 1' >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 2
+    done
+    return 1
+}
 
+fakecloud_aws() {
+    AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-test}" \
+    AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-test}" \
+    AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-ap-southeast-1}" \
+        aws --endpoint-url http://127.0.0.1:4566 "$@"
+}
+
+##### Ensure Terraform's RDS endpoint has a live PostgreSQL listener #####
+rds_endpoint="$(terraform output -raw rds_endpoint)"
 rds_host="${rds_endpoint%:*}"
 rds_port="${rds_endpoint##*:}"
+
+if ! wait_for_rds_endpoint; then
+    printf 'PostgreSQL is not reachable at %s:%s; restarting the local FakeCloud RDS instance.\n' \
+        "$rds_host" "$rds_port" >&2
+
+    rds_instance_id="$(
+        fakecloud_aws rds describe-db-instances \
+            --query 'DBInstances[0].DBInstanceIdentifier' \
+            --output text \
+            --no-cli-pager
+    )"
+    rds_instance_status="$(
+        fakecloud_aws rds describe-db-instances \
+            --query 'DBInstances[0].DBInstanceStatus' \
+            --output text \
+            --no-cli-pager
+    )"
+    if [[ -z "$rds_instance_id" || "$rds_instance_id" == "None" ||
+        -z "$rds_instance_status" || "$rds_instance_status" == "None" ]]; then
+        printf 'Could not find the local FakeCloud RDS instance to restart.\n' >&2
+        exit 1
+    fi
+
+    if [[ "$rds_instance_status" != "stopped" ]]; then
+        fakecloud_aws rds stop-db-instance \
+            --db-instance-identifier "$rds_instance_id" \
+            --no-cli-pager
+    fi
+    fakecloud_aws rds start-db-instance \
+        --db-instance-identifier "$rds_instance_id" \
+        --no-cli-pager
+    fakecloud_aws rds wait db-instance-available \
+        --db-instance-identifier "$rds_instance_id" \
+        --no-cli-pager
+
+    terraform apply -refresh-only -auto-approve
+    rds_endpoint="$(terraform output -raw rds_endpoint)"
+    rds_host="${rds_endpoint%:*}"
+    rds_port="${rds_endpoint##*:}"
+
+    if ! wait_for_rds_endpoint; then
+        printf 'PostgreSQL did not become reachable at refreshed endpoint %s:%s.\n' \
+            "$rds_host" "$rds_port" >&2
+        exit 1
+    fi
+fi
+
+##### Fetch remaining Terraform Outputs #####
+ecr_repository_url="$(terraform output -raw ecr_repository_url)"
 database_url="postgresql://postgres:testpassword@${rds_host}:${rds_port}/pulse"
 
 # Update .env file
