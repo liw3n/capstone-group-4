@@ -238,9 +238,10 @@ caller-supplied and the tenant is fixed to `pulse-demo`; this is not authenticat
 ### MCP: recommend_clients_for_campaign
 
 Arguments: `campaign_id` (required) and `limit` (strict integer, 1-100, default 100).
-Context is injected by FastMCP and absent from the model-facing schema. It is
-read-only and returns synthetic campaign criteria matches, without ranking,
-sending outreach or changing CRM data.
+Context is injected by FastMCP and absent from the model-facing schema. This is
+the pre-contact audience tool: use it to find or filter potential clients who
+meet campaign eligibility criteria. It returns synthetic criteria matches,
+without ranking, checking reply status, sending outreach or changing CRM data.
 
 Result keys: `data_source`, `campaign_id`, `campaign_name`, `as_of_date`,
 `evaluated_count`, `matched_count`, `clients` (contact_id, name, reasons),
@@ -257,6 +258,10 @@ Recommendations are not communication consent or product suitability approval.
 
 ### MCP: campaign_follow_up
 
+This is the post-contact follow-up tool: it finds clients already contacted for
+the campaign who have no recorded reply/response. Do not use it for pre-contact
+audience discovery or criteria filtering.
+
 Model-facing arguments: `campaign` (optional campaign name or ID from the
 current user message) and `limit` (integer 1-100, default 5). When the API
 request includes a selected `campaign_id`, that server-bound context takes
@@ -264,7 +269,11 @@ precedence over the model argument; otherwise the campaign from the current
 message is used. The API supplies the adviser identity through
 `_meta.pulse_scope`; `fa_id` is not a model argument and is never requested
 from the adviser by the assistant. The tool uses that scoped adviser ID when
-retrieving unreplied clients.
+retrieving unreplied clients. Each candidate includes a `follow_up_reason`
+based on the latest contact date and the absence of a recorded response. The
+assistant should give that factual reason for each candidate; profile and
+portfolio details are context only, not evidence of suitability, priority or a
+campaign-specific need.
 
 See [campaign_recommendations.md](campaign_recommendations.md) for fake table
 assumptions, shared Make setup, expected frontend results and automated tests

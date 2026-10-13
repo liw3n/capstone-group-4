@@ -56,10 +56,10 @@ def get_campaign_info(campaign_id: str) -> dict:
 
 def get_client_follow_up_list(campaign_id: str, fa_id: str) -> list[tuple[str, datetime]]:
     """
-    Query the client follow-up list for a given campaign ID and FA ID.
+    Return contacted clients with no recorded response for a campaign and adviser.
     """
     with _connection() as connection:
-        # Engagement Status: 0 = Contacted, 1 = Engaged, 2 = Rejected
+        # Status 0 means contacted with no recorded reply; 1 and 2 are responded outcomes.
         rows = connection.execute(
             """
             SELECT contact_id AS client_id, MAX(contacted_at) AS last_engagement_date

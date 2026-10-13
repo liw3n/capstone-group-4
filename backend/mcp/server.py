@@ -44,7 +44,10 @@ def recommend_clients_for_campaign(
     ctx: Context,
     limit: Annotated[int, Field(ge=1, le=100, strict=True)] = 100,
 ) -> dict:
-    """Return synthetic clients meeting campaign criteria, with reasons and gaps.
+    """Find the pre-contact campaign audience: synthetic clients who meet the
+    campaign's eligibility criteria, with reasons and missing-data gaps. Use
+    this to find or filter potential clients before outreach. It does not identify
+    clients already contacted or track replies; use campaign_follow_up for that.
     Read-only; no ranking or product suitability assessment. Adviser and tenant
     scope come from API request metadata, never from model arguments.
     """
@@ -64,9 +67,14 @@ def campaign_follow_up(
     ] = None,
     limit: Annotated[int, Field(ge=1, le=100, strict=True)] = 5,
 ) -> dict:
-    """
-    Return unreplied clients and their detailed portfolio profiles for a given campaign
-    so high-value and suitable follow-ups can be identified.
+    """Find post-contact follow-ups: clients already contacted for this campaign
+    who have no recorded reply/response, with their portfolio profiles. Use this
+    only to find contacted clients awaiting a response, not to discover or filter
+    a pre-contact eligible audience. For pre-contact criteria matching, use
+    recommend_clients_for_campaign. 
+
+    Do ranking and product suitability assessment based on the client's portfolio or profile to identify the most suitable clients for follow-up. 
+    Adviser and tenant scope come from API request metadata, never from model arguments.
     """
     logger.info("MCP tool called: campaign_follow_up")
     request = ctx.request_context
@@ -103,23 +111,34 @@ def campaign_follow_up(
     campaign_info = get_campaign_info(campaign_id)
     client_info = get_client_follow_up_list(campaign_id, fa_id)
 
-    # 2. Fetch portfolio info for these clients
+    # 2. Fetch profile and portfolio context for these clients
     client_profiles = []
     for client_id, last_engagement_date in client_info:
         portfolio = fetch_client_portfolio(client_id)
         profile = fetch_client_profile(client_id)
+        follow_up_reason = (
+            "No response is recorded after contact on "
+            f"{last_engagement_date.isoformat()}."
+            if last_engagement_date
+            else "No response is recorded after contact; the last contact date is unavailable."
+        )
         client_profiles.append({
             "client_id": client_id,
             "portfolio_data": portfolio,
             "profile_data": profile,
-            "last_engagement_date": last_engagement_date.isoformat() if last_engagement_date else None
+            "last_engagement_date": last_engagement_date.isoformat() if last_engagement_date else None,
+            "follow_up_reason": follow_up_reason,
         })
 
     additional_instructions = (
-        "Based on the provided campaign and client information, identify the purpose of the campaign and the target audience for the campaign."
-        f"Evaluate the customer profile and portfolio to identify the {limit} most suitable clients that are high-value to follow-up on for the campaign"
-        "to ensure that the campaign is effective and reaches the right audience. " 
-        "Note: This tool does not check outreach consent or authorise sending communications; adviser confirmation and separate channel consent checks are required before outreach."
+        "These candidates have already been contacted and have no recorded reply; "
+        "they are not a pre-contact eligible audience. Do not add other clients or "
+        "claim a reply status not present in the results. You should infer suitability and priority only from the campaign's eligibility criteria, "
+        "the client's portfolio and profile, and the last engagement date. "
+        "Do not infer suitability or priority from any other context. "
+        "priority, or a campaign-specific need from them. This tool does not check "
+        "outreach consent or authorise another communication; adviser confirmation "
+        "and separate channel consent checks are required before outreach."
     )
 
     # 3. Return the rich data back to the LLM

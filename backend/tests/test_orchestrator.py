@@ -294,6 +294,18 @@ def test_campaign_generation_prompt_requires_retrieval_before_preparation():
     assert "Never claim the campaign was created" in SYSTEM_PROMPT
 
 
+def test_campaign_client_tool_prompt_separates_pre_and_post_contact_intent():
+    assert "Before contact" in SYSTEM_PROMPT
+    assert "recommend_clients_for_campaign" in SYSTEM_PROMPT
+    assert "After contact" in SYSTEM_PROMPT
+    assert "campaign_follow_up" in SYSTEM_PROMPT
+    assert "If the requested workflow stage" in SYSTEM_PROMPT
+    assert "ask whether the adviser wants a pre-contact eligible audience or an" in SYSTEM_PROMPT
+    assert "after-contact no-reply list" in SYSTEM_PROMPT
+    assert "Explain why each is listed using its follow_up_reason" in SYSTEM_PROMPT
+    assert "not a suitability judgment" in SYSTEM_PROMPT
+
+
 @pytest.mark.parametrize(
     "message_value",
     [

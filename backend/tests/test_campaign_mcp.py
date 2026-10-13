@@ -35,6 +35,10 @@ def test_schema_exposes_only_campaign_and_bounded_limit():
         for item in schemas
         if item["function"]["name"] == "campaign_follow_up"
     )
+    tool_descriptions = {
+        item["function"]["name"]: item["function"]["description"]
+        for item in schemas
+    }
     assert names == {"recommend_clients_for_campaign", "campaign_follow_up",
                      "find_campaign_references", "prepare_campaign_draft",
                      "get_active_campaigns", "get_campaign_contact_performance",
@@ -44,6 +48,16 @@ def test_schema_exposes_only_campaign_and_bounded_limit():
     assert schema["properties"]["limit"]["maximum"] == 100
     assert set(follow_up_schema["properties"]) == {"campaign", "limit"}
     assert "fa_id" not in follow_up_schema.get("required", [])
+    assert "before outreach" in tool_descriptions["recommend_clients_for_campaign"]
+    assert "does not identify" in tool_descriptions["recommend_clients_for_campaign"]
+    assert "clients already contacted" in tool_descriptions[
+        "recommend_clients_for_campaign"
+    ]
+    assert "already contacted" in tool_descriptions["campaign_follow_up"]
+    assert "not to discover or filter" in tool_descriptions[
+        "campaign_follow_up"
+    ]
+    assert "a pre-contact eligible audience" in tool_descriptions["campaign_follow_up"]
 
 
 def test_campaign_implementations_read_dict_rows(monkeypatch):
@@ -81,7 +95,7 @@ def test_campaign_implementations_read_dict_rows(monkeypatch):
     ]
 
 
-def test_campaign_follow_up_returns_limited_profiles(monkeypatch):
+def test_campaign_follow_up_returns_profiles_with_grounded_reasons(monkeypatch):
     engagement_date = datetime(2026, 8, 2, 11, 0)
     portfolio_requests = []
     profile_requests = []
@@ -123,14 +137,30 @@ def test_campaign_follow_up_returns_limited_profiles(monkeypatch):
     }
     assert result["total_unreplied_clients"] == 2
     assert result["requested_limit"] == 1
+    assert "already been contacted" in result["additional_instructions"]
+    assert "not a pre-contact eligible audience" in result["additional_instructions"]
     assert result["candidates"] == [{
         "client_id": "client-002",
         "portfolio_data": {"client_id": "client-002", "portfolio_value": 125000},
         "profile_data": {"client_id": "client-002", "name": "Demo Client B", "age": 70},
         "last_engagement_date": engagement_date.isoformat(),
+        "follow_up_reason": (
+            "No response is recorded after contact on "
+            f"{engagement_date.isoformat()}."
+        ),
+    }, {
+        "client_id": "client-003",
+        "portfolio_data": {"client_id": "client-003", "portfolio_value": 125000},
+        "profile_data": {"client_id": "client-003", "name": "Demo Client B", "age": 70},
+        "last_engagement_date": engagement_date.isoformat(),
+        "follow_up_reason": (
+            "No response is recorded after contact on "
+            f"{engagement_date.isoformat()}."
+        ),
     }]
-    assert portfolio_requests == ["client-002"]
-    assert profile_requests == ["client-002"]
+    assert "Give each candidate's follow_up_reason" in result["additional_instructions"]
+    assert portfolio_requests == ["client-002", "client-003"]
+    assert profile_requests == ["client-002", "client-003"]
 
 
 def test_campaign_follow_up_prefers_selected_campaign_context(monkeypatch):
