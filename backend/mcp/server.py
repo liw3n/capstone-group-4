@@ -13,7 +13,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.tools.implementations import (
+from app.tools.campaign_follow_up import (
     get_campaign_id,
     get_client_follow_up_list,
     fetch_client_portfolio,
