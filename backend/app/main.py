@@ -12,6 +12,7 @@ from app.campaigns.catalog import (
     get_campaign_record,
     list_campaigns as list_campaign_records,
     update_campaign_state,
+    update_engagement_status,
 )
 from app.campaigns.models import CampaignCriteriaPayload
 
@@ -102,6 +103,16 @@ class LeadStatsPayload(BaseModel):
     added: int = Field(ge=0)
     removed: int = Field(ge=0)
 
+class StatusUpdatePayload(BaseModel):
+    status: Literal[0, 1, 2]  # 0: Contacted, 1: Engaged, 2: Rejected
+    campaign_id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=69)
+    contact_id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=64)
+
+class StatusUpdateResponse(BaseModel):
+    campaign_id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=69)
+    contact_id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=64)
+    fa_id: str = Field(min_length=1, max_length=64)
+    status: Literal[0, 1, 2]  # 0: Contacted, 1: Engaged, 2: Rejected
 
 class CampaignPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -305,6 +316,30 @@ def campaign_state_update(
     if row is None:
         raise HTTPException(status_code=404, detail="campaign not found")
     return CampaignPayload.model_validate(row)
+
+@app.post("/campaign/update-engagement-status", response_model=StatusUpdateResponse, status_code=201)
+@app.post("/api/campaign/update-engagement-status", response_model=StatusUpdateResponse, status_code=201)
+@app.post("/campaigns/update-engagement-status", response_model=StatusUpdateResponse, status_code=201)
+@app.post("/api/campaigns/update-engagement-status", response_model=StatusUpdateResponse, status_code=201)
+def campaign_update_status(
+    payload: StatusUpdatePayload,
+    fa_id: str | None = Query(default=None, min_length=1),
+) -> StatusUpdateResponse:
+    advisor_id = (fa_id or "").strip()
+    if not advisor_id:
+        raise HTTPException(status_code=400, detail="fa_id is required")
+    try:
+        row = update_engagement_status(
+            advisor_id,
+            payload.campaign_id,
+            payload.contact_id,
+            payload.status,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if row is None:
+        raise HTTPException(status_code=404, detail="campaign or client not found")
+    return StatusUpdateResponse.model_validate(row)
 
 
 @app.get("/chat/sessions", response_model=list[SessionResponse])

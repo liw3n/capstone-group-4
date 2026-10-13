@@ -7,6 +7,7 @@ provided.
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator, Literal
+from uuid import uuid4
 
 import psycopg
 from psycopg.rows import dict_row
@@ -287,3 +288,58 @@ def update_campaign_state(role: CampaignRole, scope: RequestScope | None,
         )
         row = _get_row(connection, role, scope, campaign_id)
     return _record(row)
+
+def update_engagement_status(
+    fa_id: str,
+    campaign_id: str,
+    contact_id: str,
+    status: Literal[0, 1, 2],
+) -> dict[str, Any] | None:
+    with _connection() as connection:
+        latest_event = connection.execute(
+            """
+            SELECT contact_event_id
+            FROM mock_campaign_contact_event
+            WHERE tenant_id = %s AND fa_id = %s AND campaign_id = %s
+              AND contact_id = %s
+            ORDER BY contacted_at DESC, contact_event_id DESC
+            LIMIT 1
+            FOR UPDATE
+            """,
+            (DEMO_TENANT, fa_id, campaign_id, contact_id),
+        ).fetchone()
+
+        if latest_event is None:
+            connection.execute(
+                """
+                INSERT INTO mock_campaign_contact_event (
+                    tenant_id, contact_event_id, campaign_id, fa_id,
+                    contact_id, contacted_at, engagement_status
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    DEMO_TENANT,
+                    f'contact-event-{uuid4()}',
+                    campaign_id,
+                    fa_id,
+                    contact_id,
+                    datetime.now(timezone.utc),
+                    status,
+                ),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE mock_campaign_contact_event
+                SET engagement_status = %s
+                WHERE tenant_id = %s AND contact_event_id = %s
+                """,
+                (status, DEMO_TENANT, latest_event["contact_event_id"]),
+            )
+
+    return {
+        "campaign_id": campaign_id,
+        "contact_id": contact_id,
+        "fa_id": fa_id,
+        "status": status,
+    }

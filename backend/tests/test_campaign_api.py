@@ -133,3 +133,46 @@ def test_state_update_maps_consent_rejection_to_conflict(monkeypatch):
         "/api/campaigns/camp-1/state?role=advisor&fa_id=adv-demo", json=state
     )
     assert response.status_code == 409
+
+
+def test_engagement_status_update_passes_client_campaign_status_and_adviser(monkeypatch):
+    calls = []
+
+    def update(fa_id, campaign_id, contact_id, status):
+        calls.append((fa_id, campaign_id, contact_id, status))
+        return {
+            "campaign_id": campaign_id,
+            "contact_id": contact_id,
+            "fa_id": fa_id,
+            "status": status,
+        }
+
+    monkeypatch.setattr(main, "update_engagement_status", update)
+    response = client.post(
+        "/api/campaign/update-engagement-status?fa_id=adv-demo",
+        json={"campaign_id": "camp-1", "contact_id": "client-001", "status": 2},
+    )
+
+    assert response.status_code == 201
+    assert response.json() == {
+        "campaign_id": "camp-1",
+        "contact_id": "client-001",
+        "fa_id": "adv-demo",
+        "status": 2,
+    }
+    assert calls == [("adv-demo", "camp-1", "client-001", 2)]
+
+
+def test_engagement_status_update_requires_adviser_id(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "update_engagement_status",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("storage must not be called")),
+    )
+    response = client.post(
+        "/campaigns/update-engagement-status",
+        json={"campaign_id": "camp-1", "contact_id": "client-001", "status": 1},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "fa_id is required"}

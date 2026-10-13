@@ -86,6 +86,27 @@ rejected unless every recipient is an owned `mock_client` row with email consent
 Marketing cannot record adviser sends. The endpoint does not send a message,
 write a production CRM interaction, or create a backend task.
 
+### `POST /campaign/update-engagement-status?fa_id=<id>`
+
+The API-prefixed route is `/api/campaign/update-engagement-status`. The plural
+aliases `/campaigns/update-engagement-status` and
+`/api/campaigns/update-engagement-status` are supported as well. This updates
+the latest synthetic campaign event for one adviser-owned client. The JSON
+body contains `campaign_id`, `contact_id`, and `status`: `0` is Contacted, `1`
+is Engaged, and `2` is Rejected. If no event exists yet for that client and
+campaign, the endpoint creates one. Campaign assignment and client ownership
+are checked against the supplied adviser ID. A missing `fa_id` returns `400`,
+an unknown or inaccessible campaign/client returns `404`, invalid identifiers
+or status values return `422`, and database failures return `503`.
+
+```json
+{
+  "campaign_id": "camp-1",
+  "contact_id": "client-001",
+  "status": 2
+}
+```
+
 ## CRM contacts
 
 Contact routes support both direct and `/api`-prefixed forms. They expose

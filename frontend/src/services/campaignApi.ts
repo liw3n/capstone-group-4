@@ -2,6 +2,15 @@ import { Campaign, Contact, Session } from '../types';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 
+export type EngagementStatus = 0 | 1 | 2;
+
+export interface StatusUpdateResponse {
+  campaign_id: string;
+  contact_id: string;
+  fa_id: string;
+  status: EngagementStatus;
+}
+
 function apiUrl(path: string, session: Session): string {
   const url = new URL(`${API_BASE_URL}${path}`, window.location.origin);
   url.searchParams.set('role', session.role);
@@ -48,6 +57,33 @@ export function updateCampaignState(campaign: Campaign, session: Session): Promi
       actions: campaign.actions,
       emailLog: campaign.emailLog,
       leadContacts: campaign.leadContacts ?? [],
+    }),
+  });
+}
+
+export function updateCampaignEngagementStatus(
+  campaignId: string,
+  contactId: string,
+  status: EngagementStatus,
+  session: Session,
+): Promise<StatusUpdateResponse> {
+  if (!session.advisorId) {
+    throw new Error('An adviser session is required to update campaign status.');
+  }
+
+  const url = new URL(
+    `${API_BASE_URL}/api/campaign/update-engagement-status`,
+    window.location.origin,
+  );
+  url.searchParams.set('fa_id', session.advisorId);
+  const requestUrl = API_BASE_URL ? url.toString() : `${url.pathname}${url.search}`;
+
+  return request<StatusUpdateResponse>(requestUrl, {
+    method: 'POST',
+    body: JSON.stringify({
+      campaign_id: campaignId,
+      contact_id: contactId,
+      status,
     }),
   });
 }

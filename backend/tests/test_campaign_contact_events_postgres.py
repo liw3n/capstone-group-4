@@ -69,6 +69,59 @@ def test_contacts_link_to_existing_campaign_names_and_keep_first_date(database):
     assert ("First Home Starter Bundle", "client-010") in by_campaign_client
 
 
+def test_engagement_status_updates_latest_event_or_creates_it(database):
+    from app.campaigns.catalog import update_engagement_status
+
+    database.execute(CONTACT_EVENT_TABLE_SQL.read_text())
+    database.execute(CONTACT_EVENT_SEED_SQL.read_text())
+
+    previous = database.execute(
+        """
+        SELECT contact_event_id, engagement_status
+        FROM mock_campaign_contact_event
+        WHERE tenant_id = 'pulse-demo' AND fa_id = 'adv-steven-raynaldi'
+          AND campaign_id = 'camp-1' AND contact_id = 'client-002'
+        ORDER BY contacted_at DESC
+        """
+    ).fetchall()
+    assert len(previous) == 2
+
+    updated = update_engagement_status(
+        "adv-steven-raynaldi", "camp-1", "client-002", 1
+    )
+    assert updated == {
+        "campaign_id": "camp-1",
+        "contact_id": "client-002",
+        "fa_id": "adv-steven-raynaldi",
+        "status": 1,
+    }
+    after = database.execute(
+        """
+        SELECT contact_event_id, engagement_status
+        FROM mock_campaign_contact_event
+        WHERE tenant_id = 'pulse-demo' AND fa_id = 'adv-steven-raynaldi'
+          AND campaign_id = 'camp-1' AND contact_id = 'client-002'
+        ORDER BY contacted_at DESC
+        """
+    ).fetchall()
+    assert after[0][0] == previous[0][0]
+    assert after[0][1] == 1
+    assert after[1][1] == previous[1][1]
+
+    created = update_engagement_status(
+        "adv-steven-raynaldi", "camp-1", "client-010", 2
+    )
+    assert created["status"] == 2
+    assert database.execute(
+        """
+        SELECT engagement_status
+        FROM mock_campaign_contact_event
+        WHERE tenant_id = 'pulse-demo' AND fa_id = 'adv-steven-raynaldi'
+          AND campaign_id = 'camp-1' AND contact_id = 'client-010'
+        """
+    ).fetchone()[0] == 2
+
+
 def test_contact_cannot_use_another_advisors_client_or_campaign(database):
     database.execute(CONTACT_EVENT_TABLE_SQL.read_text())
     database.execute(CONTACT_EVENT_SEED_SQL.read_text())

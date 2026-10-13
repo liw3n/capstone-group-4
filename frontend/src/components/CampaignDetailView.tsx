@@ -25,6 +25,10 @@ import LeadAudienceTable from './LeadAudienceTable';
 import { CampaignRecommendation, rankCampaignAudience } from '../services/ai';
 import { emailedContactIds } from '../lib/email';
 import { EMPTY, formatDate } from '../lib/format';
+import {
+  EngagementStatus,
+  updateCampaignEngagementStatus,
+} from '../services/campaignApi';
 
 interface CampaignDetailViewProps {
   campaign: Campaign;
@@ -63,8 +67,37 @@ export default function CampaignDetailView({
 }: CampaignDetailViewProps) {
   const [ranking, setRanking] = useState<CampaignRecommendation[] | null>(null);
   const [sendingEmail, setSendingEmail] = useState(false);
+  const [clientStatuses, setClientStatuses] = useState<Record<string, EngagementStatus>>({});
+  const [statusSavingClientId, setStatusSavingClientId] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   const isLeadCampaign = campaign.audienceSource === 'leads';
+
+  const handleEngagementStatusChange = async (
+    contactId: string,
+    status: EngagementStatus,
+  ) => {
+    setStatusSavingClientId(contactId);
+    setStatusError(null);
+    try {
+      const result = await updateCampaignEngagementStatus(
+        campaign.id,
+        contactId,
+        status,
+        session,
+      );
+      setClientStatuses((current) => ({
+        ...current,
+        [contactId]: result.status,
+      }));
+    } catch (error) {
+      setStatusError(
+        error instanceof Error ? error.message : 'Could not update campaign status.',
+      );
+    } finally {
+      setStatusSavingClientId(null);
+    }
+  };
 
   // Depend on the audience fields, not the campaign object: actions, emailLog
   // and leadStats all replace the object, and a fresh `matched` array on every
@@ -235,6 +268,11 @@ export default function CampaignDetailView({
             )}
           </div>
         </div>
+        {statusError && (
+          <p role="alert" className="border-b border-line px-5 py-3 text-[12px] text-danger">
+            {statusError}
+          </p>
+        )}
 
         {ranking === null ? (
           <p className="px-5 py-14 text-center text-[13px] text-muted">
@@ -251,6 +289,7 @@ export default function CampaignDetailView({
                 <tr className="border-b border-line">
                   <th className="table-head">Client</th>
                   <th className="table-head">Targeting match</th>
+                  <th className="table-head">Status</th>
                   <th className="table-head text-right">Action</th>
                 </tr>
               </thead>
@@ -260,6 +299,7 @@ export default function CampaignDetailView({
                   if (!contact) return null;
 
                   const taken = campaign.actions[contact.id];
+                  const engagementStatus = clientStatuses[contact.id] ?? '';
 
                   return (
                     <tr
@@ -284,6 +324,27 @@ export default function CampaignDetailView({
                         </div>
                       </td>
                       <td className="cell text-muted">{describeContactTargeting(contact)}</td>
+                      <td className="cell">
+                        <select
+                          aria-label={`Status for ${contact.name}`}
+                          className="rounded-md border border-line bg-white px-2.5 py-1.5 text-[12px] text-ink focus:border-link focus:outline-none focus:ring-2 focus:ring-link/20 disabled:cursor-wait disabled:opacity-60"
+                          value={engagementStatus}
+                          disabled={statusSavingClientId !== null}
+                          onChange={(event) => {
+                            const nextStatus = Number(event.currentTarget.value);
+                            if (nextStatus === 0 || nextStatus === 1 || nextStatus === 2) {
+                              void handleEngagementStatusChange(contact.id, nextStatus);
+                            }
+                          }}
+                        >
+                          <option value="" disabled>
+                            Select status
+                          </option>
+                          <option value={0}>Contacted</option>
+                          <option value={1}>Engaged</option>
+                          <option value={2}>Rejected</option>
+                        </select>
+                      </td>
                       <td className="cell text-right">
                         {taken ? (
                           <span className="inline-flex items-center gap-1.5 text-[12px] text-muted">
