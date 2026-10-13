@@ -147,15 +147,55 @@ fi
 printf 'DATABASE_URL=%s\n' "$database_url" >> "$env_temp_file"
 mv "$env_temp_file" "$env_file"
 
-##### Create AWS RDS Tables #####
-for table_script in create_campaign_chat_sessions.sql create_mock_campaign_tables.sql seed_mock_campaign_data.sql migrate_campaign_source_of_truth.sql migrate_mock_client_crm_fields.sql create_mock_campaign_engagement.sql create_mock_campaign_contact_event.sql seed_mock_campaign_contact_events.sql; do
+run_sql_file() {
     PGPASSWORD=testpassword psql \
         --host "$rds_host" \
         --port "$rds_port" \
         --username postgres \
         --dbname pulse \
         -v ON_ERROR_STOP=1 \
-        --file "$BACKEND_DIR/tables/$table_script"
+        --file "$1"
+}
+
+##### Create tables before dependent tables #####
+create_dir="$BACKEND_DIR/tables/create"
+for table_script in create_campaign_chat_sessions.sql create_mock_campaign.sql create_mock_client.sql; do
+    if [[ -f "$create_dir/$table_script" ]]; then
+        run_sql_file "$create_dir/$table_script"
+    fi
+done
+
+for table_script in "$create_dir"/*.sql; do
+    [[ -f "$table_script" ]] || continue
+    case "${table_script##*/}" in
+        create_campaign_chat_sessions.sql|create_mock_campaign.sql|create_mock_client.sql)
+            continue
+            ;;
+    esac
+    run_sql_file "$table_script"
+done
+
+##### Load mock data in foreign-key dependency order #####
+mock_data_dir="$BACKEND_DIR/tables/mock_data"
+for table_script in mock_campaign.sql mock_client.sql mock_campaign_advisor.sql mock_campaign_contact_events.sql; do
+    if [[ -f "$mock_data_dir/$table_script" ]]; then
+        run_sql_file "$mock_data_dir/$table_script"
+    fi
+done
+
+for table_script in "$mock_data_dir"/*.sql; do
+    [[ -f "$table_script" ]] || continue
+    case "${table_script##*/}" in
+        mock_campaign.sql|mock_client.sql|mock_campaign_advisor.sql|mock_campaign_contact_events.sql)
+            continue
+            ;;
+    esac
+    run_sql_file "$table_script"
+done
+
+##### Apply schema migrations after creating tables and loading mock data #####
+for table_script in migrate_campaign_source_of_truth.sql migrate_mock_client_crm_fields.sql; do
+    run_sql_file "$BACKEND_DIR/tables/$table_script"
 done
 
 if [[ "${DEPLOY_FAKECLOUD_ECS:-0}" != "1" ]]; then

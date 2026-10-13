@@ -1,6 +1,5 @@
 -- Synthetic PULSE prototype only; not a production GCRM migration.
 -- Additive and repeatable. This does not alter the existing chat tables.
-BEGIN;
 
 CREATE TABLE IF NOT EXISTS mock_campaign (
     tenant_id VARCHAR(64) NOT NULL CHECK (length(btrim(tenant_id)) > 0),
@@ -31,37 +30,4 @@ CREATE TABLE IF NOT EXISTS mock_campaign (
     CHECK (cash_min IS NULL OR cash_max IS NULL OR cash_min <= cash_max)
 );
 
-CREATE TABLE IF NOT EXISTS mock_campaign_advisor (
-    tenant_id VARCHAR(64) NOT NULL,
-    campaign_id VARCHAR(69) NOT NULL,
-    fa_id VARCHAR(64) NOT NULL CHECK (length(btrim(fa_id)) > 0),
-    PRIMARY KEY (tenant_id, campaign_id, fa_id),
-    FOREIGN KEY (tenant_id, campaign_id)
-        REFERENCES mock_campaign (tenant_id, campaign_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_mock_campaign_advisor_scope
-    ON mock_campaign_advisor (tenant_id, fa_id, campaign_id);
-
-CREATE TABLE IF NOT EXISTS mock_client (
-    tenant_id VARCHAR(64) NOT NULL CHECK (length(btrim(tenant_id)) > 0),
-    contact_id VARCHAR(64) NOT NULL CHECK (length(btrim(contact_id)) > 0),
-    fa_id VARCHAR(64) NOT NULL CHECK (length(btrim(fa_id)) > 0),
-    name VARCHAR(255) NOT NULL CHECK (length(btrim(name)) > 0),
-    date_of_birth DATE,
-    gender VARCHAR(16) CHECK (gender IN ('male', 'female')),
-    available_cash NUMERIC(18, 2)
-        CHECK (available_cash >= 0 AND available_cash < 'Infinity'::numeric),
-    opt_in_email BOOLEAN NOT NULL DEFAULT FALSE,
-    opt_in_sms BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (tenant_id, contact_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_mock_client_scope
-    ON mock_client (tenant_id, fa_id, contact_id);
-
 COMMENT ON TABLE mock_campaign IS 'Synthetic campaign criteria; not company GCRM schema';
-COMMENT ON TABLE mock_campaign_advisor IS 'Synthetic tenant-scoped campaign access assignments';
-COMMENT ON TABLE mock_client IS 'Synthetic review profiles; matching does not authorize outreach';
-COMMIT;

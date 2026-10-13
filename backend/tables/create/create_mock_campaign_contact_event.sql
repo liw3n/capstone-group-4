@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS mock_campaign_contact_event (
     fa_id VARCHAR(64) NOT NULL,
     contact_id VARCHAR(64) NOT NULL,
     contacted_at TIMESTAMPTZ NOT NULL,
+    engagement_status INT NOT NULL CHECK (engagement_status IN (0, 1, 2)),
     PRIMARY KEY (tenant_id, contact_event_id),
     FOREIGN KEY (tenant_id, campaign_id, fa_id)
         REFERENCES mock_campaign_advisor (tenant_id, campaign_id, fa_id),

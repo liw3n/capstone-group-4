@@ -62,9 +62,10 @@ def get_client_follow_up_list(campaign_id: str, fa_id: str) -> list[tuple[str, d
         # Engagement Status: 0 = Contacted, 1 = Engaged, 2 = Rejected
         rows = connection.execute(
             """
-            SELECT client_id, last_engagement_date
-            FROM mock_campaign_engagement
+            SELECT contact_id AS client_id, MAX(contacted_at) AS last_engagement_date
+            FROM mock_campaign_contact_event
             WHERE campaign_id = %s and fa_id = %s and engagement_status = 0
+            GROUP BY contact_id
             """,
             (campaign_id, fa_id),
         ).fetchall()
