@@ -57,14 +57,14 @@ const CASH_BAND_FLOOR: [CashBand, number][] = [
 ];
 
 export function cashBandOf(contact: Contact): CashBand | undefined {
-  if (contact.cashAmount === undefined) return undefined;
+  if (contact.cashAmount === undefined || contact.cashAmount === null) return undefined;
   const hit = CASH_BAND_FLOOR.find(([, floor]) => contact.cashAmount! >= floor);
   return hit ? hit[0] : 'under50k';
 }
 
 /** "S$420,000" */
-export function formatCash(amount: number | undefined): string | undefined {
-  if (amount === undefined) return undefined;
+export function formatCash(amount: number | null | undefined): string | undefined {
+  if (amount === undefined || amount === null) return undefined;
   return `S$${amount.toLocaleString('en-SG')}`;
 }
 
@@ -81,7 +81,7 @@ function inRange(value: number, range: NumericRange | undefined): boolean {
 }
 
 /** Age against the prototype's fixed "today", not the wall clock. */
-export function ageFromDob(dob: string | undefined): number | undefined {
+export function ageFromDob(dob: string | null | undefined): number | undefined {
   if (!dob) return undefined;
   const born = new Date(`${dob}T00:00:00`);
   if (Number.isNaN(born.getTime())) return undefined;
@@ -158,8 +158,10 @@ export function matchContacts(criteria: CampaignCriteria, contacts: Contact[]): 
 
     const missing =
       (filtersAge(criteria) && age === undefined) ||
-      (criteria.genders.length > 0 && contact.gender === undefined) ||
-      (filtersCash(criteria) && contact.cashAmount === undefined);
+      (criteria.genders.length > 0 &&
+        (contact.gender === undefined || contact.gender === null)) ||
+      (filtersCash(criteria) &&
+        (contact.cashAmount === undefined || contact.cashAmount === null));
 
     if (missing) {
       incomplete.push(contact);
@@ -261,6 +263,11 @@ export function missingFieldsFor(contact: Contact, criteria: CampaignCriteria): 
   const gaps: string[] = [];
   if (filtersAge(criteria) && ageFromDob(contact.dob) === undefined) gaps.push('Date of birth');
   if (criteria.genders.length > 0 && !contact.gender) gaps.push('Demographic');
-  if (filtersCash(criteria) && contact.cashAmount === undefined) gaps.push('Cash availability');
+  if (
+    filtersCash(criteria) &&
+    (contact.cashAmount === undefined || contact.cashAmount === null)
+  ) {
+    gaps.push('Cash availability');
+  }
   return gaps;
 }

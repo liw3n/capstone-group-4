@@ -122,6 +122,26 @@ def test_engagement_status_updates_latest_event_or_creates_it(database):
     ).fetchone()[0] == 2
 
 
+def test_engagement_status_reads_latest_event_and_returns_none_when_unset(database):
+    from app.campaigns.catalog import get_engagement_status
+
+    database.execute(CONTACT_EVENT_TABLE_SQL.read_text())
+    database.execute(CONTACT_EVENT_SEED_SQL.read_text())
+
+    status = get_engagement_status(
+        "adv-steven-raynaldi", "camp-1", "client-002"
+    )
+    assert status is not None
+    assert status["campaign_id"] == "camp-1"
+    assert status["contact_id"] == "client-002"
+    assert status["fa_id"] == "adv-steven-raynaldi"
+    assert status["status"] in (0, 1, 2)
+
+    assert get_engagement_status(
+        "adv-steven-raynaldi", "camp-1", "client-999"
+    ) is None
+
+
 def test_contact_cannot_use_another_advisors_client_or_campaign(database):
     database.execute(CONTACT_EVENT_TABLE_SQL.read_text())
     database.execute(CONTACT_EVENT_SEED_SQL.read_text())

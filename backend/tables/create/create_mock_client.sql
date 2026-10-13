@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS mock_client (
     opt_in_email BOOLEAN NOT NULL DEFAULT FALSE,
     opt_in_sms BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    email VARCHAR(255) CHECK (email ~* '^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$'),
     PRIMARY KEY (tenant_id, contact_id)
 );
 

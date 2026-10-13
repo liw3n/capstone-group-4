@@ -89,14 +89,14 @@ export interface Contact {
   /** Dialling code without the number, e.g. "+65". */
   countryCode: string;
   phone: string;
-  dob?: string;
+  dob?: string | null;
   nric?: string;
   /** Absent means a normal contact. Only uploaded leads set this. */
   status?: ContactStatus;
   /** Targeting attributes, used by campaign criteria matching. */
-  gender?: Gender;
+  gender?: Gender | null;
   /** Investable cash in SGD. Deliberately not the same thing as annual income. */
-  cashAmount?: number;
+  cashAmount?: number | null;
   /** Communication consent from the canonical mock_client record. */
   optInEmail?: boolean;
   optInSms?: boolean;

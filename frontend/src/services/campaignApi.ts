@@ -87,3 +87,32 @@ export function updateCampaignEngagementStatus(
     }),
   });
 }
+
+export async function getCampaignEngagementStatus(
+  campaignId: string,
+  contactId: string,
+  session: Session,
+): Promise<EngagementStatus | null> {
+  if (!session.advisorId) {
+    throw new Error('An adviser session is required to load campaign status.');
+  }
+
+  const url = new URL(
+    `${API_BASE_URL}/api/campaigns/engagement-status`,
+    window.location.origin,
+  );
+  url.searchParams.set('campaign_id', campaignId);
+  url.searchParams.set('contact_id', contactId);
+  url.searchParams.set('fa_id', session.advisorId);
+  const requestUrl = API_BASE_URL ? url.toString() : `${url.pathname}${url.search}`;
+  const response = await fetch(requestUrl, { headers: { Accept: 'application/json' } });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+    const detail = typeof payload?.detail === 'string' ? payload.detail : null;
+    throw new Error(detail ?? `Campaign request failed (${response.status}).`);
+  }
+
+  const result = (await response.json()) as StatusUpdateResponse | null;
+  return result?.status ?? null;
+}

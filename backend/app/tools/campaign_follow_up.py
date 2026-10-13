@@ -100,10 +100,28 @@ def fetch_client_profile(client_id: str) -> dict:
     Mock function to simulate fetching profile data for a client.
     In a real implementation, this would query the internal GWM API.
     """
-    # Simulated profile data
-    return {
-        "client_id": client_id,
-        "name": f"Client {client_id[-4:]}",
-        "age": 30 + hash(client_id) % 20,  # Randomized age for demonstration
-        "email": f"{client_id[-4:]}@example.com",
-    }
+    with _connection() as connection:
+        row = connection.execute(
+            """
+            SELECT name, date_of_birth, email
+            FROM mock_client
+            WHERE contact_id = %s
+            """,
+            (client_id,),
+        ).fetchone()
+
+    if row:
+        age = (datetime.now().date() - row["date_of_birth"]).days // 365 if row["date_of_birth"] else None
+        return {
+            "client_id": client_id,
+            "name": row["name"],
+            "age": age,
+            "email": row["email"],
+        }
+    else:
+        return {
+            "client_id": client_id,
+            "name": f"Client {client_id[-4:]}",
+            "age": None,
+            "email": None,
+        }

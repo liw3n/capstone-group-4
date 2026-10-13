@@ -13,6 +13,7 @@ from app.campaigns.catalog import (
     list_campaigns as list_campaign_records,
     update_campaign_state,
     update_engagement_status,
+    get_engagement_status,
 )
 from app.campaigns.models import CampaignCriteriaPayload
 
@@ -109,6 +110,12 @@ class StatusUpdatePayload(BaseModel):
     contact_id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=64)
 
 class StatusUpdateResponse(BaseModel):
+    campaign_id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=69)
+    contact_id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=64)
+    fa_id: str = Field(min_length=1, max_length=64)
+    status: Literal[0, 1, 2]  # 0: Contacted, 1: Engaged, 2: Rejected
+
+class EngagementStatusResponse(BaseModel):
     campaign_id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=69)
     contact_id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=64)
     fa_id: str = Field(min_length=1, max_length=64)
@@ -268,6 +275,17 @@ def campaigns_list(
             for row in list_campaign_records(role, scope)]
 
 
+@app.get("/campaigns/engagement-status", response_model=EngagementStatusResponse | None)
+@app.get("/api/campaigns/engagement-status", response_model=EngagementStatusResponse | None)
+def campaign_engagement_status(
+    campaign_id: Annotated[str, Query(pattern=CAMPAIGN_ID_PATTERN, max_length=69)],
+    fa_id: str = Query(min_length=1),
+    contact_id: str = Query(min_length=1),
+) -> EngagementStatusResponse | None:
+    row = get_engagement_status(fa_id, campaign_id, contact_id)
+    return EngagementStatusResponse.model_validate(row) if row is not None else None
+
+
 @app.get("/campaigns/{campaign_id}", response_model=CampaignPayload)
 @app.get("/api/campaigns/{campaign_id}", response_model=CampaignPayload)
 def campaign_detail(
@@ -319,8 +337,6 @@ def campaign_state_update(
 
 @app.post("/campaign/update-engagement-status", response_model=StatusUpdateResponse, status_code=201)
 @app.post("/api/campaign/update-engagement-status", response_model=StatusUpdateResponse, status_code=201)
-@app.post("/campaigns/update-engagement-status", response_model=StatusUpdateResponse, status_code=201)
-@app.post("/api/campaigns/update-engagement-status", response_model=StatusUpdateResponse, status_code=201)
 def campaign_update_status(
     payload: StatusUpdatePayload,
     fa_id: str | None = Query(default=None, min_length=1),
@@ -340,7 +356,6 @@ def campaign_update_status(
     if row is None:
         raise HTTPException(status_code=404, detail="campaign or client not found")
     return StatusUpdateResponse.model_validate(row)
-
 
 @app.get("/chat/sessions", response_model=list[SessionResponse])
 @app.get("/api/chat/sessions", response_model=list[SessionResponse])

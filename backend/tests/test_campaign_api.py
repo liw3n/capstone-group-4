@@ -176,3 +176,45 @@ def test_engagement_status_update_requires_adviser_id(monkeypatch):
 
     assert response.status_code == 400
     assert response.json() == {"detail": "fa_id is required"}
+
+
+def test_engagement_status_get_returns_status(monkeypatch):
+    calls = []
+
+    def get_status(fa_id, campaign_id, contact_id):
+        calls.append((fa_id, campaign_id, contact_id))
+        return {
+            "campaign_id": campaign_id,
+            "contact_id": contact_id,
+            "fa_id": fa_id,
+            "status": 1,
+        }
+
+    monkeypatch.setattr(main, "get_engagement_status", get_status)
+    response = client.get(
+        "/api/campaigns/engagement-status",
+        params={
+            "campaign_id": "camp-1",
+            "fa_id": "adv-demo",
+            "contact_id": "client-001",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == 1
+    assert calls == [("adv-demo", "camp-1", "client-001")]
+
+
+def test_engagement_status_get_returns_null_when_unset(monkeypatch):
+    monkeypatch.setattr(main, "get_engagement_status", lambda *_args: None)
+    response = client.get(
+        "/campaigns/engagement-status",
+        params={
+            "campaign_id": "camp-1",
+            "fa_id": "adv-demo",
+            "contact_id": "client-001",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() is None

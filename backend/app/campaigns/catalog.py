@@ -343,3 +343,27 @@ def update_engagement_status(
         "fa_id": fa_id,
         "status": status,
     }
+
+def get_engagement_status(fa_id: str, campaign_id: str, contact_id: str) -> dict[str, Any] | None:
+    with _connection() as connection:
+        row = connection.execute(
+            """
+            SELECT engagement_status
+            FROM mock_campaign_contact_event
+            WHERE tenant_id = %s AND fa_id = %s AND campaign_id = %s
+              AND contact_id = %s
+            ORDER BY contacted_at DESC, contact_event_id DESC
+            LIMIT 1
+            """,
+            (DEMO_TENANT, fa_id, campaign_id, contact_id),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "campaign_id": campaign_id,
+        "contact_id": contact_id,
+        "fa_id": fa_id,
+        "status": row["engagement_status"],
+    }

@@ -27,6 +27,7 @@ import { emailedContactIds } from '../lib/email';
 import { EMPTY, formatDate } from '../lib/format';
 import {
   EngagementStatus,
+  getCampaignEngagementStatus,
   updateCampaignEngagementStatus,
 } from '../services/campaignApi';
 
@@ -68,6 +69,7 @@ export default function CampaignDetailView({
   const [ranking, setRanking] = useState<CampaignRecommendation[] | null>(null);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [clientStatuses, setClientStatuses] = useState<Record<string, EngagementStatus>>({});
+  const [statusLoading, setStatusLoading] = useState(false);
   const [statusSavingClientId, setStatusSavingClientId] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
 
@@ -113,6 +115,49 @@ export default function CampaignDetailView({
       contacts,
     ],
   );
+
+  useEffect(() => {
+    if (isLeadCampaign || matched.length === 0) {
+      setClientStatuses({});
+      setStatusLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setClientStatuses({});
+    setStatusLoading(true);
+    setStatusError(null);
+
+    Promise.all(
+      matched.map(async (contact) => [
+        contact.id,
+        await getCampaignEngagementStatus(campaign.id, contact.id, session),
+      ] as const),
+    )
+      .then((results) => {
+        if (cancelled) return;
+        setClientStatuses(
+          Object.fromEntries(
+            results.filter(
+              (entry): entry is readonly [string, EngagementStatus] => entry[1] !== null,
+            ),
+          ),
+        );
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setStatusError(
+          error instanceof Error ? error.message : 'Could not load campaign statuses.',
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setStatusLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [campaign.id, isLeadCampaign, matched, session]);
 
   // The rules pick the audience; this only orders it. Re-running on a criteria
   // change is fine — the score is deterministic, so the order never wobbles.
@@ -329,7 +374,7 @@ export default function CampaignDetailView({
                           aria-label={`Status for ${contact.name}`}
                           className="rounded-md border border-line bg-white px-2.5 py-1.5 text-[12px] text-ink focus:border-link focus:outline-none focus:ring-2 focus:ring-link/20 disabled:cursor-wait disabled:opacity-60"
                           value={engagementStatus}
-                          disabled={statusSavingClientId !== null}
+                          disabled={statusLoading || statusSavingClientId !== null}
                           onChange={(event) => {
                             const nextStatus = Number(event.currentTarget.value);
                             if (nextStatus === 0 || nextStatus === 1 || nextStatus === 2) {

@@ -102,11 +102,10 @@ def campaign_follow_up(
     campaign_id = get_campaign_id(campaign_query)
     campaign_info = get_campaign_info(campaign_id)
     client_info = get_client_follow_up_list(campaign_id, fa_id)
-    limited_client_info = client_info[:limit]
 
     # 2. Fetch portfolio info for these clients
     client_profiles = []
-    for client_id, last_engagement_date in limited_client_info:
+    for client_id, last_engagement_date in client_info:
         portfolio = fetch_client_portfolio(client_id)
         profile = fetch_client_profile(client_id)
         client_profiles.append({
@@ -118,7 +117,7 @@ def campaign_follow_up(
 
     additional_instructions = (
         "Based on the provided campaign and client information, identify the purpose of the campaign and the target audience for the campaign."
-        "Evaluate the customer profile and portfolio to identify the most suitable clients that are high-value to follow-up on for the campaign"
+        f"Evaluate the customer profile and portfolio to identify the {limit} most suitable clients that are high-value to follow-up on for the campaign"
         "to ensure that the campaign is effective and reaches the right audience. " 
         "Note: This tool does not check outreach consent or authorise sending communications; adviser confirmation and separate channel consent checks are required before outreach."
     )
