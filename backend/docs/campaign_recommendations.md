@@ -17,15 +17,15 @@ make provision
 make dev
 ```
 
-Provisioning runs `backend/setup.sh`. Its ordered SQL loop applies
-`create_campaign_chat_sessions.sql`, `create_mock_campaign_tables.sql`,
-`seed_mock_campaign_data.sql`, `migrate_campaign_source_of_truth.sql`,
-`migrate_mock_client_crm_fields.sql`, `create_mock_campaign_engagement.sql`,
-`create_mock_campaign_contact_event.sql`, then
-`seed_mock_campaign_contact_events.sql` from `backend/tables/`. Every teammate loads the same
-synthetic records into their own local database. The schema and seeds are additive
-and repeatable; `ON CONFLICT DO NOTHING` preserves existing edits. Use explicit
-migration/update SQL when changing existing fields or records.
+Provisioning runs `backend/setup.sh`. Its ordered SQL loops apply the table
+definitions under `backend/tables/create/` before loading the synthetic rows
+under `backend/tables/mock_data/`. Every teammate loads the same synthetic
+records into their own local database. The campaign and client definitions are
+the complete current prototype schema; their seed scripts also contain guarded
+compatibility backfills for databases provisioned before schema consolidation.
+The scripts are additive and repeatable, and `ON CONFLICT DO NOTHING` preserves
+existing edits. Use an explicit versioned migration path for future destructive
+or incompatible changes.
 
 `setup.sh` generates `DATABASE_URL` for the provisioned database. The prior
 `pulse-postgres:5432` Docker-network address is not the configuration for native
@@ -82,11 +82,12 @@ These PostgreSQL tables are a **synthetic prototype**, not production GCRM DDL.
 | cash_min, cash_max | Nullable NUMERIC(18,2); inclusive custom SGD range |
 | created_at | TIMESTAMPTZ; insertion timestamp |
 
-`migrate_campaign_source_of_truth.sql` adds the CRM-facing description, client
+`create/create_mock_campaign.sql` defines the CRM-facing description, client
 message, lifecycle/routing metadata, manual audience overrides, lead triage
 state, adviser actions, simulated email log and campaign-specific lead records.
-It records its backfill in `pulse_schema_migration`, making the checked-in SQL
-campaigns authoritative for the browser instead of duplicating them in
+`mock_data/mock_campaign.sql` supplies those fields for clean databases and
+records its guarded legacy backfills in `pulse_schema_migration`. The checked-in
+SQL campaigns are authoritative for the browser instead of being duplicated in
 `frontend/src/data/seed.ts`.
 
 `mock_campaign_advisor` has `tenant_id`, `campaign_id`, and `fa_id` as its primary

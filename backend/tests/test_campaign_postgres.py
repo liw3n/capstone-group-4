@@ -15,6 +15,23 @@ from app.campaigns.matching import recommend_clients_for_campaign
 from app.campaigns.repository import CampaignInactive, CampaignUnavailable, DEMO_FA, RequestScope
 
 TABLES = Path(__file__).parents[1] / "tables"
+CREATE_TABLES = TABLES / "create"
+MOCK_DATA = TABLES / "mock_data"
+CAMPAIGN_SCHEMA_FILES = (
+    CREATE_TABLES / "create_mock_campaign.sql",
+    CREATE_TABLES / "create_mock_client.sql",
+    CREATE_TABLES / "create_mock_campaign_advisor.sql",
+)
+CAMPAIGN_SEED_FILES = (
+    MOCK_DATA / "mock_campaign.sql",
+    MOCK_DATA / "mock_client.sql",
+    MOCK_DATA / "mock_campaign_advisor.sql",
+)
+
+
+def execute_sql_files(connection, files):
+    for sql_file in files:
+        connection.execute(sql_file.read_text())
 
 
 @pytest.fixture
@@ -28,10 +45,8 @@ def database(monkeypatch):
         scoped_url = make_conninfo(database_url, options="-c search_path=" + schema)
         try:
             with psycopg.connect(scoped_url, autocommit=True) as connection:
-                connection.execute((TABLES / "create_mock_campaign_tables.sql").read_text())
-                connection.execute((TABLES / "seed_mock_campaign_data.sql").read_text())
-                connection.execute((TABLES / "migrate_campaign_source_of_truth.sql").read_text())
-                connection.execute((TABLES / "migrate_mock_client_crm_fields.sql").read_text())
+                execute_sql_files(connection, CAMPAIGN_SCHEMA_FILES)
+                execute_sql_files(connection, CAMPAIGN_SEED_FILES)
                 monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace(database_url=scoped_url))
                 yield connection
         finally:
@@ -40,10 +55,8 @@ def database(monkeypatch):
 
 
 def test_seed_is_repeatable_and_matches_are_read_from_postgres(database):
-    database.execute((TABLES / "create_mock_campaign_tables.sql").read_text())
-    database.execute((TABLES / "seed_mock_campaign_data.sql").read_text())
-    database.execute((TABLES / "migrate_campaign_source_of_truth.sql").read_text())
-    database.execute((TABLES / "migrate_mock_client_crm_fields.sql").read_text())
+    execute_sql_files(database, CAMPAIGN_SCHEMA_FILES)
+    execute_sql_files(database, CAMPAIGN_SEED_FILES)
     assert database.execute("SELECT count(*) FROM mock_campaign").fetchone()[0] == 2
     assert database.execute("SELECT count(*) FROM mock_client").fetchone()[0] == 14
     assert database.execute("SELECT count(*) FROM mock_campaign_advisor").fetchone()[0] == 2
@@ -205,11 +218,20 @@ def test_database_filters_adviser_and_tenant_even_for_duplicate_campaign_ids(dat
 def test_new_connections_observe_committed_changes_and_reseeding_preserves_edits(database):
     scope = RequestScope(DEMO_FA)
     before = recommend_clients_for_campaign("camp-1", scope)
-    database.execute("UPDATE mock_client SET available_cash = 0 WHERE tenant_id = 'pulse-demo' AND contact_id = 'client-001'")
+    database.execute("""UPDATE mock_client
+        SET available_cash = 0, email = 'edited.client@example.test'
+        WHERE tenant_id = 'pulse-demo' AND contact_id = 'client-001'""")
+    database.execute("""UPDATE mock_campaign
+        SET description = 'Edited synthetic campaign description'
+        WHERE tenant_id = 'pulse-demo' AND campaign_id = 'camp-1'""")
     after = recommend_clients_for_campaign("camp-1", scope)
     assert after["matched_count"] == before["matched_count"] - 1
-    database.execute((TABLES / "seed_mock_campaign_data.sql").read_text())
+    execute_sql_files(database, CAMPAIGN_SEED_FILES)
     assert recommend_clients_for_campaign("camp-1", scope)["matched_count"] == after["matched_count"]
+    assert database.execute("""SELECT email FROM mock_client
+        WHERE tenant_id = 'pulse-demo' AND contact_id = 'client-001'""").fetchone()[0] == "edited.client@example.test"
+    assert database.execute("""SELECT description FROM mock_campaign
+        WHERE tenant_id = 'pulse-demo' AND campaign_id = 'camp-1'""").fetchone()[0] == "Edited synthetic campaign description"
 
 
 def test_numeric_ranges_dates_and_nullable_profiles_round_trip(database):
@@ -274,7 +296,8 @@ def test_api_to_mcp_recommendation_persists_chat_in_postgres(database, monkeypat
     from test_campaign_mcp import server
     from test_orchestrator import FakeClient, completion, message, settings, tool_call
 
-    database.execute((TABLES / "create_campaign_chat_sessions.sql").read_text())
+    database.execute((CREATE_TABLES / "create_campaign_chat_sessions.sql").read_text())
+    database.execute((CREATE_TABLES / "create_campaign_chat_messages.sql").read_text())
     monkeypatch.setattr(store, "get_settings", config.get_settings)
     provider = FakeClient([
         completion(message(tool_calls=[tool_call(

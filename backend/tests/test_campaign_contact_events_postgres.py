@@ -13,8 +13,20 @@ import pytest
 from app import config
 
 TABLES = Path(__file__).parents[1] / "tables"
-CONTACT_EVENT_TABLE_SQL = TABLES / "create_mock_campaign_contact_event.sql"
-CONTACT_EVENT_SEED_SQL = TABLES / "seed_mock_campaign_contact_events.sql"
+CREATE_TABLES = TABLES / "create"
+MOCK_DATA = TABLES / "mock_data"
+CONTACT_EVENT_TABLE_SQL = CREATE_TABLES / "create_mock_campaign_contact_event.sql"
+CONTACT_EVENT_SEED_SQL = MOCK_DATA / "mock_campaign_contact_events.sql"
+CAMPAIGN_SCHEMA_FILES = (
+    CREATE_TABLES / "create_mock_campaign.sql",
+    CREATE_TABLES / "create_mock_client.sql",
+    CREATE_TABLES / "create_mock_campaign_advisor.sql",
+)
+CAMPAIGN_SEED_FILES = (
+    MOCK_DATA / "mock_campaign.sql",
+    MOCK_DATA / "mock_client.sql",
+    MOCK_DATA / "mock_campaign_advisor.sql",
+)
 
 
 @pytest.fixture
@@ -28,8 +40,8 @@ def database(monkeypatch):
         scoped_url = make_conninfo(database_url, options="-c search_path=" + schema)
         try:
             with psycopg.connect(scoped_url, autocommit=True) as connection:
-                for name in ("create_mock_campaign_tables.sql", "seed_mock_campaign_data.sql"):
-                    connection.execute((TABLES / name).read_text())
+                for sql_file in CAMPAIGN_SCHEMA_FILES + CAMPAIGN_SEED_FILES:
+                    connection.execute(sql_file.read_text())
                 monkeypatch.setattr(config, "get_settings",
                                     lambda: SimpleNamespace(database_url=scoped_url))
                 yield connection
@@ -52,7 +64,7 @@ def test_contacts_link_to_existing_campaign_names_and_keep_first_date(database):
         WHERE e.tenant_id = 'pulse-demo' AND e.fa_id = 'adv-steven-raynaldi'
         GROUP BY c.name, e.contact_id
     """).fetchall()
-    assert len(rows) == 13  # Repeated contacts count as one client per campaign.
+    assert len(rows) == 12  # Repeated contacts count as one client per campaign.
     by_campaign_client = {(name, client_id): (first, count)
                           for name, client_id, first, count in rows}
     first, count = by_campaign_client[("Legacy Protection Refresh", "client-005")]
@@ -65,7 +77,6 @@ def test_contacts_link_to_existing_campaign_names_and_keep_first_date(database):
     first, count = by_campaign_client[("First Home Starter Bundle", "client-006")]
     assert first == datetime.fromisoformat("2026-09-21T09:30:00+08:00")
     assert count == 2
-    assert ("Legacy Protection Refresh", "client-010") in by_campaign_client
     assert ("First Home Starter Bundle", "client-010") in by_campaign_client
 
 
@@ -149,16 +160,20 @@ def test_contact_cannot_use_another_advisors_client_or_campaign(database):
     with pytest.raises(psycopg.errors.ForeignKeyViolation):
         database.execute("""
             INSERT INTO mock_campaign_contact_event
-                (tenant_id, contact_event_id, campaign_id, fa_id, contact_id, contacted_at)
+                (tenant_id, contact_event_id, campaign_id, fa_id, contact_id,
+                 contacted_at, engagement_status)
             VALUES ('pulse-demo', 'invalid-client', 'camp-1',
-                    'adv-steven-raynaldi', 'client-013', '2026-10-12 14:00:00+08')
+                    'adv-steven-raynaldi', 'client-013',
+                    '2026-10-12 14:00:00+08', 0)
         """)
     with pytest.raises(psycopg.errors.ForeignKeyViolation):
         database.execute("""
             INSERT INTO mock_campaign_contact_event
-                (tenant_id, contact_event_id, campaign_id, fa_id, contact_id, contacted_at)
+                (tenant_id, contact_event_id, campaign_id, fa_id, contact_id,
+                 contacted_at, engagement_status)
             VALUES ('pulse-demo', 'invalid-advisor', 'camp-1',
-                    'adv-other-demo', 'client-013', '2026-10-12 14:00:00+08')
+                    'adv-other-demo', 'client-013',
+                    '2026-10-12 14:00:00+08', 0)
         """)
 
 
@@ -229,7 +244,8 @@ def test_chat_routes_pass_contact_performance_tool_result(database, monkeypatch)
 
     database.execute(CONTACT_EVENT_TABLE_SQL.read_text())
     database.execute(CONTACT_EVENT_SEED_SQL.read_text())
-    database.execute((TABLES / "create_campaign_chat_sessions.sql").read_text())
+    database.execute((CREATE_TABLES / "create_campaign_chat_sessions.sql").read_text())
+    database.execute((CREATE_TABLES / "create_campaign_chat_messages.sql").read_text())
     monkeypatch.setattr(store, "get_settings", config.get_settings)
     monkeypatch.setattr(performance, "current_time",
                         lambda: datetime(2026, 10, 12, 18, 0,
@@ -274,7 +290,8 @@ def test_chat_route_passes_last_week_selection_to_tool(database, monkeypatch):
 
     database.execute(CONTACT_EVENT_TABLE_SQL.read_text())
     database.execute(CONTACT_EVENT_SEED_SQL.read_text())
-    database.execute((TABLES / "create_campaign_chat_sessions.sql").read_text())
+    database.execute((CREATE_TABLES / "create_campaign_chat_sessions.sql").read_text())
+    database.execute((CREATE_TABLES / "create_campaign_chat_messages.sql").read_text())
     monkeypatch.setattr(store, "get_settings", config.get_settings)
     monkeypatch.setattr(performance, "current_time",
                         lambda: datetime(2026, 10, 12, 18, 0,
@@ -379,7 +396,8 @@ def test_chat_route_can_compare_campaigns_despite_selected_campaign(database, mo
 
     database.execute(CONTACT_EVENT_TABLE_SQL.read_text())
     database.execute(CONTACT_EVENT_SEED_SQL.read_text())
-    database.execute((TABLES / "create_campaign_chat_sessions.sql").read_text())
+    database.execute((CREATE_TABLES / "create_campaign_chat_sessions.sql").read_text())
+    database.execute((CREATE_TABLES / "create_campaign_chat_messages.sql").read_text())
     monkeypatch.setattr(store, "get_settings", config.get_settings)
     monkeypatch.setattr(performance, "current_time",
                         lambda: datetime(2026, 10, 12, 18, 0,

@@ -4,8 +4,9 @@
 
 This directory contains SQL executed by `backend/setup.sh` against the local
 PostgreSQL instance. It is a prototype schema, not a verbatim copy of the
-company GCRM schema. There is no migration framework; one additive campaign
-migration is tracked in `pulse_schema_migration`.
+company GCRM schema. There is no migration framework. The canonical table
+definitions live under `create/`; guarded legacy backfills in the relevant
+synthetic seed scripts are tracked in `pulse_schema_migration`.
 
 ## Change rules
 

@@ -143,16 +143,11 @@ make provision
 ```
 
 `backend/setup.sh` provisions the local infrastructure, updates `DATABASE_URL`,
-then applies these files in order:
-
-1. `backend/tables/create_campaign_chat_sessions.sql`
-2. `backend/tables/create_mock_campaign_tables.sql`
-3. `backend/tables/seed_mock_campaign_data.sql`
-4. `backend/tables/migrate_campaign_source_of_truth.sql`
-5. `backend/tables/migrate_mock_client_crm_fields.sql`
-6. `backend/tables/create_mock_campaign_engagement.sql`
-7. `backend/tables/create_mock_campaign_contact_event.sql`
-8. `backend/tables/seed_mock_campaign_contact_events.sql`
+then applies the SQL under `backend/tables/create/` in dependency order, followed
+by the synthetic rows under `backend/tables/mock_data/`. The campaign and client
+create scripts contain the complete current prototype schema. Their matching
+seed scripts retain guarded compatibility backfills for local databases created
+before those fields were consolidated.
 
 The mock scripts create campaign, adviser-access and client tables and seed two
 campaigns and 14 synthetic clients. `mock_client` is also the frontend CRM
@@ -161,7 +156,9 @@ outreach dates for those campaigns and the assigned adviser; campaign names come
 from `mock_campaign`, not duplicated contact rows. Each row is one contact, so
 repeat contacts can be distinguished from a client's first campaign contact.
 Every member loads the same checked-in SQL into their own local database;
-database edits are not automatically shared.
+database edits are not automatically shared. Re-running provisioning preserves
+existing rows and records completed compatibility backfills in
+`pulse_schema_migration`.
 
 The scripts are repeatable. Seed inserts preserve existing records using
 `ON CONFLICT DO NOTHING`; use an explicit migration/update script for changes

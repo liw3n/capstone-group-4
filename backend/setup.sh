@@ -193,11 +193,6 @@ for table_script in "$mock_data_dir"/*.sql; do
     run_sql_file "$table_script"
 done
 
-##### Apply schema migrations after creating tables and loading mock data #####
-for table_script in migrate_campaign_source_of_truth.sql migrate_mock_client_crm_fields.sql; do
-    run_sql_file "$BACKEND_DIR/tables/$table_script"
-done
-
 if [[ "${DEPLOY_FAKECLOUD_ECS:-0}" != "1" ]]; then
     printf '\nLocal database provisioning complete.\n'
     printf 'DATABASE_URL was written to %s and the chat / mock campaign tables are ready.\n' "$env_file"
