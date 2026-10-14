@@ -91,7 +91,8 @@ def test_query_calls_llm_and_persists_exchange(monkeypatch):
     assert response.status_code == 200
     assert response.json()["ai_answer"] == "Generated answer"
     assert orchestrator.calls == [("What is outstanding?", old_history,
-                                   {"scope": main.RequestScope("fa-1"), "campaign_id": None})]
+                                   {"scope": main.RequestScope("fa-1"),
+                                    "campaign_id": None, "session_id": "session-1"})]
     assert persisted[0][0] == "session-1"
     assert persisted[0][1].message_content == "What is outstanding?"
     assert persisted[0][2].message_content == "Generated answer"
@@ -159,7 +160,11 @@ def test_selected_campaign_is_forwarded_on_both_routes(monkeypatch):
         response = client.post(route, json={"fa_id": DEMO_FA, "campaign_id": "camp-1",
                                            "message_content": "Who matches this campaign?"})
         assert response.status_code == 200
-        assert orchestrator.calls[-1][2] == {"scope": RequestScope(DEMO_FA), "campaign_id": "camp-1"}
+        assert orchestrator.calls[-1][2] == {
+            "scope": RequestScope(DEMO_FA),
+            "campaign_id": "camp-1",
+            "session_id": "session-1",
+        }
 
 
 def test_selected_invalid_or_inaccessible_campaign_fails_before_storage(monkeypatch):

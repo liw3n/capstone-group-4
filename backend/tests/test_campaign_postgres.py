@@ -327,6 +327,54 @@ def test_api_to_mcp_recommendation_persists_chat_in_postgres(database, monkeypat
     assert len(store.get_history(store.latest_session(DEMO_FA).session_id)) == 4
 
 
+def test_campaign_clarification_state_is_scoped_and_survives_connections(database):
+    from app.campaigns.clarification import PostgresCampaignClarificationStore
+
+    database.execute((CREATE_TABLES / "create_campaign_chat_sessions.sql").read_text())
+    clarification_sql = (
+        CREATE_TABLES / "create_campaign_generation_clarifications.sql"
+    ).read_text()
+    database.execute(clarification_sql)
+    database.execute(clarification_sql)
+    database.execute(
+        """
+        INSERT INTO campaign_chat_sessions (session_id, fa_id, session_title)
+        VALUES ('session-clarify', %s, 'Clarification test')
+        """,
+        (DEMO_FA,),
+    )
+    store = PostgresCampaignClarificationStore()
+    scope = RequestScope(DEMO_FA)
+
+    created = store.start(
+        scope,
+        "session-clarify",
+        "Create a campaign for students entering the workforce",
+        ("focus", "age"),
+    )
+
+    loaded = store.get_active(scope, "session-clarify")
+    assert loaded == created
+    assert store.get_active(RequestScope("adv-other-demo"), "session-clarify") is None
+    store.update(
+        scope,
+        "session-clarify",
+        created.clarification_id,
+        ("General planning for Under 35",),
+        (),
+        1,
+        status="completed",
+    )
+    assert store.get_active(scope, "session-clarify") is None
+    assert database.execute(
+        """
+        SELECT status, answers FROM campaign_generation_clarifications
+        WHERE clarification_id = %s
+        """,
+        (created.clarification_id,),
+    ).fetchone() == ("completed", ["General planning for Under 35"])
+
+
 def test_active_discovery_filters_dates_and_assignments_in_postgres(database):
     from datetime import date
     scope = RequestScope(DEMO_FA)

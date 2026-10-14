@@ -55,16 +55,18 @@ Terraform. Do not use it as a lightweight unit-test command.
 
 ## Known gaps (current state)
 
-- The only registered business-data tool is a placeholder search; the remaining
-  tool is a demo calculator.
-- Adviser identity is caller-supplied. There is no authentication, role model,
-  tenant middleware, or authorisation at tool boundaries.
-- There is no campaign/audience/action persistence or adapter for `gwm_api/`.
+- Campaign discovery, matching, performance, reference retrieval and draft
+  preparation use scoped synthetic data. Consent-safe outreach, interaction/task
+  mutation and outcome tools remain incomplete.
+- Campaign clarification state is persisted per tenant, adviser and chat
+  session, but the resulting structured draft and revisions are not yet retained.
+- Adviser identity is caller-supplied. There is no authentication or verified
+  tenant middleware; current scope checks are prototype boundaries.
+- There is no production CRM adapter for `gwm_api/`.
 - There is no migrations framework, connection pool, structured logging,
   tracing, or production readiness probe.
 - CORS allows every origin; acceptable for a local prototype, not production.
-- Runtime dependencies include local infrastructure tooling and the old `aws`
-  package; production and development dependencies are not separated.
+- Production and development dependencies are not separated.
 - The optional ECS deployment applies infrastructure before the image
   build/push and may require Docker insecure-registry configuration; keep its
   local-only scope explicit.

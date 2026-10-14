@@ -32,6 +32,8 @@ synthetic seed scripts are tracked in `pulse_schema_migration`.
 
 - Chat and synthetic campaign records are persisted, but production-compatible
   contact/interaction/task tables do not support the full workflow yet.
+- `campaign_generation_clarifications` retains bounded pre-generation answers;
+  validated campaign drafts, revisions and confirmation state remain unpersisted.
 - The setup script includes an in-place timestamp conversion rather than a
   versioned migration with rollback and audit history.
 - There is no adviser/user foreign key, tenant table, title/summary lifecycle,

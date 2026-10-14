@@ -19,8 +19,9 @@ The supported flow is:
 1. The adviser enters a business objective in PULSE or the campaign builder.
 2. The system retrieves up to three relevant, approved entries from a curated
    campaign catalogue.
-3. The model uses the objective, schema and retrieved references to propose a
-   campaign name, description, client message and targeting criteria.
+3. The server resolves and locks targeting criteria; the model uses the
+   objective, schema, lock and retrieved references to propose the campaign
+   name, description, client message and supporting narrative.
 4. The MCP tool validates and normalises the proposal.
 5. The frontend displays the structured fields, assumptions, source references
    and targeting rationale in an editable review form.
@@ -283,6 +284,19 @@ Return a warning or clarification request when:
 - the model applies a demographic restriction not stated or justified by the
   objective;
 - the draft depends on a material assumption.
+
+Stage 5.5 implements the pre-generation subset of this rule through a hybrid
+interpreter. Normalization handles common punctuation variants, a strict
+schema-constrained model response interprets natural-language intent, and
+deterministic server validation owns supported enums and readiness. Material
+ambiguity is resolved before catalogue retrieval, so an unsupported restriction
+cannot be laundered into a draft warning. Omitted gender and cash dimensions
+default to unrestricted; life-stage wording such as "young" or "entering the
+workforce" does not select an age enum without an explicit adviser answer.
+Once clarification completes, all three targeting dimensions become a
+server-owned lock. The model receives the lock to generate matching narrative
+content, and the orchestrator replaces model-returned criteria with the lock
+before deterministic preparation validation.
 
 Do not return a numeric model-confidence score. Return concrete validation
 results, assumptions and unanswered questions.
@@ -633,8 +647,8 @@ normal test suite flaky.
 
 Complete each stage and its exit criteria before beginning a dependent stage.
 
-Implementation status as of 13 October 2026: Stages 1-5 are implemented and
-covered by deterministic backend tests. They add shared contracts, a versioned
+Implementation status as of 14 October 2026: Stages 1-5 and 5.5 are implemented
+and covered by deterministic backend tests. They add shared contracts, a versioned
 12-entry synthetic catalogue, scoped deterministic retrieval, signed retrieval
 tokens, the read-only `find_campaign_references` MCP tool and the read-only
 `prepare_campaign_draft` validation boundary. Preparation returns an unpersisted
@@ -644,6 +658,17 @@ the API retains and injects the retrieval objective/token and uses strict JSON
 Schema output for draft generation before invoking preparation server-side.
 Clear generation requests are routed into this pipeline deterministically, so
 campaign generation does not depend on provider-authored tool-call JSON.
+Stage 5.5 adds a hybrid, maximum-three-question clarification gate before
+retrieval. Natural-language answers are interpreted through strict structured
+output and then checked deterministically against server-owned targeting enums.
+Active clarification state is stored in PostgreSQL and scoped by
+tenant, adviser and chat session; it survives API restarts, supports cancellation
+and is completed before generation resumes. It stores objectives and adviser
+answers only, not a generated draft or campaign record.
+Completed clarification also produces an in-memory targeting lock. The lock is
+included in the generation instructions and enforced over the model's structured
+criteria immediately before `prepare_campaign_draft`; narrative targeting text
+must still pass the existing consistency checks.
 Structured HTTP retention, revision and persistence begin in later stages.
 
 ### Stage 1 Define shared contracts and lifecycle boundaries
@@ -733,6 +758,49 @@ Exit criteria:
 - Invalid, unsafe or incorrectly cited drafts return stable safe errors.
 - Successful calls return structured drafts and never write campaign or draft
   tables.
+
+### Stage 5.5 Clarify underspecified objectives before retrieval
+
+Implementation:
+
+- Normalize common phrase and punctuation variants deterministically.
+- When material questions remain, call a dedicated strict JSON-schema intent
+  extractor with only the objective and clarification answers.
+- Treat extraction as untrusted: validate supported age, cash and gender enums,
+  reject contradictory restricted/unrestricted values, and keep the final
+  readiness decision in server code.
+- Resolve conflicting explicit criteria from the latest adviser answer; never let
+  an earlier value or model interpretation override a later correction.
+- Ask at most three material questions covering a missing planning focus or
+  audience and ambiguous age/cash language.
+- Do not ask for gender or cash merely because those fields exist; when omitted,
+  append explicit unrestricted defaults to the canonical objective.
+- Materialise the resolved age, gender and cash criteria as a server-owned lock,
+  pass it to draft generation, and overwrite model-returned criteria with it
+  immediately before preparation. Continue to reject contradictory summary or
+  rationale text rather than silently rewriting model-authored prose.
+- Persist the original objective, adviser answers, pending question IDs and
+  bounded round count in `campaign_generation_clarifications`, scoped by tenant,
+  adviser and chat session.
+- Resume on the next message, allow cancellation or replacement by a new campaign
+  request, and retrieve catalogue references only after the objective is ready.
+
+Exit criteria:
+
+- The workforce-entrant example asks for planning focus and an explicit age group
+  before retrieval or draft generation; any model call at this point is limited
+  to schema-constrained intent extraction.
+- Hyphenated natural language such as `general financial-planning` resolves the
+  focus, while unsupported `Under 30` remains unresolved and re-asks only age.
+- A reply resumes the same scoped flow and generates from the original objective
+  plus recorded answers and safe unrestricted defaults.
+- A model response that substitutes different criteria is prepared with the
+  server lock instead; explicit `male` and `Under 35` answers with no cash choice
+  produce `genders=[male]`, `ageGroups=[under35]` and `cashBands=[]`.
+- Cross-adviser reads cannot observe pending clarification state; setup SQL is
+  idempotent and state survives process restarts.
+- Three unresolved rounds stop safely, and cancellation never generates or
+  creates a campaign.
 
 ### Stage 6 Implement the revise campaign draft MCP tool
 
@@ -848,6 +916,8 @@ Exit criteria:
   retrieval.
 - `backend/app/campaigns/draft_repository.py`: scoped draft revisions, preview
   state and atomic confirmation.
+- `backend/app/campaigns/clarification.py`: scoped pre-generation clarification
+  state and PostgreSQL access.
 - `backend/app/tools/campaign_references.py`: retrieval MCP handler.
 - `backend/app/tools/campaign_draft.py`: prepare and revise MCP handlers.
 - `backend/mcp/server.py`: tool registration.
@@ -856,7 +926,9 @@ Exit criteria:
 - `backend/app/main.py`: response model and confirmation route integration.
 - `backend/app/campaigns/catalog.py`: confirmed creation through the existing
   storage boundary.
-- `backend/tables/create_campaign_generation_drafts.sql`: draft, revision,
+- `backend/tables/create/create_campaign_generation_clarifications.sql`:
+  pre-generation objective, answers and pending questions.
+- `backend/tables/create/create_campaign_generation_drafts.sql`: draft, revision,
   provenance, confirmation and created-campaign linkage.
 - `backend/setup.sh`: apply the new idempotent draft-table migration in order.
 - `backend/tests/`: model, tool, orchestrator, API and PostgreSQL tests.

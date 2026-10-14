@@ -61,4 +61,15 @@ def test_client_uses_configured_openai_compatible_endpoint(monkeypatch):
     response_format = captured["request"]["response_format"]
     assert response_format["type"] == "json_schema"
     assert response_format["json_schema"]["strict"] is True
+    assert response_format["json_schema"]["name"] == "campaign_draft_generation"
     assert response_format["json_schema"]["schema"]["required"] == ["name"]
+
+    client.create_structured_completion(
+        [{"role": "user", "content": "Extract intent"}],
+        {"type": "object", "properties": {}, "required": []},
+        schema_name="campaign_intent_extraction",
+    )
+    assert (
+        captured["request"]["response_format"]["json_schema"]["name"]
+        == "campaign_intent_extraction"
+    )

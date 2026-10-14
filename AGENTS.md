@@ -99,6 +99,12 @@ checks and startup commands are in `backend/AGENTS.md`.
   outreach, interaction/task mutation, and outcome tools remain incomplete.
 - Contacts, campaigns and chat now use PostgreSQL through scoped APIs. Pipeline
   cards and tasks created during a session remain browser-local.
+- Campaign generation now has a bounded, adviser/session-scoped hybrid
+  clarification step before reference retrieval. Schema-constrained model
+  extraction interprets natural language, while server validation owns supported
+  targeting enums and safe defaults. Resolved age, gender and cash criteria are
+  locked server-side before draft preparation, so generation cannot replace the
+  adviser's choices. Generated drafts remain review-only and unpersisted.
 - `campaign`, `campaign_member`, `interaction`, and `task_item` are described by
   the company schema document, but their column definitions are absent. Do not
   invent a production-compatible schema without documenting the prototype

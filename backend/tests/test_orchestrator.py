@@ -2,9 +2,15 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.config import Settings
+from app.campaigns.clarification import (
+    CampaignClarification,
+    CampaignIntentExtraction,
+    assess_campaign_objective,
+)
+from app.campaigns.repository import RequestScope
 from app.campaigns.models import CampaignDraftArtifact
 from app.campaigns.presentation import render_campaign_draft
 from app.llm.errors import LLMProviderError, LLMToolLoopError
@@ -65,9 +71,12 @@ class FakeClient:
         self.calls.append({"messages": list(messages), "tools": tools, "structured": False})
         return self.responses.pop(0)
 
-    def create_structured_completion(self, messages, schema):
+    def create_structured_completion(
+        self, messages, schema, schema_name="campaign_draft_generation"
+    ):
         self.calls.append({
             "messages": list(messages), "schema": schema, "structured": True,
+            "schema_name": schema_name,
         })
         return self.responses.pop(0)
 
@@ -149,6 +158,40 @@ class CampaignGenerationRegistry:
         raise AssertionError(f"Unexpected tool: {name}")
 
 
+class FakeClarificationStore:
+    def __init__(self):
+        self.active = None
+        self.status = None
+
+    def get_active(self, _scope, _session_id):
+        return self.active
+
+    def start(self, _scope, _session_id, objective, pending_question_ids):
+        self.active = CampaignClarification(
+            clarification_id="clarification-1",
+            objective=objective,
+            answers=(),
+            pending_question_ids=pending_question_ids,
+            round_count=0,
+        )
+        self.status = "active"
+        return self.active
+
+    def update(
+        self, _scope, _session_id, clarification_id, answers,
+        pending_question_ids, round_count, status="active",
+    ):
+        assert clarification_id == "clarification-1"
+        self.status = status
+        self.active = None if status != "active" else CampaignClarification(
+            clarification_id=clarification_id,
+            objective=self.active.objective,
+            answers=answers,
+            pending_question_ids=pending_question_ids,
+            round_count=round_count,
+        )
+
+
 def settings(**overrides):
     values = {
         "groq_api_key": "test-key",
@@ -199,6 +242,31 @@ def campaign_draft_artifact():
         "requires_adviser_review": True,
         "created": False,
     }
+
+
+def intent_extraction(**overrides):
+    payload = {
+        "planningFocus": "unspecified",
+        "audienceSpecified": True,
+        "ageGroups": [],
+        "ageUnrestricted": False,
+        "unsupportedAgeCriterion": False,
+        "cashBands": [],
+        "cashUnrestricted": False,
+        "unsupportedCashCriterion": False,
+        "genders": [],
+        "genderUnrestricted": False,
+    }
+    payload.update(overrides)
+    return completion(message(content=json.dumps(payload)))
+
+
+def test_intent_extraction_rejects_contradictory_targeting_state():
+    payload = json.loads(intent_extraction().choices[0].message.content)
+    payload.update({"ageGroups": ["under35"], "ageUnrestricted": True})
+
+    with pytest.raises(ValidationError, match="restricted and unrestricted"):
+        CampaignIntentExtraction.model_validate(payload)
 
 
 def test_returns_plain_model_answer():
@@ -365,6 +433,268 @@ def test_successful_campaign_draft_is_rendered_without_another_model_call():
     assert "### Client message" in result
     assert "### Disclaimer" in result
     assert "Draft only — not created" in result
+
+
+def test_vague_life_stage_campaign_requests_clarification_before_retrieval():
+    client = FakeClient([intent_extraction()])
+    registry = CampaignGenerationRegistry(campaign_draft_artifact())
+    clarification_store = FakeClarificationStore()
+    orchestrator = ChatOrchestrator(
+        client, settings(), registry, clarification_store=clarification_store
+    )
+
+    result = orchestrator.run(
+        "Create a campaign targeting students entering the workforce who want "
+        "to start planning for their future",
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+    )
+
+    assert "What should the campaign primarily cover" in result
+    assert "Which supported age group should be used" in result
+    assert "No campaign draft has been generated or created yet" in result
+    assert len(client.calls) == 1
+    assert client.calls[0]["schema_name"] == "campaign_intent_extraction"
+    assert registry.executed == []
+    assert clarification_store.active.pending_question_ids == ("focus", "age")
+
+
+def test_clarification_reply_resumes_generation_with_safe_unrestricted_defaults():
+    artifact = campaign_draft_artifact()
+    client = FakeClient([
+        intent_extraction(),
+        completion(message(content=json.dumps({
+            "referencesUsed": artifact["referencesUsed"],
+            "draft": artifact["draft"],
+        }))),
+    ])
+    registry = CampaignGenerationRegistry(artifact)
+    clarification_store = FakeClarificationStore()
+    orchestrator = ChatOrchestrator(
+        client, settings(), registry, clarification_store=clarification_store
+    )
+    scope = RequestScope("fa-1")
+    orchestrator.run(
+        "Create a campaign targeting students entering the workforce who want "
+        "to start planning for their future",
+        [],
+        scope=scope,
+        session_id="session-1",
+    )
+
+    result = orchestrator.run(
+        "Use a general financial planning introduction and target Under 35.",
+        [],
+        scope=scope,
+        session_id="session-1",
+    )
+
+    retrieval_arguments = registry.executed[0][1]
+    assert "Under 35" in retrieval_arguments["objective"]
+    assert "Gender targeting: no gender restriction" in retrieval_arguments["objective"]
+    assert "Cash targeting: no cash restriction" in retrieval_arguments["objective"]
+    assert clarification_store.status == "completed"
+    assert "Draft only — not created" in result
+
+
+def test_clarified_targeting_is_locked_before_draft_preparation():
+    artifact = campaign_draft_artifact()
+    generated_draft = artifact["draft"] | {
+        "criteria": {
+            "ageGroups": ["55to64"],
+            "genders": ["female"],
+            "cashBands": ["above1m"],
+        },
+        "targetDemographicSummary": "Male graduates under 35 with no cash restriction.",
+        "rationale": {
+            "ageGroups": "Under 35 was explicitly selected by the adviser.",
+            "genders": "Male graduates were explicitly selected by the adviser.",
+            "cashBands": "No cash restriction was requested.",
+        },
+    }
+    client = FakeClient([
+        intent_extraction(genders=["male"]),
+        completion(message(content=json.dumps({
+            "referencesUsed": artifact["referencesUsed"],
+            "draft": generated_draft,
+        }))),
+    ])
+    registry = CampaignGenerationRegistry(artifact)
+    store = FakeClarificationStore()
+    orchestrator = ChatOrchestrator(
+        client, settings(), registry, clarification_store=store
+    )
+    scope = RequestScope("fa-1")
+    orchestrator.run(
+        "Create a campaign for male graduates",
+        [], scope=scope, session_id="session-1",
+    )
+
+    orchestrator.run(
+        "Budgeting and emergency savings, under 35.",
+        [], scope=scope, session_id="session-1",
+    )
+
+    prepared_arguments = registry.executed[1][1]
+    assert prepared_arguments["draft"]["criteria"] == {
+        "ageGroups": ["under35"],
+        "genders": ["male"],
+        "cashBands": [],
+    }
+    generation_prompt = client.calls[1]["messages"][0]["content"]
+    assert "targeting criteria are locked by the server" in generation_prompt
+    assert '"cashBands":[]' in generation_prompt
+
+
+def test_latest_explicit_targeting_values_form_the_server_lock():
+    assessment = assess_campaign_objective(
+        "Create a budgeting campaign for women under 35 with cash below SGD 50,000",
+        ("Change the audience to men aged 35-44 with no cash restriction.",),
+    )
+
+    assert assessment.question_ids == ()
+    assert assessment.targeting_lock.as_payload() == {
+        "ageGroups": ["35to44"],
+        "genders": ["male"],
+        "cashBands": [],
+    }
+
+
+def test_hyphenated_focus_is_understood_but_unsupported_age_is_asked_again():
+    client = FakeClient([
+        intent_extraction(),
+        intent_extraction(
+            planningFocus="general_financial_planning",
+            ageGroups=["under35"],
+        ),
+    ])
+    store = FakeClarificationStore()
+    orchestrator = ChatOrchestrator(
+        client, settings(), CampaignGenerationRegistry(campaign_draft_artifact()),
+        clarification_store=store,
+    )
+    scope = RequestScope("fa-1")
+    orchestrator.run(
+        "Create a campaign targeting students",
+        [], scope=scope, session_id="session-1",
+    )
+
+    result = orchestrator.run(
+        "1. general financial-planning introduction\n2. Under 30",
+        [], scope=scope, session_id="session-1",
+    )
+
+    assert "What should the campaign primarily cover" not in result
+    assert "Which supported age group should be used" in result
+    assert store.active.pending_question_ids == ("age",)
+
+
+def test_latest_explicit_age_answer_overrides_an_earlier_unsupported_answer():
+    objective = "Create a campaign targeting students"
+    focus_and_unsupported_age = (
+        "General financial-planning introduction for Under 30",
+    )
+
+    unresolved = assess_campaign_objective(objective, focus_and_unsupported_age)
+    corrected = assess_campaign_objective(
+        objective, focus_and_unsupported_age + ("Use the supported Under 35 group",)
+    )
+    reversed_order = assess_campaign_objective(
+        objective,
+        ("General financial planning for Under 35", "Change the age to Under 30"),
+    )
+
+    assert unresolved.question_ids == ("age",)
+    assert corrected.question_ids == ()
+    assert reversed_order.question_ids == ("age",)
+
+
+def test_model_interprets_natural_clarification_then_server_validates_defaults():
+    artifact = campaign_draft_artifact()
+    client = FakeClient([
+        intent_extraction(),
+        intent_extraction(planningFocus="general_financial_planning"),
+        completion(message(content=json.dumps({
+            "referencesUsed": artifact["referencesUsed"],
+            "draft": artifact["draft"],
+        }))),
+    ])
+    registry = CampaignGenerationRegistry(artifact)
+    store = FakeClarificationStore()
+    orchestrator = ChatOrchestrator(
+        client, settings(), registry, clarification_store=store
+    )
+    scope = RequestScope("fa-1")
+    orchestrator.run(
+        "Create a campaign targeting students",
+        [], scope=scope, session_id="session-1",
+    )
+
+    result = orchestrator.run(
+        "Teach them the basics of managing money, for the Under 35 group.",
+        [], scope=scope, session_id="session-1",
+    )
+
+    objective = registry.executed[0][1]["objective"]
+    assert "Planning focus: general financial planning" in objective
+    assert "Gender targeting: no gender restriction" in objective
+    assert "Cash targeting: no cash restriction" in objective
+    assert [call["schema_name"] for call in client.calls] == [
+        "campaign_intent_extraction",
+        "campaign_intent_extraction",
+        "campaign_draft_generation",
+    ]
+    assert "Draft only — not created" in result
+
+
+def test_pending_campaign_clarification_can_be_cancelled_without_model_call():
+    store = FakeClarificationStore()
+    orchestrator = ChatOrchestrator(
+        FakeClient([intent_extraction()]), settings(),
+        CampaignGenerationRegistry(campaign_draft_artifact()),
+        clarification_store=store,
+    )
+    scope = RequestScope("fa-1")
+    orchestrator.run(
+        "Create a campaign for students entering the workforce",
+        [], scope=scope, session_id="session-1",
+    )
+
+    result = orchestrator.run(
+        "cancel campaign draft", [], scope=scope, session_id="session-1"
+    )
+
+    assert store.status == "cancelled"
+    assert "No campaign was created" in result
+
+
+def test_unresolved_campaign_clarification_stops_after_three_answer_rounds():
+    client = FakeClient([intent_extraction(audienceSpecified=False) for _ in range(4)])
+    store = FakeClarificationStore()
+    orchestrator = ChatOrchestrator(
+        client, settings(), CampaignGenerationRegistry(campaign_draft_artifact()),
+        clarification_store=store,
+    )
+    scope = RequestScope("fa-1")
+    orchestrator.run(
+        "Create a campaign", [], scope=scope, session_id="session-1"
+    )
+
+    for _ in range(2):
+        response = orchestrator.run(
+            "I am not sure yet", [], scope=scope, session_id="session-1"
+        )
+        assert "A few details" in response
+    response = orchestrator.run(
+        "I am still not sure", [], scope=scope, session_id="session-1"
+    )
+
+    assert store.status == "cancelled"
+    assert "after three clarification rounds" in response
+    assert "No campaign was generated or created" in response
+    assert len(client.calls) == 4
+    assert all(call["schema_name"] == "campaign_intent_extraction" for call in client.calls)
 
 
 def test_campaign_draft_renderer_includes_every_structured_section():

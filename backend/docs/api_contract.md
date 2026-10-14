@@ -190,6 +190,44 @@ After a successful provider response, the user and assistant messages are stored
 in one PostgreSQL transaction. A failed provider request does not append a
 partial exchange, although a session explicitly created beforehand remains.
 
+For a clear but underspecified campaign-generation request, the server responds
+with at most three server-selected clarification questions before reference
+retrieval or draft generation. The hybrid interpreter first normalizes common
+punctuation and known phrases. When material questions remain, a separate strict
+JSON-schema model call extracts only planning focus, audience presence and
+explicit targeting intent. The server then validates that untrusted extraction
+against the supported enums and makes the final readiness decision. The model
+cannot add a targeting band or mark an unsupported band as valid.
+
+When readiness is reached, the server materialises the resolved age, gender and
+cash values as a targeting lock. Explicit adviser selections and unrestricted
+defaults are both included. The lock is supplied to structured draft generation
+so the model can write consistent copy, and the server overwrites the generated
+`draft.criteria` with the locked values before calling
+`prepare_campaign_draft`. The existing targeting-text validation still rejects
+a demographic summary or rationale that contradicts those locked criteria.
+
+The active flow is stored in PostgreSQL against the fixed tenant, supplied
+adviser and resolved chat session. The next message in that session is treated
+as the answer and reassessed; a new campaign request replaces the pending flow.
+`cancel campaign draft` discards it. After three unresolved answer rounds, the
+flow closes with a safe explanation. Only the objective and clarification
+answers are supplied to intent extraction; no client or campaign records are
+included.
+
+Material life-stage terms such as `students`, `young`, `early-career` or
+`entering the workforce` require an explicit age choice before they can become
+an age criterion. An explicit value such as `Under 30` remains unresolved because
+it is not one of the supported age bands; the interpreter cannot silently round
+it to `Under 35`. Undefined cash terms such as `high-value` require a threshold.
+For conflicting explicit values, the latest clarification answer takes precedence.
+An absent gender or cash restriction is recorded in the canonical objective as
+unrestricted and locked as an empty criteria list rather than inferred. While questions remain, no MCP retrieval,
+draft generation, draft persistence or campaign creation occurs. A bounded
+intent-extraction call may occur. The response
+continues to use the existing `ai_answer` string, so both route forms remain
+backward compatible.
+
 Example:
 
 ```bash
@@ -331,10 +369,10 @@ enum values are rejected. Adviser and tenant scope remain trusted MCP metadata,
 not tool arguments.
 
 For clear API-orchestrated campaign-generation requests, the server identifies
-the intent and calls reference retrieval before model inference; the model does
-not author either MCP call. Inference uses strict JSON Schema output without
-tools and supplies only `referencesUsed` and `draft`; the request-scoped registry
-injects the exact retained objective and token before the server calls
+the intent and calls reference retrieval before draft inference; the model does
+not author either MCP call. Draft inference uses strict JSON Schema output
+without tools and supplies only `referencesUsed` and `draft`; the request-scoped
+registry injects the exact retained objective and token before the server calls
 preparation. This removes provider failures caused by malformed retrieval or
 nested preparation calls. Inference receives the current objective and bounded
 reference fields, but not the signed token or prior tool-call protocol messages.
@@ -392,14 +430,23 @@ artifact in the HTTP response and persisting revisions remain later stages.
 
 ### Campaign generation contracts and ownership
 
-Stages 1-5 define and validate the draft workflow without enabling campaign creation.
+Stages 1-5.5 define and validate the draft workflow without enabling campaign
+creation.
 The lifecycle values are `generated`, `reviewed`, `confirmed`, `rejected` and
 `expired`. The preparation tool returns an unpersisted generated artifact;
 revision, preview, confirmation and PostgreSQL persistence remain subsequent stages.
 
+Pre-generation clarification has its own implementation lifecycle (`active`,
+`completed`, `cancelled`) and is not a campaign draft lifecycle state. It stores
+only the objective, adviser answers and pending question IDs in
+`campaign_generation_clarifications`; it never writes `mock_campaign`.
+
 - Model-generated, adviser-reviewable content: campaign name, description,
-  client message, age groups, genders, cash bands, demographic summary,
-  field-level rationale, assumptions and disclaimer.
+  client message, demographic summary, field-level rationale, assumptions and
+  disclaimer.
+- Server-owned during initial generation: the resolved age groups, genders and
+  cash bands. Later review/edit stages may change them explicitly, but the
+  generation model cannot replace them.
 - Adviser-edited content: the same reviewable fields plus later builder metadata
   such as dates, audience source and routing, once those endpoints are built.
 - Server-owned content: tenant and adviser ownership, draft and campaign IDs,

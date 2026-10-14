@@ -56,8 +56,9 @@ required for `make dev` or the interim presentation.
 [Architecture.svg](docs/Architecture.svg) shows the complete current system:
 React CRM and PULSE chat, the Vite proxy, FastAPI, LLM orchestration, FastMCP,
 Groq and PostgreSQL. It distinguishes browser-only non-campaign CRM state from
-persisted campaign/chat data and labels the team Terraform/FakeCloud provisioning workflow,
-optional ECS and planned company CRM integration. The existing PNG is an older export.
+persisted campaign/chat data and labels the team Terraform/FakeCloud provisioning
+workflow, optional ECS and planned company CRM integration. The SVG is the
+editable source; the PNG is its synchronized rendered export.
 
 ## Endpoints
 
@@ -88,7 +89,7 @@ The registered tools include `recommend_clients_for_campaign`,
 `prepare_campaign_draft`, and
 `campaign_follow_up`. Campaign matching and scoped data access live in
 `app/campaigns/`; shared follow-up handlers live in
-`app/tools/implementations.py`. Follow-up handlers query the mock engagement
+`app/tools/campaign_follow_up.py`. Follow-up handlers query the mock engagement
 table and currently return simulated client profile and portfolio data.
 
 `find_campaign_references` searches a checked-in, approved synthetic pattern
@@ -114,11 +115,24 @@ deterministic Markdown formatter and stops the model tool loop. This prevents a
 later model summary from dropping fields and avoids an additional provider call.
 For clear campaign-generation requests, the orchestrator invokes retrieval
 server-side instead of asking the model to author a retrieval tool call. The
-model then produces draft content and citations through Groq's strict JSON
-Schema response mode with no tools. The API retains and injects the exact
-objective and signed retrieval token before calling preparation itself. This
-prevents model changes to trusted values and removes provider-side tool-call
-generation from the campaign workflow.
+orchestrator first applies a bounded hybrid clarification gate. It normalizes
+common punctuation locally, uses a strict structured model response to interpret
+natural-language intent, and validates the result against server-owned targeting
+enums. Underspecified planning focus and ambiguous or unsupported age/cash
+language produce at most three questions before catalogue retrieval or draft
+generation. Pending state is stored per tenant, adviser and chat session in
+PostgreSQL, can be cancelled, and survives process restarts. Omitted gender and
+cash restrictions remain unrestricted rather than being inferred. Only the
+campaign objective and clarification answers are sent for intent extraction;
+client records are not included.
+Once the objective is ready, the model produces draft content and citations
+through Groq's strict JSON Schema response mode with no tools. The API gives the
+model the exact server-resolved age, gender and cash criteria so its summary and
+rationale can agree, then overwrites the returned structured criteria with that
+lock before preparation. It also retains and injects the exact objective and
+signed retrieval token before calling preparation itself. This prevents model
+changes to trusted values and removes provider-side tool-call generation from
+the campaign workflow.
 
 The MCP server serves `http://127.0.0.1:8001/mcp` using Streamable HTTP. Use
 `make dev` or `make backend-dev` from the repository root to start the shared

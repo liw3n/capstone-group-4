@@ -36,11 +36,9 @@ schemas and API client behavior aligned.
 
 ## Known gaps (current state)
 
-- Both tools remain demonstrations: database search fabricates results and
-  `calculate_sum` is unrelated to the product domain.
-- Shared implementations and unit tests now exist, but there is no CRM database
-  integration, authentication/authorization, prompt/resource definition,
-  tool-level audit logging, or confirmation protocol.
-- Nothing starts or deploys this server. Despite the architecture diagram,
-  there is no MCP Docker image, ECS task/service, networking, or API-to-MCP
-  connection.
+- Registered campaign tools use shared handlers for scoped synthetic discovery,
+  matching, performance, follow-up, reference retrieval and draft validation.
+- There is no real authentication, production CRM integration, tool-level audit
+  log or consent-safe consequential action/confirmation protocol.
+- The server starts beside FastAPI in local development and shares its optional
+  container; it is not deployed as an independently discoverable service.

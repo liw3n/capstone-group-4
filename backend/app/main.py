@@ -16,6 +16,7 @@ from app.campaigns.catalog import (
     get_engagement_status,
 )
 from app.campaigns.models import CampaignCriteriaPayload
+from app.campaigns.clarification import PostgresCampaignClarificationStore
 
 from app.campaigns.repository import (
     CAMPAIGN_ID_PATTERN, CampaignInactive, CampaignStorageUnavailable, CampaignUnavailable,
@@ -201,6 +202,7 @@ def get_orchestrator() -> ChatOrchestrator:
         LLMClient(settings),
         settings,
         registry=MCPToolRegistry(settings.mcp_server_url),
+        clarification_store=PostgresCampaignClarificationStore(),
     )
 
 
@@ -425,6 +427,7 @@ def chat_query(
     try:
         ai_answer = get_orchestrator().run(
             message_content, history, scope=scope, campaign_id=payload.campaign_id,
+            session_id=session.session_id,
         )
     except LLMConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

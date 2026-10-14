@@ -53,13 +53,14 @@ class LLMClient:
         self,
         messages: list[dict[str, Any]],
         schema: dict[str, Any],
+        schema_name: str = "campaign_draft_generation",
     ) -> Any:
         return self._create_completion(
             messages=messages,
             response_format={
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "campaign_draft_generation",
+                    "name": schema_name,
                     "strict": True,
                     "schema": schema,
                 },
