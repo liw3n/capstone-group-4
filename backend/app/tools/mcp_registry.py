@@ -7,6 +7,10 @@ from fastmcp import Client
 
 from pydantic import ValidationError
 
+from app.campaigns.email import (
+    ConfirmCampaignEmailArguments,
+    PrepareCampaignEmailArguments,
+)
 from app.campaigns.models import CampaignReferenceQuery, PrepareCampaignDraftArguments
 from app.campaigns.repository import RequestScope
 from app.llm.errors import LLMProviderError
@@ -18,18 +22,27 @@ from app.tools.performance import ContactPerformanceArguments, ContactRankingArg
 class MCPToolRegistry:
     def __init__(self, transport: Any, timeout_seconds: float = 30.0,
                  scope: RequestScope | None = None,
-                 campaign_id: str | None = None) -> None:
+                 campaign_id: str | None = None,
+                 session_id: str | None = None,
+                 latest_user_message: str | None = None) -> None:
         self.transport = transport
         self.timeout_seconds = timeout_seconds
         self.scope = scope
         self.campaign_id = campaign_id
+        self.session_id = session_id
+        self.latest_user_message = latest_user_message
         self._campaign_retrieval_context: dict[str, str] | None = None
 
     def bind_scope(
-        self, scope: RequestScope, campaign_id: str | None = None
+        self, scope: RequestScope, campaign_id: str | None = None,
+        session_id: str | None = None,
+        latest_user_message: str | None = None,
     ) -> "MCPToolRegistry":
         # The cached orchestrator never stores mutable per-adviser context.
-        return MCPToolRegistry(self.transport, self.timeout_seconds, scope, campaign_id)
+        return MCPToolRegistry(
+            self.transport, self.timeout_seconds, scope, campaign_id,
+            session_id, latest_user_message,
+        )
 
     async def _list_tools(self) -> list[Any]:
         async with Client(self.transport, timeout=self.timeout_seconds) as client:
@@ -43,6 +56,10 @@ class MCPToolRegistry:
                                             "tenant_id": self.scope.tenant_id}}
                 if self.campaign_id is not None:
                     metadata["campaign_id"] = self.campaign_id
+                if self.session_id is not None:
+                    metadata["session_id"] = self.session_id
+                if self.latest_user_message is not None:
+                    metadata["latest_user_message"] = self.latest_user_message
             return await client.call_tool(name, arguments, meta=metadata, raise_on_error=False)
 
     def schemas(self) -> list[dict[str, Any]]:
@@ -160,6 +177,44 @@ class MCPToolRegistry:
                     "error_code": "invalid_draft",
                     "error": "Campaign draft arguments are invalid",
                     "created": False,
+                })
+
+        if name == "prepare_campaign_email":
+            if self.scope is None or self.session_id is None:
+                return json.dumps({
+                    "type": "campaign_email_preview",
+                    "prepared": False,
+                    "error": "Adviser and chat session context are required",
+                })
+            if self.campaign_id is not None:
+                arguments["campaign_id"] = self.campaign_id
+            try:
+                arguments = PrepareCampaignEmailArguments.model_validate(
+                    arguments
+                ).model_dump()
+            except ValidationError:
+                return json.dumps({
+                    "type": "campaign_email_preview",
+                    "prepared": False,
+                    "error": "Campaign email arguments are invalid",
+                })
+
+        if name == "confirm_campaign_email":
+            if self.scope is None or self.session_id is None:
+                return json.dumps({
+                    "type": "campaign_email_result",
+                    "sent": False,
+                    "error": "Adviser and chat session context are required",
+                })
+            try:
+                arguments = ConfirmCampaignEmailArguments.model_validate(
+                    arguments
+                ).model_dump()
+            except ValidationError:
+                return json.dumps({
+                    "type": "campaign_email_result",
+                    "sent": False,
+                    "error": "Campaign email confirmation arguments are invalid",
                 })
 
         try:

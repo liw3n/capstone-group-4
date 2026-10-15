@@ -22,6 +22,12 @@ from app.tools.campaign_follow_up import (
 )
 
 from app.campaigns.repository import CAMPAIGN_ID_PATTERN
+from app.campaigns.email import (
+    ConfirmCampaignEmailArguments,
+    PrepareCampaignEmailArguments,
+    confirm_campaign_email as execute_confirm_campaign_email,
+    prepare_campaign_email as execute_prepare_campaign_email,
+)
 from app.campaigns.models import (
     CampaignCategory,
     CampaignDraft,
@@ -133,7 +139,8 @@ def campaign_follow_up(
     additional_instructions = (
         "These candidates have already been contacted and have no recorded reply; "
         "they are not a pre-contact eligible audience. Do not add other clients or "
-        "claim a reply status not present in the results. You should infer suitability and priority only from the campaign's eligibility criteria, "
+        "claim a reply status not present in the results. Give each candidate's follow_up_reason. "
+        "You should infer suitability and priority only from the campaign's eligibility criteria, "
         "the client's portfolio and profile, and the last engagement date. "
         "Do not infer suitability or priority from any other context. "
         "priority, or a campaign-specific need from them. This tool does not check "
@@ -155,6 +162,45 @@ def _request_metadata(ctx: Context) -> dict | None:
     request = ctx.request_context
     metadata = request.meta if request is not None else None
     return metadata if metadata is None or isinstance(metadata, dict) else metadata.model_dump()
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False})
+def prepare_campaign_email(
+    subject: Annotated[str, Field(min_length=1, max_length=200)],
+    body: Annotated[str, Field(min_length=1, max_length=10_000)],
+    ctx: Context,
+    campaign_id: Annotated[str | None, Field(pattern=CAMPAIGN_ID_PATTERN, max_length=69)] = None,
+    recipient_ids: Annotated[list[str] | None, Field(min_length=1, max_length=100)] = None,
+) -> dict:
+    """Prepare an expiring campaign-email preview for adviser review.
+
+    The subject and body are AI-generated drafts. The server resolves the
+    selected campaign, recalculates criteria matches, enforces adviser/tenant
+    ownership and email consent, and stores the exact preview. This tool never
+    sends email. Omit recipient_ids to use all consenting campaign matches.
+    """
+    logger.info("MCP tool called: prepare_campaign_email")
+    arguments = PrepareCampaignEmailArguments(
+        campaign_id=campaign_id,
+        recipient_ids=recipient_ids,
+        subject=subject,
+        body=body,
+    )
+    return execute_prepare_campaign_email(arguments, _request_metadata(ctx))
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True})
+def confirm_campaign_email(ctx: Context) -> dict:
+    """Send the latest reviewed campaign email after exact adviser confirmation.
+
+    The confirmation phrase is read from trusted latest-message metadata, never
+    from model arguments. The server rechecks campaign access, criteria and
+    email consent, records provider outcomes, and appends successful contacts to
+    campaign history. Repeated confirmation is idempotent.
+    """
+    logger.info("MCP tool called: confirm_campaign_email")
+    ConfirmCampaignEmailArguments()
+    return execute_confirm_campaign_email(_request_metadata(ctx))
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})

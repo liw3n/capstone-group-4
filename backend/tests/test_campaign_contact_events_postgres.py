@@ -206,7 +206,7 @@ def test_real_mcp_counts_contacts_within_period_and_adviser_scope(database, monk
     camp1 = json.loads(registry.execute("get_campaign_contact_performance",
                                         '{"campaign":"Legacy Protection Refresh"}'))
     assert (camp1["contacted_clients_total"], camp1["contacted_clients_this_week"],
-            camp1["first_contacted_clients_this_week"]) == (8, 1, 1)
+            camp1["first_contacted_clients_this_week"]) == (7, 1, 1)
     camp2 = json.loads(registry.execute("get_campaign_contact_performance",
                                         '{"campaign":"camp-2"}'))
     assert (camp2["contacted_clients_total"], camp2["contacted_clients_this_week"],
@@ -258,7 +258,7 @@ def test_chat_routes_pass_contact_performance_tool_result(database, monkeypatch)
                 "performance-pg", "get_campaign_contact_performance", "{}"
             )])),
             completion(message(content=("Legacy Protection Refresh is ongoing. "
-                "As of 12 October 2026, 8 clients have been contacted. "
+                "As of 12 October 2026, 7 clients have been contacted. "
                 "1 was contacted this week. (Synthetic data.)"))),
         ])
         orchestrator = ChatOrchestrator(provider, settings(), MCPToolRegistry(server))
@@ -268,9 +268,9 @@ def test_chat_routes_pass_contact_performance_tool_result(database, monkeypatch)
             "message_content": "How many clients have been contacted this week?",
         })
         assert response.status_code == 200
-        assert "8 clients" in response.json()["ai_answer"]
+        assert "7 clients" in response.json()["ai_answer"]
         tool_result = json.loads(provider.calls[1]["messages"][-1]["content"])
-        assert tool_result["contacted_clients_total"] == 8
+        assert tool_result["contacted_clients_total"] == 7
         assert tool_result["contacted_clients_this_week"] == 1
 
 
@@ -359,7 +359,7 @@ def test_contact_ranking_uses_recorded_counts_and_adviser_scope(database, monkey
     total = json.loads(registry.execute("get_campaign_contact_ranking", "{}"))
     assert total["campaign_count"] == 2
     assert [(item["campaign_id"], item["contacted_clients"])
-            for item in total["ranked_campaigns"]] == [("camp-1", 8), ("camp-2", 5)]
+            for item in total["ranked_campaigns"]] == [("camp-1", 7), ("camp-2", 5)]
     assert total["leaders"][0]["campaign_id"] == "camp-1"
     last_week = json.loads(registry.execute("get_campaign_contact_ranking",
                                             '{"period":"last_week"}'))
@@ -377,7 +377,7 @@ def test_contact_ranking_uses_recorded_counts_and_adviser_scope(database, monkey
                                          tzinfo=ZoneInfo("Asia/Singapore")))
     after_campaign = json.loads(registry.execute("get_campaign_contact_ranking", "{}"))
     assert [(item["campaign_id"], item["contacted_clients"])
-            for item in after_campaign["ranked_campaigns"]] == [("camp-1", 8), ("camp-2", 6)]
+            for item in after_campaign["ranked_campaigns"]] == [("camp-1", 7), ("camp-2", 6)]
 
 
 def test_chat_route_can_compare_campaigns_despite_selected_campaign(database, monkeypatch):
@@ -408,7 +408,7 @@ def test_chat_route_can_compare_campaigns_despite_selected_campaign(database, mo
             "ranking", "get_campaign_contact_ranking", "{}"
         )])),
         completion(message(content=("Legacy Protection Refresh has the most clients "
-                                    "contacted: 8 (synthetic data)."))),
+                                    "contacted: 7 (synthetic data)."))),
     ])
     orchestrator = ChatOrchestrator(provider, settings(), MCPToolRegistry(server))
     monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
@@ -419,5 +419,5 @@ def test_chat_route_can_compare_campaigns_despite_selected_campaign(database, mo
     assert response.status_code == 200
     assert "Legacy Protection Refresh" in response.json()["ai_answer"]
     tool_result = json.loads(provider.calls[1]["messages"][-1]["content"])
-    assert tool_result["highest_contacted_clients"] == 8
+    assert tool_result["highest_contacted_clients"] == 7
     assert [item["campaign_id"] for item in tool_result["ranked_campaigns"]] == ["camp-1", "camp-2"]

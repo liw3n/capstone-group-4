@@ -86,7 +86,7 @@ schemas and calls them through `app/tools/mcp_registry.py`. Configure
 The registered tools include `recommend_clients_for_campaign`,
 `get_active_campaigns`, `get_campaign_contact_performance`,
 `get_campaign_contact_ranking`, `find_campaign_references`,
-`prepare_campaign_draft`, and
+`prepare_campaign_draft`, `prepare_campaign_email`, `confirm_campaign_email`, and
 `campaign_follow_up`. Campaign matching and scoped data access live in
 `app/campaigns/`; shared follow-up handlers live in
 `app/tools/campaign_follow_up.py`. Follow-up handlers query the mock engagement
@@ -155,8 +155,9 @@ scoped `mock_client` rows used by MCP matching; there is no frontend contact
 fixture. The REST campaign catalogue (`/campaigns/...` and `/api/campaigns/...`) persists
 the campaign screens' definitions and mutable campaign state in the same
 `mock_campaign` rows used by the MCP tools. The frontend no longer ships a
-second campaign seed. Sends are still confirmed simulations; contacts, pipeline
-cards and tasks remain browser state.
+second campaign seed. The existing campaign-detail email modal remains a browser
+simulation. PULSE email sends use the backend confirmation flow described below;
+contacts, pipeline cards and tasks remain browser state.
 
 PULSE can recommend synthetic clients for the selected seeded campaign using
 `recommend_clients_for_campaign`. The model sees campaign ID and limit only;
@@ -188,3 +189,35 @@ contacted-client counts; `get_campaign_contact_ranking` compares all accessible
 campaigns by that same measure, including zero-contact campaigns and ties. The
 API still accepts a caller-supplied FA ID, so this local prototype does not
 provide production authentication.
+
+## PULSE campaign email
+
+The adviser can ask PULSE to draft or revise an email for a selected campaign.
+The model supplies draft subject/body text to `prepare_campaign_email`; the
+server recalculates criteria matches and filters them by tenant, adviser ownership
+and `opt_in_email`. It stores the exact preview in `campaign_email_send` and
+returns its included and excluded recipients plus an expiring phrase such as
+`CONFIRM EMAIL ABC234`. Nothing is sent during preparation.
+
+Only the exact phrase in the latest user message can invoke
+`confirm_campaign_email`. The server rechecks campaign access, matching and
+consent, then sends once per recipient through the configured transport. Local
+development defaults to `EMAIL_DELIVERY_MODE=mock`, which simulates accepted
+delivery without network access. Successful recipients each create a new
+`mock_campaign_contact_event` row with `channel=email` and the batch ID, so
+repeat outreach is retained while distinct-client performance counts remain
+unchanged. Repeating the same confirmation returns the saved batch result and
+does not send or log again.
+
+`EMAIL_DELIVERY_MODE=gwm` selects the server-side GWM Core Email API adapter.
+Its base URL, sender and any API key must remain in backend environment settings.
+The supplied specification does not define authentication, rate limits,
+idempotency or definitive application-level success codes, so live mode should
+not be enabled until those details and a test endpoint are confirmed by the API
+owner.
+
+The schema follows the repository's rebuild convention rather than an in-place
+migration. After pulling this change into an environment that already has the
+old contact-event table, run `terraform destroy` from `backend/terraform`, then
+run `make provision` from the repository root. This recreates the local tables
+with email batch/channel fields and reloads the checked-in synthetic seed data.

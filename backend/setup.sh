@@ -159,7 +159,7 @@ run_sql_file() {
 
 ##### Create tables before dependent tables #####
 create_dir="$BACKEND_DIR/tables/create"
-for table_script in create_campaign_chat_sessions.sql create_mock_campaign.sql create_mock_client.sql; do
+for table_script in create_campaign_chat_sessions.sql create_mock_campaign.sql create_mock_client.sql create_mock_campaign_advisor.sql create_campaign_email_send.sql create_mock_campaign_contact_event.sql; do
     if [[ -f "$create_dir/$table_script" ]]; then
         run_sql_file "$create_dir/$table_script"
     fi
@@ -168,7 +168,7 @@ done
 for table_script in "$create_dir"/*.sql; do
     [[ -f "$table_script" ]] || continue
     case "${table_script##*/}" in
-        create_campaign_chat_sessions.sql|create_mock_campaign.sql|create_mock_client.sql)
+        create_campaign_chat_sessions.sql|create_mock_campaign.sql|create_mock_client.sql|create_mock_campaign_advisor.sql|create_campaign_email_send.sql|create_mock_campaign_contact_event.sql)
             continue
             ;;
     esac

@@ -170,7 +170,7 @@ def test_engagement_status_update_requires_adviser_id(monkeypatch):
         lambda *_args: (_ for _ in ()).throw(AssertionError("storage must not be called")),
     )
     response = client.post(
-        "/campaigns/update-engagement-status",
+        "/campaign/update-engagement-status",
         json={"campaign_id": "camp-1", "contact_id": "client-001", "status": 1},
     )
 

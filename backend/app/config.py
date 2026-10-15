@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=30.0, gt=0)
     llm_max_tool_rounds: int = Field(default=5, ge=1, le=20)
     llm_history_limit: int = Field(default=50, ge=1, le=500)
+    email_delivery_mode: str = "mock"
+    gwm_email_base_url: str | None = None
+    gwm_email_send_path: str = "/EmailNotification/SendEmail"
+    gwm_email_sender: str | None = None
+    gwm_email_api_key: SecretStr | None = None
+    gwm_email_timeout_seconds: float = Field(default=15.0, gt=0, le=60)
 
     @property
     def llm_configured(self) -> bool:
