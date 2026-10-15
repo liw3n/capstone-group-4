@@ -14,12 +14,18 @@ CREATE TABLE IF NOT EXISTS mock_campaign_contact_event (
     fa_id VARCHAR(64) NOT NULL,
     contact_id VARCHAR(64) NOT NULL,
     contacted_at TIMESTAMPTZ NOT NULL,
-    engagement_status INT NOT NULL CHECK (engagement_status IN (0, 1, 2)),
+    engagement_status INT NOT NULL DEFAULT 0 CHECK (engagement_status IN (0, 1, 2)),
+    send_batch_id VARCHAR(64),
+    channel VARCHAR(16) NOT NULL DEFAULT 'manual'
+        CHECK (channel IN ('manual', 'email')),
+    delivery_mode VARCHAR(16) NOT NULL DEFAULT 'manual'
+        CHECK (delivery_mode IN ('manual', 'mock', 'gwm')),
     PRIMARY KEY (tenant_id, contact_event_id),
     FOREIGN KEY (tenant_id, campaign_id, fa_id)
         REFERENCES mock_campaign_advisor (tenant_id, campaign_id, fa_id),
     FOREIGN KEY (tenant_id, contact_id, fa_id)
-        REFERENCES mock_client (tenant_id, contact_id, fa_id)
+        REFERENCES mock_client (tenant_id, contact_id, fa_id),
+    UNIQUE (tenant_id, send_batch_id, contact_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_mock_campaign_contact_event_scope

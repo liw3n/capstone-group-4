@@ -13,3 +13,5 @@
 /docs/*.docx
 /docs/*.pdf
 /gwm_api/*.json
+
+backend/.env.backup

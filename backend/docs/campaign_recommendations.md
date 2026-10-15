@@ -149,13 +149,14 @@ the MCP transport. This is not a production security boundary.
 
 ## Campaign loop and verification
 
-This change implements selection, explainable matching and a read-only conversation.
-It does not authorise outreach. Matching does not filter by communication consent
-because it produces a review list, not recipients. Consent validation, outreach
-preview/confirmation, interaction/task logging and outcome measurement still need
-backend implementations. The existing frontend send/task flows remain separate
-simulations. The tool and system prompt explicitly distinguish criteria matching
-from suitability assessment and financial advice.
+Matching remains a read-only review list and therefore does not filter by
+communication consent. When an adviser separately asks PULSE to prepare email,
+the backend turns matching results into a consent-filtered preview and requires
+an exact, expiring confirmation phrase before delivery. Successful mock or GWM
+adapter results append campaign contact events. Task creation and purchase/outcome
+measurement remain unimplemented. The existing frontend send/task flows remain
+separate simulations. The tool and system prompt explicitly distinguish criteria
+matching from suitability assessment and financial advice.
 
 Manual check with the existing backend/database/provider setup:
 

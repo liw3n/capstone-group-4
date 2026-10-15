@@ -70,7 +70,7 @@ def test_seed_is_repeatable_and_matches_are_read_from_postgres(database):
     assert database.execute(
         "SELECT email FROM mock_client WHERE contact_id = 'client-001'"
     ).fetchone()[0] == "demo.client.a@example.test"
-    assert database.execute("SELECT count(*) FROM mock_client WHERE opt_in_email OR opt_in_sms").fetchone()[0] == 0
+    assert database.execute("SELECT count(*) FROM mock_client WHERE opt_in_email").fetchone()[0] == 3
     for campaign_id, ids, excluded in (
         ("camp-1", ["client-001", "client-002", "client-003", "client-012"], 6),
         ("camp-2", ["client-006", "client-007", "client-008"], 7),
@@ -177,7 +177,7 @@ def test_campaign_email_log_requires_owned_opted_in_contact(database):
     state = {
         "includeIds": campaign["includeIds"], "excludeIds": campaign["excludeIds"],
         "leadIds": [], "leadStats": campaign["leadStats"], "actions": {},
-        "emailLog": [{"id": "email-1", "recipientIds": ["client-001"]}],
+        "emailLog": [{"id": "email-1", "recipientIds": ["client-002"]}],
         "leadContacts": [],
     }
     with pytest.raises(ValueError, match="email consent"):
@@ -185,10 +185,10 @@ def test_campaign_email_log_requires_owned_opted_in_contact(database):
 
     database.execute(
         """UPDATE mock_client SET opt_in_email = TRUE
-           WHERE tenant_id = 'pulse-demo' AND contact_id = 'client-001'"""
+           WHERE tenant_id = 'pulse-demo' AND contact_id = 'client-002'"""
     )
     updated = catalog.update_campaign_state("advisor", scope, "camp-1", state)
-    assert updated["emailLog"][0]["recipientIds"] == ["client-001"]
+    assert updated["emailLog"][0]["recipientIds"] == ["client-002"]
 
 
 def test_database_filters_adviser_and_tenant_even_for_duplicate_campaign_ids(database):

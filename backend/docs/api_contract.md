@@ -577,3 +577,40 @@ accessible campaigns sets `ranking_truncated`; if the highest-place tie extends
 beyond the returned entries, `leaders_truncated` is also true. No accessible
 campaigns produce an empty ranking and a clear summary. Missing adviser context,
 invalid arguments, and database outages return structured errors without counts.
+
+### MCP: prepare_campaign_email
+
+This tool prepares and persists an email preview; it does not send. Model-facing
+arguments are `subject` (1-200 characters), `body` (1-10,000 characters),
+optional `campaign_id`, and optional unique `recipient_ids` (1-100). When a
+campaign is selected in the UI, trusted request metadata overrides the model's
+campaign value. Adviser ID, tenant ID, chat session ID and latest user message
+are supplied only through MCP metadata.
+
+The server verifies campaign assignment and active state, recalculates campaign
+criteria matches, then loads only adviser-owned contacts. Contacts that are not
+matches or lack `opt_in_email` are returned under `excluded_recipients`; they are
+never included in the stored batch. Omitting `recipient_ids` selects all matched,
+consenting contacts. A successful result contains the exact subject, body,
+recipient snapshot, excluded recipients, delivery mode, 15-minute expiry and an
+exact `CONFIRM EMAIL <code>` phrase. A newer preview for the same chat session
+and campaign supersedes its prior unconfirmed preview.
+
+### MCP: confirm_campaign_email
+
+This consequential tool has no model-facing arguments. The API-side orchestrator
+routes an exact confirmation phrase directly, and MCP reads the latest user
+message from trusted metadata. General approval language cannot send an email.
+
+The server locks the latest batch, verifies its hashed phrase and expiry, and
+rechecks campaign access, criteria matching, ownership and email consent. It
+calls the configured transport once for each recipient and stores bounded
+per-recipient outcomes. Every successful outcome appends one
+`mock_campaign_contact_event` with `engagement_status=0`, `channel=email`, the
+delivery mode and `send_batch_id`. Failed or unknown outcomes do not create a
+contact event. Repeating a completed confirmation returns the stored result and
+does not send again. A deliberate resend requires a new preview and phrase.
+
+Local `EMAIL_DELIVERY_MODE=mock` results are explicitly simulated. Optional
+`gwm` mode uses the server-side GWM Core Email API adapter; credentials and
+provider settings are never model arguments or browser configuration.

@@ -16,6 +16,7 @@ from app.campaigns.clarification import (
     render_campaign_clarification,
 )
 from app.campaigns.models import CampaignDraftArtifact
+from app.campaigns.email import CONFIRMATION_PATTERN, render_campaign_email
 from app.campaigns.presentation import render_campaign_draft
 from app.campaigns.repository import RequestScope
 from app.config import Settings
@@ -85,6 +86,24 @@ Campaign IDs are allowed in discovery output; names must also be shown. State
 empty results, disclose truncation and label synthetic data. Campaign details are
 for adviser review, not a product suitability assessment or financial advice.
 Do not interpret discovery as checking consent or authorising communications.
+"""
+
+SYSTEM_PROMPT += """
+For campaign email outreach, use prepare_campaign_email only when the adviser
+asks to draft, revise, review or prepare an email for a campaign audience. Write
+an educational subject and body, avoid promises or unsupported claims, and state
+that individual circumstances and suitability require adviser review. Use
+{{client_name}} for optional name personalisation. Supply recipient_ids only
+when the adviser explicitly selected a subset; otherwise let the server use all
+consenting criteria matches. The tool creates a reviewable preview and never
+sends. Present the server-rendered recipients, exclusions, content and exact
+confirmation phrase without alteration. A revision requires a new preview.
+
+Email sending requires the adviser to enter the exact confirmation phrase from
+the latest preview. Never infer approval from words such as approve, proceed or
+send it, and never place a confirmation phrase in tool arguments. The server
+reads the latest user message, revalidates campaign ownership, matching and
+email consent, then records successful recipients as campaign contact events.
 """
 
 CAMPAIGN_INTENT_EXTRACTION_PROMPT = """Extract only campaign intent explicitly
@@ -289,7 +308,9 @@ def _apply_targeting_lock(
 
 class ToolExecutor(Protocol):
     def bind_scope(
-        self, scope: RequestScope, campaign_id: str | None = None
+        self, scope: RequestScope, campaign_id: str | None = None,
+        session_id: str | None = None,
+        latest_user_message: str | None = None,
     ) -> "ToolExecutor": ...
 
     def schemas(self) -> list[dict[str, Any]]: ...
@@ -433,11 +454,31 @@ class ChatOrchestrator:
         campaign_id: str | None = None,
         session_id: str | None = None,
     ) -> str:
-        registry = (
-            self.registry.bind_scope(scope, campaign_id)
-            if scope is not None
-            else self.registry
-        )
+        if scope is not None:
+            try:
+                registry = self.registry.bind_scope(
+                    scope, campaign_id, session_id, user_message
+                )
+            except TypeError:
+                # Compatibility for small test/local registries that do not
+                # carry request metadata to an MCP server.
+                registry = self.registry.bind_scope(scope, campaign_id)
+        else:
+            registry = self.registry
+
+        if (
+            scope is not None
+            and session_id
+            and CONFIRMATION_PATTERN.fullmatch(user_message.strip())
+        ):
+            result = registry.execute("confirm_campaign_email", "{}")
+            try:
+                payload = json.loads(result)
+            except json.JSONDecodeError as exc:
+                raise LLMProviderError("Campaign email tool returned invalid JSON") from exc
+            if not isinstance(payload, dict):
+                raise LLMProviderError("Campaign email tool returned an invalid result")
+            return render_campaign_email(payload)
         prompt = SYSTEM_PROMPT
         if scope is not None:
             prompt += "\nCurrent campaign context (server-validated): " + json.dumps(
@@ -603,6 +644,20 @@ class ChatOrchestrator:
                     artifact = _prepared_campaign_draft(result)
                     if artifact is not None:
                         return render_campaign_draft(artifact)
+                if tool_call.function.name in {
+                    "prepare_campaign_email", "confirm_campaign_email"
+                }:
+                    try:
+                        email_payload = json.loads(result)
+                    except json.JSONDecodeError as exc:
+                        raise LLMProviderError(
+                            "Campaign email tool returned invalid JSON"
+                        ) from exc
+                    if not isinstance(email_payload, dict):
+                        raise LLMProviderError(
+                            "Campaign email tool returned an invalid result"
+                        )
+                    return render_campaign_email(email_payload)
                 messages.append(
                     {
                         "role": "tool",

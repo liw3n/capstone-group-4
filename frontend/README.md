@@ -455,12 +455,12 @@ model-provider key.
   regular Contacts upload wizard *does* dedupe, via `lib/dedupe.ts` (see
   Contacts above). Wiring the same check into lead imports is a natural
   follow-up, not attempted here to keep the two upload paths' scope apart.
-- **No email is ever sent.** There is no mail transport, no SMTP, no provider
-  key. The mass-email flow persists a `CampaignEmail` against the campaign and
-  does nothing more; the confirm and receipt screens state this plainly and should
-  keep doing so. Wiring a real provider in means replacing `handleSendCampaignEmail`
-  in `App.tsx` — the composition and confirmation UI already produce everything
-  a send would need (from, to, subject, body).
+- **The campaign-detail email modal is still a simulation.** It persists a
+  `CampaignEmail` against the campaign and does nothing more; its confirm and
+  receipt screens state this plainly. The separate PULSE chat workflow uses
+  backend MCP preview/confirmation tools, defaults to simulated delivery, and
+  records successful recipients as campaign contact events. No frontend changes
+  are required for that conversational flow.
 
 ## Testing
 
