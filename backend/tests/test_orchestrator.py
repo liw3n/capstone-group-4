@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,7 @@ from app.campaigns.repository import RequestScope
 from app.campaigns.models import (
     CampaignDraftArtifact,
     PersistedCampaignDraftArtifact,
+    PersistedCampaignDraftOptionSet,
 )
 from app.campaigns.presentation import render_campaign_draft
 from app.llm.errors import LLMProviderError, LLMToolLoopError
@@ -22,6 +24,7 @@ from app.llm.orchestrator import (
     SYSTEM_PROMPT,
     _is_campaign_generation_request,
     is_campaign_revision_candidate,
+    is_campaign_turn_candidate,
 )
 from app.store import ChatHistoryItem
 from app.tools.registry import ToolDefinition, ToolRegistry
@@ -258,6 +261,26 @@ def persisted_campaign_draft(revision=1, **draft_changes):
         "status": "generated",
         "changedFields": [],
     })
+
+
+def persisted_name_options(revision=1):
+    return PersistedCampaignDraftOptionSet(
+        optionSetId="22222222-2222-4222-8222-222222222222",
+        draftId="11111111-1111-4111-8111-111111111111",
+        baseRevision=revision,
+        field="name",
+        options=[
+            "Campus Capital Lab",
+            "First Portfolio Project",
+            "Invest Early Studio",
+            "Student Wealth Workshop",
+            "Youth Wealth Lab",
+        ],
+        status="pending",
+        expiresAt=datetime.now(timezone.utc) + timedelta(minutes=10),
+    )
+
+
 class CampaignRevisionRegistry:
     def __init__(self):
         self.executed = []
@@ -434,6 +457,7 @@ def test_campaign_client_tool_prompt_separates_pre_and_post_contact_intent():
         "Create a retirement campaign",
         "Generate a campaign draft for younger clients",
         "Campaign proposal for an educational retirement review",
+        "Start a new campaign",
     ],
 )
 def test_clear_campaign_generation_requests_use_server_pipeline(message_value):
@@ -528,6 +552,178 @@ def test_ambiguous_revision_asks_for_fields_without_a_model_call():
     assert result.artifacts == ()
 
 
+def test_name_options_are_structured_and_do_not_mutate_the_draft():
+    current = persisted_campaign_draft()
+    client = FakeClient([
+        completion(message(content=json.dumps({
+            "options": [
+                "Campus Capital Lab",
+                "First Portfolio Project",
+                "Invest Early Studio",
+                "Student Wealth Workshop",
+                "Youth Wealth Lab",
+            ],
+        })))
+    ])
+    registry = CampaignRevisionRegistry()
+    orchestrator = ChatOrchestrator(client, settings(), registry)
+
+    result = orchestrator.run(
+        "Can you give me a more unique campaign name?",
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        current_draft=current,
+        revision_context_checked=True,
+    )
+
+    assert client.calls[0]["schema_name"] == "campaign_draft_field_options"
+    proposal = result.artifacts[0]
+    assert proposal.field == "name"
+    assert proposal.baseRevision == 1
+    assert proposal.options[4] == "Youth Wealth Lab"
+    assert registry.executed == []
+    assert "do not change the draft until you select one" in result.answer
+
+
+@pytest.mark.parametrize(
+    "selection_message",
+    ["Let's try the fifth option", "The fifth one, please."],
+)
+def test_numbered_option_selection_revises_only_its_bound_field(selection_message):
+    current = persisted_campaign_draft()
+    options = persisted_name_options()
+    registry = CampaignRevisionRegistry()
+    client = FakeClient([])
+    orchestrator = ChatOrchestrator(client, settings(), registry)
+
+    result = orchestrator.run(
+        selection_message,
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        current_draft=current,
+        pending_draft_options=options,
+        revision_context_checked=True,
+    )
+
+    assert client.calls == []
+    assert registry.executed[0][1]["proposedChanges"] == {
+        "name": "Youth Wealth Lab"
+    }
+    assert registry.executed[0][1]["fields"] == ["name"]
+    assert result.artifacts[0].draft.name == "Youth Wealth Lab"
+    assert result.selected_option_set_id == options.optionSetId
+    assert result.selected_option_number == 5
+    assert result.requested_revision_fields == ("name",)
+
+
+def test_full_campaign_request_renders_active_draft_without_restart():
+    current = persisted_campaign_draft(name="Youth Wealth Lab")
+    client = FakeClient([])
+    orchestrator = ChatOrchestrator(
+        client, settings(), CampaignRevisionRegistry()
+    )
+
+    result = orchestrator.run(
+        "Please draft the full campaign",
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        current_draft=current,
+        revision_context_checked=True,
+    )
+
+    assert client.calls == []
+    assert result.artifacts == ()
+    assert "Youth Wealth Lab" in result.answer
+    assert "Current revision:** 1" in result.answer
+    assert "No draft fields were changed" in result.answer
+
+
+def test_generation_wording_does_not_replace_an_active_draft_implicitly():
+    client = FakeClient([])
+    orchestrator = ChatOrchestrator(
+        client, settings(), CampaignRevisionRegistry()
+    )
+
+    result = orchestrator.run(
+        "Please create a retirement campaign",
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        current_draft=persisted_campaign_draft(),
+        revision_context_checked=True,
+    )
+
+    assert client.calls == []
+    assert result.artifacts == ()
+    assert "explicitly that you want to start a new campaign" in result.answer
+
+
+def test_model_classifier_cannot_invent_new_draft_intent():
+    client = FakeClient([
+        completion(message(content=json.dumps({
+            "action": "start_new_draft",
+            "fields": [],
+            "optionNumber": None,
+        })))
+    ])
+    orchestrator = ChatOrchestrator(
+        client, settings(), CampaignRevisionRegistry()
+    )
+
+    result = orchestrator.run(
+        "Can we rethink the draft?",
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        current_draft=persisted_campaign_draft(),
+        revision_context_checked=True,
+    )
+
+    assert client.calls[0]["schema_name"] == "campaign_turn_decision"
+    assert result.artifacts == ()
+    assert "explicitly that you want to start a new campaign" in result.answer
+
+
+def test_active_draft_does_not_intercept_an_unrelated_tool_request():
+    client = FakeClient([
+        completion(
+            message(tool_calls=[tool_call("call-1", "calculate_sum", '{"a": 2, "b": 3}')])
+        ),
+        completion(message(content="The total is 5.")),
+    ])
+    orchestrator = ChatOrchestrator(client, settings(), tool_registry())
+
+    result = orchestrator.run(
+        "What is two plus three?",
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        current_draft=persisted_campaign_draft(),
+        revision_context_checked=True,
+    )
+
+    assert result == "The total is 5."
+    assert client.calls[0]["structured"] is False
+    assert client.calls[0]["tools"][0]["function"]["name"] == "calculate_sum"
+
+
+@pytest.mark.parametrize(
+    "message_value",
+    [
+        "Which male clients match this campaign?",
+        "Show clients contacted by this campaign who have not replied",
+        "How did this campaign perform last week?",
+        "List active campaigns",
+        "Draft an email for this campaign",
+    ],
+)
+def test_existing_campaign_tool_intents_bypass_active_draft_routing(message_value):
+    assert is_campaign_turn_candidate(message_value) is False
+
+
 def test_revision_without_a_stored_draft_does_not_restart_generation():
     orchestrator = ChatOrchestrator(
         FakeClient([]), settings(), CampaignRevisionRegistry()
@@ -543,6 +739,25 @@ def test_revision_without_a_stored_draft_does_not_restart_generation():
 
     assert "No campaign draft is available to revise" in result
     assert result.artifacts == ()
+
+
+def test_option_request_without_a_stored_draft_does_not_fall_into_generic_chat():
+    orchestrator = ChatOrchestrator(
+        FakeClient([]), settings(), CampaignRevisionRegistry()
+    )
+
+    result = orchestrator.run(
+        "Give me five more unique campaign name options",
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        revision_context_checked=True,
+    )
+
+    assert "No campaign draft is available to revise" in result
+    assert result.artifacts == ()
+
+
 def test_successful_campaign_draft_is_rendered_without_another_model_call():
     artifact = campaign_draft_artifact()
     client = FakeClient([

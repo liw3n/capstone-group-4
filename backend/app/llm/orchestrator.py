@@ -1,5 +1,6 @@
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import re
 from typing import Any, Protocol
@@ -19,8 +20,11 @@ from app.campaigns.clarification import (
 from app.campaigns.models import (
     CampaignDraftArtifact,
     CampaignDraftField,
+    CampaignDraftOptionProposal,
     CampaignDraftRevisionArtifact,
+    CampaignTurnDecision,
     PersistedCampaignDraftArtifact,
+    PersistedCampaignDraftOptionSet,
 )
 from app.campaigns.email import CONFIRMATION_PATTERN, render_campaign_email
 from app.campaigns.presentation import render_campaign_draft
@@ -178,9 +182,12 @@ class OrchestratorResult:
 
     answer: str
     artifacts: tuple[
-        CampaignDraftArtifact | CampaignDraftRevisionArtifact,
+        CampaignDraftArtifact | CampaignDraftRevisionArtifact | CampaignDraftOptionProposal,
         ...,
     ] = ()
+    selected_option_set_id: str | None = None
+    selected_option_number: int | None = None
+    requested_revision_fields: tuple[CampaignDraftField, ...] = ()
 
     # These small conveniences keep local callers that only display text easy to
     # migrate while the API consumes the explicit typed fields.
@@ -197,17 +204,30 @@ class OrchestratorResult:
             return (
                 self.answer == other.answer
                 and self.artifacts == other.artifacts
+                and self.selected_option_set_id == other.selected_option_set_id
+                and self.selected_option_number == other.selected_option_number
+                and self.requested_revision_fields == other.requested_revision_fields
             )
         return NotImplemented
 
 
 def _answer(
     value: str,
-    artifact: CampaignDraftArtifact | CampaignDraftRevisionArtifact | None = None,
+    artifact: (
+        CampaignDraftArtifact | CampaignDraftRevisionArtifact
+        | CampaignDraftOptionProposal | None
+    ) = None,
+    *,
+    selected_option_set_id: str | None = None,
+    selected_option_number: int | None = None,
+    requested_revision_fields: tuple[CampaignDraftField, ...] = (),
 ) -> OrchestratorResult:
     return OrchestratorResult(
         value,
         (artifact,) if artifact is not None else (),
+        selected_option_set_id,
+        selected_option_number,
+        requested_revision_fields,
     )
 
 
@@ -275,9 +295,11 @@ def _campaign_reference_failure(result: str) -> str:
 
 def _is_campaign_generation_request(message: str) -> bool:
     normalized = " ".join(message.casefold().split())
+    if re.search(r"\b(?:email|mail|outreach)\b", normalized):
+        return False
     return bool(
         re.search(
-            r"\b(?:create|generate|draft|propose|design|build|launch|run)\b"
+            r"\b(?:start|create|generate|draft|propose|design|build|launch|run)\b"
             r".{0,100}\bcampaign\b",
             normalized,
         )
@@ -285,6 +307,134 @@ def _is_campaign_generation_request(message: str) -> bool:
             r"\bcampaign\b.{0,100}\b(?:idea|objective|proposal|draft)\b",
             normalized,
         )
+    )
+
+
+_CAMPAIGN_TURN_DECISION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "action": {
+            "type": "string",
+            "enum": [
+                "ordinary_chat", "revise_fields", "suggest_field_options",
+                "select_field_option", "show_current_draft", "start_new_draft",
+                "needs_clarification",
+            ],
+        },
+        "fields": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": [
+                    "name", "description", "clientMessage", "ageGroups",
+                    "genders", "cashBands", "targetDemographicSummary",
+                ],
+            },
+        },
+        "optionNumber": {"type": ["integer", "null"]},
+    },
+    "required": ["action", "fields", "optionNumber"],
+}
+
+_ORDINALS = {
+    "first": 1, "1st": 1,
+    "second": 2, "2nd": 2,
+    "third": 3, "3rd": 3,
+    "fourth": 4, "4th": 4,
+    "fifth": 5, "5th": 5,
+    "sixth": 6, "6th": 6,
+    "seventh": 7, "7th": 7,
+    "eighth": 8, "8th": 8,
+    "ninth": 9, "9th": 9,
+    "tenth": 10, "10th": 10,
+}
+
+_ORDINAL_WORD_PATTERN = "|".join(
+    word for word in _ORDINALS if not word[0].isdigit()
+)
+
+
+def _option_number(message: str, option_count: int | None = None) -> int | None:
+    normalized = " ".join(message.casefold().split())
+    if option_count is not None and re.search(r"\b(?:last|final)\s+(?:option|one)\b", normalized):
+        return option_count
+    match = re.search(
+        r"\b(?:option\s*)?(10|[1-9])(?:st|nd|rd|th)?\b|"
+        r"\b(" + "|".join(_ORDINALS) + r")\b",
+        normalized,
+    )
+    if not match:
+        return None
+    return int(match.group(1)) if match.group(1) else _ORDINALS[match.group(2)]
+
+
+def _is_compact_option_selection(message: str) -> bool:
+    normalized = " ".join(message.casefold().split())
+    return bool(re.fullmatch(
+        r"(?:the\s+)?(?:option\s+)?(?:10|[1-9])(?:st|nd|rd|th)?"
+        r"(?:\s+(?:option|one))?,?(?:\s+please)?[.!]?|"
+        r"(?:the\s+)?(?:" + _ORDINAL_WORD_PATTERN + r")"
+        r"(?:\s+(?:option|one))?,?(?:\s+please)?[.!]?",
+        normalized,
+    ))
+
+
+def _requested_option_count(message: str) -> int:
+    normalized = " ".join(message.casefold().split())
+    words = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+             "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+    match = re.search(
+        r"\b(?:give|show|suggest|offer|list|provide)\w*\b.{0,30}"
+        r"\b(10|[2-9]|" + "|".join(words) + r")\b",
+        normalized,
+    )
+    if not match:
+        return 5
+    value = match.group(1)
+    return int(value) if value.isdigit() else words[value]
+
+
+def _is_explicit_new_campaign_request(message: str) -> bool:
+    normalized = " ".join(message.casefold().split())
+    return bool(
+        re.search(
+            r"\b(?:new|another|separate|different|fresh)\s+campaign\b|"
+            r"\b(?:start|create|draft|generate|build)\b.{0,40}"
+            r"\b(?:new|another|separate|different|fresh)\b.{0,20}\bcampaign\b|"
+            r"\b(?:discard|replace|abandon)\b.{0,40}\b(?:current|this)\s+(?:draft|campaign)\b",
+            normalized,
+        )
+    )
+
+
+def _is_email_campaign_request(message: str) -> bool:
+    normalized = " ".join(message.casefold().split())
+    return bool(
+        re.search(r"\b(?:email|mail|outreach)\b", normalized)
+        and re.search(r"\b(?:draft|write|prepare|revise|send|campaign)\b", normalized)
+    )
+
+
+def _is_ordinary_campaign_operation(message: str) -> bool:
+    """Recognise established campaign-tool intents before draft routing."""
+    normalized = " ".join(message.casefold().split())
+    return bool(
+        re.search(
+            r"\b(?:client|clients|contact|contacts|recipient|recipients|audience)\b",
+            normalized,
+        )
+        and re.search(
+            r"\b(?:find|list|show|which|who|match|matches|matching|recommend|"
+            r"eligible|contacted|responded|replied|follow[ -]?up)\b",
+            normalized,
+        )
+        or re.search(
+            r"\b(?:performance|performed|results?|outcomes?|contact ranking|"
+            r"most clients|highest number)\b",
+            normalized,
+        )
+        or re.search(r"\b(?:list|show|find)\b.{0,25}\bactive campaigns?\b", normalized)
     )
 
 
@@ -353,6 +503,101 @@ def is_campaign_revision_candidate(message: str) -> bool:
     return bool(_campaign_revision_fields(message)) or _is_ambiguous_campaign_revision(
         message
     )
+
+
+def _campaign_fields_mentioned(message: str) -> tuple[CampaignDraftField, ...]:
+    normalized = " ".join(message.casefold().split())
+    return tuple(
+        field_name
+        for field_name, pattern in _REVISION_FIELD_PATTERNS
+        if pattern.search(normalized)
+    )
+
+
+def is_campaign_turn_candidate(message: str) -> bool:
+    """High-recall gate used only to look for an older active draft safely."""
+    normalized = " ".join(message.casefold().split())
+    if _is_email_campaign_request(message):
+        return False
+    if (
+        is_campaign_revision_candidate(message)
+        or _is_explicit_new_campaign_request(message)
+        or _is_campaign_generation_request(message)
+    ):
+        return True
+    if _is_ordinary_campaign_operation(message):
+        return False
+    fields = _campaign_fields_mentioned(message)
+    return bool(
+        fields
+        and (
+            re.search(r"\b(?:campaign|draft)\b", normalized)
+            or re.search(
+                r"\b(?:give|suggest|offer|list|provide|brainstorm|options|"
+                r"alternatives|ideas)\b",
+                normalized,
+            )
+        )
+        or re.search(r"\b(?:draft|option|alternative)\b", normalized)
+        or re.search(
+            r"\b(?:use|try|choose|pick|select|prefer|go\s+with)\b.{0,30}"
+            r"\b(?:one|option|first|second|third|fourth|fifth|last|\d+)\b",
+            normalized,
+        )
+        or _is_compact_option_selection(message)
+    )
+
+
+def _deterministic_campaign_turn(
+    message: str,
+    pending_options: PersistedCampaignDraftOptionSet | None,
+) -> CampaignTurnDecision | None:
+    normalized = " ".join(message.casefold().split())
+    if _is_email_campaign_request(message):
+        return CampaignTurnDecision(action="ordinary_chat")
+    if _is_ordinary_campaign_operation(message):
+        return CampaignTurnDecision(action="ordinary_chat")
+    if _is_explicit_new_campaign_request(message):
+        return CampaignTurnDecision(action="start_new_draft")
+
+    option_number = _option_number(
+        message, len(pending_options.options) if pending_options is not None else None
+    )
+    if option_number is not None and (
+        re.search(
+            r"\b(?:use|try|choose|pick|select|prefer|take|go\s+with|option)\b",
+            normalized,
+        )
+        or (pending_options is not None and _is_compact_option_selection(message))
+    ):
+        return CampaignTurnDecision(
+            action="select_field_option", optionNumber=option_number
+        )
+
+    fields = _campaign_fields_mentioned(message)
+    if fields and re.search(
+        r"\b(?:give|suggest|offer|list|provide|brainstorm)\w*\b|"
+        r"\b(?:options|alternatives|ideas)\b",
+        normalized,
+    ):
+        return CampaignTurnDecision(action="suggest_field_options", fields=list(fields))
+
+    if re.search(
+        r"\b(?:show|display|render|view|repeat)\b.{0,40}\b(?:full|complete|current)?\s*(?:draft|campaign)\b|"
+        r"\b(?:draft|write)\b.{0,20}\b(?:full|complete)\s+campaign\b|"
+        r"\b(?:full|complete|current)\s+(?:campaign\s+)?draft\b",
+        normalized,
+    ):
+        return CampaignTurnDecision(action="show_current_draft")
+
+    revision_fields = _campaign_revision_fields(message)
+    if revision_fields:
+        return CampaignTurnDecision(action="revise_fields", fields=list(revision_fields))
+    if _is_ambiguous_campaign_revision(message):
+        return CampaignTurnDecision(action="needs_clarification")
+    if _is_campaign_generation_request(message):
+        return CampaignTurnDecision(action="needs_clarification")
+    return None
 
 
 def campaign_revision_fields(message: str) -> tuple[CampaignDraftField, ...]:
@@ -701,8 +946,248 @@ class ChatOrchestrator:
             return _answer(
                 _render_campaign_revision(artifact),
                 artifact,
+                requested_revision_fields=fields,
             )
         return _answer(_campaign_draft_failure(result))
+
+    def _interpret_campaign_turn(
+        self,
+        user_message: str,
+        current_draft: PersistedCampaignDraftArtifact,
+        pending_options: PersistedCampaignDraftOptionSet | None,
+    ) -> CampaignTurnDecision:
+        deterministic = _deterministic_campaign_turn(user_message, pending_options)
+        if deterministic is not None:
+            return deterministic
+        if not is_campaign_turn_candidate(user_message):
+            return CampaignTurnDecision(action="ordinary_chat")
+
+        response = self.client.create_structured_completion(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Classify the latest adviser message against the active review-only "
+                        "campaign draft. A request to edit named fields is revise_fields; "
+                        "asking for alternatives is suggest_field_options; choosing a numbered "
+                        "stored alternative is select_field_option; asking to see the complete "
+                        "existing draft is show_current_draft. start_new_draft requires explicit "
+                        "language asking for a new, separate or replacement campaign. Campaign "
+                        "discovery, recommendations, performance, follow-up and campaign email "
+                        "requests are ordinary_chat. If a draft-related request is materially "
+                        "ambiguous, use needs_clarification. Return only the strict schema."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "message": user_message,
+                            "activeDraft": {
+                                "draftId": current_draft.draftId,
+                                "revision": current_draft.revision,
+                                "supportedFields": [
+                                    "name", "description", "clientMessage", "ageGroups",
+                                    "genders", "cashBands", "targetDemographicSummary",
+                                ],
+                            },
+                            "pendingOptionSet": None if pending_options is None else {
+                                "field": pending_options.field,
+                                "optionCount": len(pending_options.options),
+                                "baseRevision": pending_options.baseRevision,
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            _CAMPAIGN_TURN_DECISION_SCHEMA,
+            schema_name="campaign_turn_decision",
+        )
+        if not getattr(response, "choices", None):
+            return CampaignTurnDecision(action="needs_clarification")
+        content = getattr(response.choices[0].message, "content", None)
+        if not content:
+            return CampaignTurnDecision(action="needs_clarification")
+        try:
+            decision = CampaignTurnDecision.model_validate_json(content)
+        except ValidationError:
+            return CampaignTurnDecision(action="needs_clarification")
+        if (
+            decision.action == "start_new_draft"
+            and not _is_explicit_new_campaign_request(user_message)
+        ):
+            return CampaignTurnDecision(action="needs_clarification")
+        return decision
+
+    @staticmethod
+    def _render_current_campaign_draft(
+        current_draft: PersistedCampaignDraftArtifact,
+    ) -> OrchestratorResult:
+        artifact = CampaignDraftArtifact(
+            objective=current_draft.objective,
+            referencesUsed=current_draft.referencesUsed,
+            draft=current_draft.draft,
+            validation=current_draft.validation,
+        )
+        return _answer(
+            render_campaign_draft(artifact)
+            + f"\n\n**Current revision:** {current_draft.revision}. "
+            "No draft fields were changed."
+        )
+
+    def _suggest_campaign_field_options(
+        self,
+        current_draft: PersistedCampaignDraftArtifact,
+        user_message: str,
+        fields: tuple[CampaignDraftField, ...],
+    ) -> OrchestratorResult:
+        if len(fields) != 1:
+            return _answer(
+                "## Which field needs alternatives?\n\n"
+                "Ask for options for one field at a time: campaign name, description, "
+                "client message, or target demographic summary. No draft fields were changed."
+            )
+        field = fields[0]
+        if field in {"ageGroups", "genders", "cashBands"}:
+            return _answer(
+                "## Targeting options use supported values\n\n"
+                "Specify the age groups, genders or cash bands you want to change. "
+                "Free-text alternatives are available only for narrative campaign fields. "
+                "No draft fields were changed."
+            )
+        option_count = _requested_option_count(user_message)
+        schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "options": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+            "required": ["options"],
+        }
+        response = self.client.create_structured_completion(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        f"Generate exactly {option_count} distinct alternatives for only the "
+                        f"campaign draft field {field}. Keep every alternative consistent with "
+                        "the objective and exact structured targeting criteria. Do not introduce "
+                        "unsupported age ranges, cash thresholds, returns, guarantees, client "
+                        "data or regulatory claims. Return only the strict schema."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "request": user_message,
+                            "objective": current_draft.objective,
+                            "currentValue": (
+                                current_draft.draft.criteria.model_dump(mode="json").get(field)
+                                if field in {"ageGroups", "genders", "cashBands"}
+                                else getattr(current_draft.draft, field)
+                            ),
+                            "criteria": current_draft.draft.criteria.model_dump(mode="json"),
+                            "targetDemographicSummary": (
+                                current_draft.draft.targetDemographicSummary
+                            ),
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            schema,
+            schema_name="campaign_draft_field_options",
+        )
+        if not getattr(response, "choices", None):
+            raise LLMProviderError("LLM provider returned no campaign field options")
+        content = getattr(response.choices[0].message, "content", None)
+        if not content:
+            raise LLMProviderError("LLM provider returned empty campaign field options")
+        try:
+            payload = json.loads(content)
+            proposal = CampaignDraftOptionProposal(
+                field=field,
+                options=payload.get("options") if isinstance(payload, dict) else None,
+                baseRevision=current_draft.revision,
+            )
+        except (TypeError, ValidationError, json.JSONDecodeError) as exc:
+            raise LLMProviderError("LLM provider returned invalid campaign field options") from exc
+        if len(proposal.options) != option_count:
+            raise LLMProviderError("LLM provider returned the wrong number of field options")
+        rendered = "\n".join(
+            f"{index}. {option}" for index, option in enumerate(proposal.options, start=1)
+        )
+        return _answer(
+            f"## {field} options\n\n{rendered}\n\n"
+            "Reply with the option number you want to use. These options do not change "
+            "the draft until you select one.",
+            proposal,
+        )
+
+    def _select_campaign_field_option(
+        self,
+        *,
+        registry: ToolExecutor,
+        current_draft: PersistedCampaignDraftArtifact,
+        pending_options: PersistedCampaignDraftOptionSet | None,
+        option_number: int,
+        user_message: str,
+    ) -> OrchestratorResult:
+        if pending_options is None:
+            return _answer(
+                "## No campaign options are available\n\n"
+                "Ask for alternatives for a specific draft field first. No draft fields "
+                "were changed."
+            )
+        if (
+            pending_options.draftId != current_draft.draftId
+            or pending_options.baseRevision != current_draft.revision
+            or pending_options.status != "pending"
+            or pending_options.expiresAt <= datetime.now(timezone.utc)
+        ):
+            return _answer(
+                "## Campaign options are no longer current\n\n"
+                "Ask for fresh alternatives for the field you want to revise. "
+                "No draft fields were changed."
+            )
+        if option_number > len(pending_options.options):
+            return _answer(
+                f"## Option {option_number} is unavailable\n\n"
+                f"Choose a number from 1 to {len(pending_options.options)}. "
+                "No draft fields were changed."
+            )
+        field = pending_options.field
+        selected_value = pending_options.options[option_number - 1]
+        result = registry.execute(
+            "revise_campaign_draft",
+            json.dumps({
+                "objective": current_draft.objective,
+                "referencesUsed": [
+                    citation.model_dump(mode="json")
+                    for citation in current_draft.referencesUsed
+                ],
+                "currentDraft": current_draft.draft.model_dump(mode="json"),
+                "proposedChanges": {field: selected_value},
+                "fields": [field],
+                "instruction": user_message,
+                "revision": current_draft.revision,
+            }),
+        )
+        artifact = _revised_campaign_draft(result)
+        if artifact is None:
+            return _answer(_campaign_draft_failure(result))
+        return _answer(
+            _render_campaign_revision(artifact),
+            artifact,
+            selected_option_set_id=pending_options.optionSetId,
+            selected_option_number=option_number,
+            requested_revision_fields=(field,),
+        )
 
     def run(
         self,
@@ -713,6 +1198,7 @@ class ChatOrchestrator:
         campaign_id: str | None = None,
         session_id: str | None = None,
         current_draft: PersistedCampaignDraftArtifact | None = None,
+        pending_draft_options: PersistedCampaignDraftOptionSet | None = None,
         revision_context_checked: bool = False,
     ) -> OrchestratorResult:
         if scope is not None:
@@ -761,11 +1247,25 @@ class ChatOrchestrator:
         if self.clarification_store is not None and scope is not None and session_id:
             active_clarification = self.clarification_store.get_active(scope, session_id)
 
+        no_draft_turn = (
+            _deterministic_campaign_turn(user_message, None)
+            if revision_context_checked and current_draft is None
+            else None
+        )
         if (
             revision_context_checked
             and current_draft is None
             and active_clarification is None
-            and is_campaign_revision_candidate(user_message)
+            and (
+                is_campaign_revision_candidate(user_message)
+                or (
+                    no_draft_turn is not None
+                    and no_draft_turn.action in {
+                        "revise_fields", "suggest_field_options",
+                        "select_field_option", "show_current_draft",
+                    }
+                )
+            )
         ):
             return _answer(
                 "## No campaign draft is available to revise\n\n"
@@ -839,24 +1339,54 @@ class ChatOrchestrator:
             generation_objective = assessment.canonical_objective
             generation_targeting_lock = assessment.targeting_lock
 
+        campaign_turn = None
         if current_draft is not None and active_clarification is None:
-            revision_fields = _campaign_revision_fields(user_message)
-            if revision_fields:
+            campaign_turn = self._interpret_campaign_turn(
+                user_message, current_draft, pending_draft_options
+            )
+            if campaign_turn.action == "show_current_draft":
+                return self._render_current_campaign_draft(current_draft)
+            if campaign_turn.action == "suggest_field_options":
+                return self._suggest_campaign_field_options(
+                    current_draft, user_message, tuple(campaign_turn.fields)
+                )
+            if campaign_turn.action == "select_field_option":
+                return self._select_campaign_field_option(
+                    registry=registry,
+                    current_draft=current_draft,
+                    pending_options=pending_draft_options,
+                    option_number=campaign_turn.optionNumber,
+                    user_message=user_message,
+                )
+            if campaign_turn.action == "revise_fields":
                 return self._run_campaign_revision(
                     registry=registry,
                     current_draft=current_draft,
                     user_message=user_message,
-                    fields=revision_fields,
+                    fields=tuple(campaign_turn.fields),
                 )
-            if _is_ambiguous_campaign_revision(user_message):
+            if campaign_turn.action == "needs_clarification":
                 return _answer(
-                    "## Which campaign fields should I revise?\n\n"
-                    "Choose one or more of: campaign name, description, client message, "
-                    "age groups, genders, cash bands, or target demographic summary. "
-                    "No draft fields were changed."
+                    "## What should happen to the current campaign draft?\n\n"
+                    "Which campaign fields should I revise? You can also ask to show "
+                    "the current draft, or say explicitly that you want to start a new "
+                    "campaign. No draft fields were changed."
                 )
 
-        if generation_objective is None and _is_campaign_generation_request(user_message):
+        start_new_draft = (
+            campaign_turn is not None
+            and campaign_turn.action == "start_new_draft"
+        )
+        if generation_objective is None and (
+            start_new_draft
+            or (
+                current_draft is None
+                and (
+                    _is_campaign_generation_request(user_message)
+                    or _is_explicit_new_campaign_request(user_message)
+                )
+            )
+        ):
             assessment = self._assess_campaign_objective(user_message)
             if assessment.question_ids:
                 if (

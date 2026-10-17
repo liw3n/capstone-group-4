@@ -8,9 +8,11 @@ from app.campaigns.models import (
     CampaignDraftChanges,
     CampaignDraftConfirmationRequest,
     CampaignDraftCriteria,
+    CampaignDraftOptionProposal,
     CampaignDraftPreviewRequest,
     CampaignReference,
     CampaignReferenceQuery,
+    CampaignTurnDecision,
     PrepareCampaignDraftArguments,
     ReviseCampaignDraftArguments,
 )
@@ -116,3 +118,37 @@ def test_revision_contract_requires_exact_selected_change_fields():
         })
     with pytest.raises(ValidationError):
         CampaignDraftChanges.model_validate({"genders": ["male", "male"]})
+
+
+def test_campaign_turn_decision_requires_action_specific_fields():
+    assert CampaignTurnDecision(
+        action="revise_fields", fields=["name"]
+    ).fields == ["name"]
+    assert CampaignTurnDecision(
+        action="select_field_option", optionNumber=5
+    ).optionNumber == 5
+
+    with pytest.raises(ValidationError):
+        CampaignTurnDecision(action="revise_fields")
+    with pytest.raises(ValidationError):
+        CampaignTurnDecision(action="ordinary_chat", fields=["name"])
+    with pytest.raises(ValidationError):
+        CampaignTurnDecision(action="select_field_option")
+
+
+def test_campaign_option_proposal_is_single_field_revision_bound_state():
+    proposal = CampaignDraftOptionProposal(
+        field="name",
+        options=["Campus Capital Lab", "Youth Wealth Lab"],
+        baseRevision=3,
+    )
+    assert proposal.created is False
+
+    with pytest.raises(ValidationError):
+        CampaignDraftOptionProposal(
+            field="ageGroups", options=["Under 35", "35 to 44"], baseRevision=3
+        )
+    with pytest.raises(ValidationError):
+        CampaignDraftOptionProposal(
+            field="name", options=["Same", "same"], baseRevision=3
+        )

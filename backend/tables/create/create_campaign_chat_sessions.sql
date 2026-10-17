@@ -3,8 +3,12 @@ CREATE TABLE IF NOT EXISTS campaign_chat_sessions (
     session_id VARCHAR(64) NOT NULL,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     session_title VARCHAR(255) DEFAULT NULL,
+    active_campaign_draft_id VARCHAR(36),
     PRIMARY KEY (session_id)
 );
+
+ALTER TABLE campaign_chat_sessions
+    ADD COLUMN IF NOT EXISTS active_campaign_draft_id VARCHAR(36);
 
 DO $$
 BEGIN

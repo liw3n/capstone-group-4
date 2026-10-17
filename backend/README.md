@@ -86,8 +86,8 @@ schemas and calls them through `app/tools/mcp_registry.py`. Configure
 The registered tools include `recommend_clients_for_campaign`,
 `get_active_campaigns`, `get_campaign_contact_performance`,
 `get_campaign_contact_ranking`, `find_campaign_references`,
-`prepare_campaign_draft`, `prepare_campaign_email`, `confirm_campaign_email`, and
-`campaign_follow_up`. Campaign matching and scoped data access live in
+`prepare_campaign_draft`, `revise_campaign_draft`, `prepare_campaign_email`,
+`confirm_campaign_email`, and `campaign_follow_up`. Campaign matching and scoped data access live in
 `app/campaigns/`; shared follow-up handlers live in
 `app/tools/campaign_follow_up.py`. Follow-up handlers query the mock engagement
 table and currently return simulated client profile and portfolio data.
@@ -133,6 +133,44 @@ lock before preparation. It also retains and injects the exact objective and
 signed retrieval token before calling preparation itself. This prevents model
 changes to trusted values and removes provider-side tool-call generation from
 the campaign workflow.
+
+`revise_campaign_draft` is the Stage 6 read-only selective-revision boundary.
+It accepts an authoritative validated draft, its objective and citations, an
+explicit field list, and proposed values for exactly those fields. Server code
+restores every unselected field, reruns complete schema and policy validation,
+and returns the next review-only revision with `created: false`. It never reads
+or writes campaign tables. The direct MCP boundary remains omitted from the
+generic model tool list. Instead, Stage 7 stores the validated structured draft,
+loads its authoritative tenant/adviser/session-scoped state for a revision
+request, asks the model for only the explicitly selected values, and invokes the
+boundary directly. Requests may revise one or several supported fields, and
+successive turns advance the same draft from revision `n` to `n + 1`.
+
+With an active draft, a state-aware turn resolver runs before new-campaign
+generation. It distinguishes ordinary tool requests, selective revision,
+narrative-option generation and selection, current-draft display, and explicit
+new-draft intent. Requests such as `draft the full campaign` display the current
+artifact; a new draft requires explicit replacement/new-campaign language.
+Requests such as `give me five campaign name options` persist a 15-minute,
+revision-bound option set without changing the draft. Selecting `the fifth
+option` applies only that field through `revise_campaign_draft` and the same
+optimistic update. Ordinary discovery, matching, follow-up, performance and
+email tools remain on their existing routes.
+
+Successful generation and revision responses include an optional
+`campaignDraft` object alongside the existing `ai_answer`. It contains a stable
+`draftId`, the current revision, the complete validated draft, provenance and
+warnings. The draft row and the matching user/assistant exchange are committed
+in one PostgreSQL transaction. Updates use optimistic locking, so a stale
+revision cannot overwrite newer work. These writes affect only
+`campaign_generation_drafts` and chat tables; they do not create or update
+`mock_campaign`. The editable review UI, preview token and explicit campaign
+creation confirmation are later stages.
+
+Alternative-generation responses additionally use optional
+`campaignDraftOptions` structured state. The options are scoped to the tenant,
+adviser, chat session, active draft and base revision; chat prose is never parsed
+to recover a later numbered choice.
 
 The MCP server serves `http://127.0.0.1:8001/mcp` using Streamable HTTP. Use
 `make dev` or `make backend-dev` from the repository root to start the shared

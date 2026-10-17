@@ -55,8 +55,12 @@ uv run uvicorn app.main:app --reload --port 4000
 ## Known gaps (current state)
 
 - PostgreSQL stores chat, scoped contacts/campaigns and active campaign
-  clarification state. Structured generated drafts and revisions are not yet
-  persisted.
+  clarification state. It also stores review-only campaign drafts by tenant,
+  adviser and session. Chat returns a typed draft artifact and uses optimistic
+  revisions for safe selective cross-turn regeneration. An active-draft pointer
+  and short-lived revision-bound narrative option sets support state-aware turns
+  without intercepting ordinary MCP requests; review UI, preview and confirmation
+  remain later stages.
 - The API accepts `fa_id` from the caller and checks session ownership against
   it; this is not authentication or a trustworthy tenant boundary.
 - Campaign tools perform synthetic matching and read-only analysis, but no tool

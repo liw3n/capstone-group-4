@@ -458,6 +458,112 @@ def test_campaign_draft_revisions_are_scoped_idempotent_and_optimistically_locke
     ).fetchone()[0] == 0
 
 
+def test_campaign_draft_options_are_scoped_revision_bound_and_atomically_selected(
+    database, monkeypatch
+):
+    from app import store
+    from app.campaigns.draft_repository import (
+        CampaignDraftStaleRevision,
+        create_campaign_draft,
+        create_campaign_draft_option_set,
+        get_pending_campaign_draft_options,
+        mark_campaign_draft_option_selected,
+    )
+    from app.campaigns.models import (
+        CampaignDraftArtifact,
+        CampaignDraftOptionProposal,
+        CampaignDraftRevisionArtifact,
+    )
+    from test_orchestrator import campaign_draft_artifact
+
+    database.execute((CREATE_TABLES / "create_campaign_chat_sessions.sql").read_text())
+    database.execute((CREATE_TABLES / "create_campaign_chat_messages.sql").read_text())
+    draft_sql = (CREATE_TABLES / "create_campaign_generation_drafts.sql").read_text()
+    database.execute(draft_sql)
+    database.execute(draft_sql)
+    database.execute(
+        """
+        INSERT INTO campaign_chat_sessions (session_id, fa_id, session_title)
+        VALUES ('session-options', %s, 'Draft option test')
+        """,
+        (DEMO_FA,),
+    )
+    monkeypatch.setattr(store, "get_settings", config.get_settings)
+    scope = RequestScope(DEMO_FA)
+    created = create_campaign_draft(
+        scope,
+        "session-options",
+        CampaignDraftArtifact.model_validate(campaign_draft_artifact()),
+    )
+    proposal = CampaignDraftOptionProposal(
+        field="name",
+        options=[
+            "Campus Capital Lab",
+            "First Portfolio Project",
+            "Invest Early Studio",
+            "Student Wealth Workshop",
+            "Youth Wealth Lab",
+        ],
+        baseRevision=1,
+    )
+    options = create_campaign_draft_option_set(
+        scope, "session-options", created.draftId, proposal
+    )
+
+    assert get_pending_campaign_draft_options(
+        scope, "session-options", created.draftId, 1
+    ) == options
+    assert get_pending_campaign_draft_options(
+        RequestScope("adv-other-demo"), "session-options", created.draftId, 1
+    ) is None
+    assert database.execute(
+        """SELECT active_campaign_draft_id FROM campaign_chat_sessions
+           WHERE session_id = 'session-options'"""
+    ).fetchone()[0] == created.draftId
+    with pytest.raises(CampaignDraftStaleRevision, match="unavailable"):
+        mark_campaign_draft_option_selected(
+            scope, "session-options", created.draftId, 1,
+            options.optionSetId, 6,
+        )
+
+    revision = CampaignDraftRevisionArtifact(
+        objective=created.objective,
+        referencesUsed=created.referencesUsed,
+        draft=created.draft.model_copy(update={"name": proposal.options[4]}),
+        previousRevision=1,
+        revision=2,
+        changedFields=["name"],
+        validation=created.validation,
+    )
+    updated = store.append_exchange_with_campaign_draft(
+        "session-options",
+        store.ChatHistoryItem("2026-10-17T00:00:00Z", DEMO_FA, "Use option five"),
+        store.ChatHistoryItem("2026-10-17T00:00:01Z", False, "Name revised"),
+        scope,
+        revision,
+        draft_id=created.draftId,
+        expected_revision=1,
+        selected_option_set_id=options.optionSetId,
+        selected_option_number=5,
+    )
+
+    assert updated.revision == 2
+    assert updated.draft.name == "Youth Wealth Lab"
+    assert database.execute(
+        """SELECT status, selected_index
+           FROM campaign_generation_draft_options
+           WHERE option_set_id = %s""",
+        (options.optionSetId,),
+    ).fetchone() == ("selected", 5)
+    assert get_pending_campaign_draft_options(
+        scope, "session-options", created.draftId, 2
+    ) is None
+    assert database.execute(
+        """SELECT count(*) FROM campaign_chat_messages
+           WHERE session_id = 'session-options'"""
+    ).fetchone()[0] == 2
+
+
 def test_active_discovery_filters_dates_and_assignments_in_postgres(database):
     from datetime import date
     scope = RequestScope(DEMO_FA)

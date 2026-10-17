@@ -18,15 +18,19 @@ from app.campaigns.catalog import (
 from app.campaigns.models import (
     CampaignCriteriaPayload,
     CampaignDraftArtifact,
+    CampaignDraftOptionProposal,
     CampaignDraftRevisionArtifact,
     PersistedCampaignDraftArtifact,
+    PersistedCampaignDraftOptionSet,
 )
 from app.campaigns.clarification import PostgresCampaignClarificationStore
 from app.campaigns.draft_repository import (
     CampaignDraftNotFound,
     CampaignDraftStaleRevision,
     CampaignDraftStorageUnavailable,
+    get_campaign_draft,
     get_latest_campaign_draft,
+    get_pending_campaign_draft_options,
 )
 
 from app.campaigns.repository import (
@@ -41,10 +45,7 @@ from app.contacts.catalog import (
 )
 from app.config import get_settings
 from app.llm import ChatOrchestrator, LLMClient, OrchestratorResult
-from app.llm.orchestrator import (
-    campaign_revision_fields,
-    is_campaign_revision_candidate,
-)
+from app.llm.orchestrator import is_campaign_turn_candidate
 from app.llm.errors import (
     LLMAuthenticationError,
     LLMConfigurationError,
@@ -57,6 +58,7 @@ from app.store import (
     ChatHistoryItem,
     append_exchange,
     append_exchange_with_campaign_draft,
+    append_exchange_with_campaign_options,
     create_session,
     get_history,
     get_session,
@@ -125,6 +127,7 @@ class QueryResponse(BaseModel):
     timestamp: str
     ai_answer: str
     campaignDraft: PersistedCampaignDraftArtifact | None = None
+    campaignDraftOptions: PersistedCampaignDraftOptionSet | None = None
 
 
 def _validate_revision_against_current(
@@ -477,12 +480,28 @@ def chat_query(
     if history is None:
         raise HTTPException(status_code=404, detail="chat session not found")
 
-    revision_context_checked = is_campaign_revision_candidate(message_content)
-    current_draft = (
-        get_latest_campaign_draft(scope, session.session_id)
-        if revision_context_checked
+    campaign_turn_candidate = is_campaign_turn_candidate(message_content)
+    current_draft = None
+    if campaign_turn_candidate:
+        if session.active_campaign_draft_id is not None:
+            current_draft = get_campaign_draft(
+                scope, session.session_id, session.active_campaign_draft_id
+            )
+        if current_draft is None:
+            # Compatibility for rows created before the active pointer existed,
+            # and for a pointer whose draft is no longer reviewable.
+            current_draft = get_latest_campaign_draft(scope, session.session_id)
+    pending_draft_options = (
+        get_pending_campaign_draft_options(
+            scope,
+            session.session_id,
+            current_draft.draftId,
+            current_draft.revision,
+        )
+        if current_draft is not None
         else None
     )
+    revision_context_checked = campaign_turn_candidate
 
     try:
         orchestration_context = {
@@ -493,6 +512,7 @@ def chat_query(
         if revision_context_checked:
             orchestration_context.update({
                 "current_draft": current_draft,
+                "pending_draft_options": pending_draft_options,
                 "revision_context_checked": True,
             })
         result = get_orchestrator().run(message_content, history, **orchestration_context)
@@ -511,7 +531,23 @@ def chat_query(
         raise HTTPException(status_code=502, detail="LLM orchestrator returned an invalid result")
     if len(result.artifacts) > 1:
         raise HTTPException(status_code=502, detail="LLM orchestrator returned ambiguous artifacts")
-    artifact: CampaignDraftArtifact | CampaignDraftRevisionArtifact | None = None
+    has_option_set = result.selected_option_set_id is not None
+    has_option_number = result.selected_option_number is not None
+    if has_option_set != has_option_number:
+        raise HTTPException(
+            status_code=502, detail="LLM orchestrator returned invalid option metadata"
+        )
+    if not result.artifacts and (
+        has_option_set or result.requested_revision_fields
+    ):
+        raise HTTPException(
+            status_code=502, detail="LLM orchestrator returned orphaned draft metadata"
+        )
+
+    artifact: (
+        CampaignDraftArtifact | CampaignDraftRevisionArtifact
+        | CampaignDraftOptionProposal | None
+    ) = None
     if result.artifacts:
         candidate = result.artifacts[0]
         try:
@@ -524,9 +560,21 @@ def chat_query(
                 _validate_revision_against_current(
                     artifact,
                     current_draft,
-                    campaign_revision_fields(message_content),
+                    result.requested_revision_fields,
                 )
+            elif isinstance(candidate, CampaignDraftOptionProposal):
+                if has_option_set or result.requested_revision_fields:
+                    raise ValueError("campaign options include revision metadata")
+                artifact = CampaignDraftOptionProposal.model_validate(
+                    candidate.model_dump(mode="json")
+                )
+                if current_draft is None:
+                    raise ValueError("campaign options are missing their current draft")
+                if artifact.baseRevision != current_draft.revision:
+                    raise ValueError("campaign options use a stale revision")
             elif isinstance(candidate, CampaignDraftArtifact):
+                if has_option_set or result.requested_revision_fields:
+                    raise ValueError("new campaign draft includes revision metadata")
                 artifact = CampaignDraftArtifact.model_validate(
                     candidate.model_dump(mode="json")
                 )
@@ -550,8 +598,18 @@ def chat_query(
         message_content=ai_answer,
     )
     persisted_draft = None
+    persisted_options = None
     if artifact is None:
         append_exchange(session.session_id, user_item, assistant_item)
+    elif isinstance(artifact, CampaignDraftOptionProposal):
+        persisted_options = append_exchange_with_campaign_options(
+            session.session_id,
+            user_item,
+            assistant_item,
+            scope,
+            current_draft.draftId,
+            artifact,
+        )
     else:
         persisted_draft = append_exchange_with_campaign_draft(
             session.session_id,
@@ -561,6 +619,8 @@ def chat_query(
             artifact,
             draft_id=current_draft.draftId if current_draft else None,
             expected_revision=current_draft.revision if current_draft else None,
+            selected_option_set_id=result.selected_option_set_id,
+            selected_option_number=result.selected_option_number,
         )
 
     return QueryResponse(
@@ -568,4 +628,5 @@ def chat_query(
         timestamp=assistant_item.timestamp,
         ai_answer=ai_answer,
         campaignDraft=persisted_draft,
+        campaignDraftOptions=persisted_options,
     )

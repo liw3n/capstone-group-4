@@ -20,6 +20,7 @@ export interface QueryResponse {
   timestamp: string;
   ai_answer: string;
   campaignDraft?: CampaignDraftArtifact | null;
+  campaignDraftOptions?: CampaignDraftOptionSet | null;
 }
 
 export type CampaignAgeGroup = 'under35' | '35to44' | '45to54' | '55to64' | '65plus';
@@ -63,6 +64,21 @@ export interface CampaignDraftArtifact {
     warnings: string[];
   };
   requires_adviser_review: true;
+  created: false;
+}
+
+export interface CampaignDraftOptionSet {
+  type: 'campaign_draft_options';
+  optionSetId: string;
+  draftId: string;
+  baseRevision: number;
+  field: Exclude<
+    CampaignDraftArtifact['changedFields'][number],
+    'ageGroups' | 'genders' | 'cashBands'
+  >;
+  options: string[];
+  status: 'pending' | 'selected' | 'stale' | 'expired';
+  expiresAt: string;
   created: false;
 }
 

@@ -9,6 +9,7 @@ from psycopg.rows import dict_row
 from app.config import get_settings
 from app.campaigns.models import (
     CampaignDraftArtifact,
+    CampaignDraftOptionProposal,
     CampaignDraftRevisionArtifact,
 )
 from app.campaigns.repository import RequestScope
@@ -20,6 +21,7 @@ class ChatSession:
     fa_id: str
     timestamp: str
     session_title: str = "New chat"
+    active_campaign_draft_id: str | None = None
 
 
 @dataclass
@@ -67,6 +69,7 @@ def _session_from_row(row: dict) -> ChatSession:
         fa_id=row["fa_id"],
         timestamp=_timestamp_iso(row["timestamp"]),
         session_title=row["session_title"] or "New chat",
+        active_campaign_draft_id=row.get("active_campaign_draft_id"),
     )
 
 
@@ -74,7 +77,7 @@ def list_sessions(fa_id: str) -> list[ChatSession]:
     with _connection() as connection:
         rows = connection.execute(
             """
-            SELECT session_id, fa_id, timestamp, session_title
+            SELECT session_id, fa_id, timestamp, session_title, active_campaign_draft_id
             FROM campaign_chat_sessions
             WHERE fa_id = %s
             ORDER BY timestamp DESC
@@ -88,7 +91,7 @@ def get_session(session_id: str) -> ChatSession | None:
     with _connection() as connection:
         row = connection.execute(
             """
-            SELECT session_id, fa_id, timestamp, session_title
+            SELECT session_id, fa_id, timestamp, session_title, active_campaign_draft_id
             FROM campaign_chat_sessions
             WHERE session_id = %s
             """,
@@ -104,7 +107,7 @@ def create_session(fa_id: str) -> ChatSession:
             """
             INSERT INTO campaign_chat_sessions (session_id, fa_id, session_title)
             VALUES (%s, %s, %s)
-            RETURNING session_id, fa_id, timestamp, session_title
+            RETURNING session_id, fa_id, timestamp, session_title, active_campaign_draft_id
             """,
             (session_id, fa_id, "New chat"),
         ).fetchone()
@@ -217,10 +220,13 @@ def append_exchange_with_campaign_draft(
     *,
     draft_id: str | None = None,
     expected_revision: int | None = None,
+    selected_option_set_id: str | None = None,
+    selected_option_number: int | None = None,
 ):
     """Atomically persist a chat exchange and its generated/revised draft."""
     from app.campaigns.draft_repository import (
         create_campaign_draft,
+        mark_campaign_draft_option_selected,
         update_campaign_draft_revision,
     )
 
@@ -229,6 +235,18 @@ def append_exchange_with_campaign_draft(
         if isinstance(artifact, CampaignDraftRevisionArtifact):
             if draft_id is None or expected_revision is None:
                 raise ValueError("current campaign draft context is required")
+            if selected_option_set_id is not None:
+                if selected_option_number is None:
+                    raise ValueError("selected option number is required")
+                mark_campaign_draft_option_selected(
+                    scope,
+                    session_id,
+                    draft_id,
+                    expected_revision,
+                    selected_option_set_id,
+                    selected_option_number,
+                    connection=connection,
+                )
             return update_campaign_draft_revision(
                 scope,
                 session_id,
@@ -239,4 +257,26 @@ def append_exchange_with_campaign_draft(
             )
         return create_campaign_draft(
             scope, session_id, artifact, connection=connection
+        )
+
+
+def append_exchange_with_campaign_options(
+    session_id: str,
+    user_item: ChatHistoryItem,
+    assistant_item: ChatHistoryItem,
+    scope: RequestScope,
+    draft_id: str,
+    proposal: CampaignDraftOptionProposal,
+):
+    """Atomically persist an exchange and its revision-bound structured options."""
+    from app.campaigns.draft_repository import create_campaign_draft_option_set
+
+    with _connection() as connection:
+        _append_exchange(connection, session_id, user_item, assistant_item)
+        return create_campaign_draft_option_set(
+            scope,
+            session_id,
+            draft_id,
+            proposal,
+            connection=connection,
         )

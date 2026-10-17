@@ -4,7 +4,7 @@ Model-facing inputs intentionally exclude adviser identity, tenant identity,
 campaign status, creator details and timestamps. Those values belong to trusted
 request metadata or to the later server-side confirmation workflow.
 """
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -22,6 +22,15 @@ CampaignDraftField = Literal[
 ]
 CampaignDraftStatus = Literal[
     "generated", "reviewed", "confirmed", "rejected", "expired"
+]
+CampaignTurnAction = Literal[
+    "ordinary_chat",
+    "revise_fields",
+    "suggest_field_options",
+    "select_field_option",
+    "show_current_draft",
+    "start_new_draft",
+    "needs_clarification",
 ]
 CampaignGenerationErrorCode = Literal[
     "invalid_arguments", "missing_context", "catalogue_unavailable",
@@ -337,6 +346,92 @@ class PersistedCampaignDraftArtifact(StrictModel):
         ]
         if len(citations) != len(set(citations)):
             raise ValueError("referencesUsed must not contain duplicates")
+        return self
+
+
+class CampaignTurnDecision(StrictModel):
+    """Strict, non-authoritative interpretation of a turn with an active draft."""
+
+    action: CampaignTurnAction
+    fields: list[CampaignDraftField] = Field(default_factory=list, max_length=7)
+    optionNumber: int | None = Field(default=None, ge=1, le=10, strict=True)
+
+    @model_validator(mode="after")
+    def validate_action_shape(self):
+        if len(self.fields) != len(set(self.fields)):
+            raise ValueError("fields must not contain duplicates")
+        if self.action in {"revise_fields", "suggest_field_options"}:
+            if not self.fields:
+                raise ValueError("the selected action requires at least one field")
+        elif self.fields:
+            raise ValueError("the selected action does not accept fields")
+        if self.action == "select_field_option":
+            if self.optionNumber is None:
+                raise ValueError("optionNumber is required when selecting an option")
+        elif self.optionNumber is not None:
+            raise ValueError("optionNumber is only valid when selecting an option")
+        return self
+
+
+class CampaignDraftOptionProposal(StrictModel):
+    """Unpersisted structured options generated for one current draft field."""
+
+    type: Literal["campaign_draft_option_proposal"] = "campaign_draft_option_proposal"
+    field: CampaignDraftField
+    options: list[str] = Field(min_length=2, max_length=10)
+    baseRevision: int = Field(ge=1, strict=True)
+    created: Literal[False] = False
+
+    @model_validator(mode="after")
+    def validate_options(self):
+        if self.field in {"ageGroups", "genders", "cashBands"}:
+            raise ValueError("criteria dimensions do not support free-text option sets")
+        normalized = [option.casefold() for option in self.options]
+        if any(not option for option in normalized):
+            raise ValueError("options must not be empty")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("options must be unique")
+        limits = {
+            "name": 255,
+            "description": 10_000,
+            "clientMessage": 10_000,
+            "targetDemographicSummary": 1_000,
+        }
+        if any(len(option) > limits[self.field] for option in self.options):
+            raise ValueError("an option exceeds the selected field's length limit")
+        return self
+
+
+class PersistedCampaignDraftOptionSet(StrictModel):
+    """Scoped, revision-bound choices that can be selected in a later turn."""
+
+    type: Literal["campaign_draft_options"] = "campaign_draft_options"
+    optionSetId: str = Field(pattern=r"^[a-f0-9-]{36}$", min_length=36, max_length=36)
+    draftId: str = Field(pattern=r"^[a-f0-9-]{36}$", min_length=36, max_length=36)
+    baseRevision: int = Field(ge=1, strict=True)
+    field: CampaignDraftField
+    options: list[str] = Field(min_length=2, max_length=10)
+    status: Literal["pending", "selected", "stale", "expired"]
+    expiresAt: datetime
+    created: Literal[False] = False
+
+    @model_validator(mode="after")
+    def validate_persisted_options(self):
+        if self.field in {"ageGroups", "genders", "cashBands"}:
+            raise ValueError("criteria dimensions do not support free-text option sets")
+        normalized = [option.casefold() for option in self.options]
+        if any(not option for option in normalized):
+            raise ValueError("options must not be empty")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("options must be unique")
+        limits = {
+            "name": 255,
+            "description": 10_000,
+            "clientMessage": 10_000,
+            "targetDemographicSummary": 1_000,
+        }
+        if any(len(option) > limits[self.field] for option in self.options):
+            raise ValueError("an option exceeds the selected field's length limit")
         return self
 
 

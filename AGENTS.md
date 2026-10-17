@@ -104,7 +104,15 @@ checks and startup commands are in `backend/AGENTS.md`.
   extraction interprets natural language, while server validation owns supported
   targeting enums and safe defaults. Resolved age, gender and cash criteria are
   locked server-side before draft preparation, so generation cannot replace the
-  adviser's choices. Generated drafts remain review-only and unpersisted.
+  adviser's choices. Validated structured drafts are stored separately from
+  campaigns and returned by chat with a stable draft ID and optimistic revision.
+  Cross-turn selective revision can regenerate one or several named fields while
+  preserving every unselected field and rerunning policy validation. Active
+  draft turns are routed separately from ordinary MCP work; explicit new-draft
+  intent is required before replacing review context. Narrative alternatives
+  are stored as short-lived, revision-bound option sets so numbered selections
+  do not rely on parsing chat prose. Drafts remain review-only: preview,
+  confirmation and campaign creation are not yet implemented.
 - `campaign`, `campaign_member`, `interaction`, and `task_item` are described by
   the company schema document, but their column definitions are absent. Do not
   invent a production-compatible schema without documenting the prototype

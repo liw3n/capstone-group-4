@@ -36,14 +36,16 @@ activate a campaign, send communications or write campaign records.
 
 ## Architecture decision
 
-The initial implementation will use one model interaction through the existing
-`ChatOrchestrator`. The model will construct the complete arguments for a new
-`prepare_campaign_draft` MCP tool. The tool will provide the trusted boundary for
-schema and policy validation and return a structured artifact.
+The implementation keeps model inference in the existing `ChatOrchestrator` and
+uses `prepare_campaign_draft` as the trusted MCP validation boundary. After
+server-side reference retrieval and clarification, the model returns one strict
+schema-constrained draft; FastAPI injects the retained objective, signed token
+and targeting lock before invoking the MCP tool itself. The model does not author
+the trusted preparation call or select the locked criteria.
 
-This avoids a second model call inside MCP, reduces latency and fits the current
-OpenAI-compatible tool loop. The name `prepare_campaign_draft` is deliberate: the
-model produces the language, while the tool validates and packages it. If the
+This avoids a model call inside MCP, reduces latency and keeps the current
+OpenAI-compatible integration. The name `prepare_campaign_draft` is deliberate:
+the model proposes language, while the tool validates and packages it. If the
 tool later needs to work independently for non-PULSE MCP clients, generation can
 be moved behind a shared campaign-draft service without changing the output
 contract.
@@ -62,6 +64,15 @@ User objective
     -> FastAPI returns assistant text plus campaignDraft JSON
     -> CampaignBuilder opens an editable review
 ```
+
+Once a draft exists, chat uses a state-aware turn resolver before either the
+new-generation pipeline or the ordinary MCP tool loop. The resolver distinguishes
+ordinary campaign operations, selected-field revisions, requests for alternatives,
+selection of a stored alternative, display of the current draft and an explicit
+request for a new draft. A new generation may replace the active review context
+only when the adviser explicitly asks for a new, another, separate or replacement
+campaign. This prevents wording such as "draft the full campaign" from silently
+discarding an existing draft.
 
 ## Scope
 
@@ -246,7 +257,7 @@ Replace the string-only internal result with a typed envelope:
 ```python
 class OrchestratorResult:
     answer: str
-    artifacts: list[dict[str, Any]]
+    artifacts: tuple[CampaignDraftArtifact | CampaignDraftRevisionArtifact, ...]
 ```
 
 Extend the HTTP response without removing existing fields:
@@ -256,7 +267,7 @@ class QueryResponse(BaseModel):
     user: bool | str
     timestamp: str
     ai_answer: str
-    campaignDraft: CampaignDraftArtifact | None = None
+    campaignDraft: PersistedCampaignDraftArtifact | None = None
 ```
 
 Existing clients that only read `ai_answer` must continue to work.
@@ -411,18 +422,44 @@ request.
 
 Add a separate `revise_campaign_draft` operation with:
 
+- the original objective and current catalogue citations;
 - the current validated draft;
 - the exact fields to regenerate;
+- proposed values for exactly those fields;
 - an optional adviser instruction;
 - the current draft revision.
 
 Allowed fields are `name`, `description`, `clientMessage`, `ageGroups`,
 `genders`, `cashBands` and `targetDemographicSummary`.
 
-After generation, server code must restore every field not listed for
-regeneration from the original draft. Do not rely on the model to preserve them.
-Run the complete schema and policy validation again. Increment the revision and
-invalidate any earlier confirmation token.
+The implemented Stage 6 MCP boundary treats the calling host as the source of
+the authoritative current draft. It requires the proposed-change keys to match
+the selected fields exactly, merges criteria dimensions into the nested criteria
+object, and restores every field not listed for regeneration from the original
+draft. It does not rely on the model to preserve them. The handler checks that
+citations remain approved, valid and in scope, runs complete schema and policy
+validation again, and increments the revision. A targeting change that conflicts
+with unchanged narrative fields fails validation rather than silently changing
+those fields.
+
+The operation is directly available over MCP but is not included in PULSE's
+ordinary model-facing tool list. Stage 7 persists the structured draft and, for
+a recognised draft turn, loads and injects that trusted state. Deterministic
+rules handle high-confidence commands; a strict structured classifier is used
+only for plausible draft turns that remain ambiguous. Ordinary campaign
+discovery, matching, follow-up, performance and outreach requests continue into
+their existing MCP paths without loading draft state.
+
+For a direct revision, the model returns only the selected values and the
+orchestrator invokes the MCP boundary directly. Requests for alternatives are
+stored as a separate, scoped option set bound to one narrative field and the
+current draft revision. They do not mutate the draft. A later instruction such
+as "use the fifth option" resolves against that structured set and enters the
+same selective-revision boundary; it never depends on parsing prior assistant
+prose. Option sets expire after 15 minutes and become stale after any successful
+draft revision. Preview tokens do not exist yet; when Stage 9 adds them,
+binding them to the revision will make an earlier token stale after any
+subsequent revision.
 
 ## Review and confirmation workflow
 
@@ -437,7 +474,7 @@ The frontend should display:
 - a final preview and explicit confirmation control.
 
 Persist generated drafts separately from campaigns. After the orchestrator
-returns a validated artifact, the API stores a `campaign_generation_draft` row
+returns a validated artifact, the API stores a `campaign_generation_drafts` row
 and returns its `draftId` and `revision`. Generation may create or update this
 draft record, but neither generation nor regeneration may write to
 `mock_campaign` or `mock_campaign_advisor`.
@@ -480,7 +517,7 @@ PostgreSQL transaction:
 1. Resolve the authenticated adviser and tenant scope. The current request-supplied
    adviser ID remains a prototype limitation and must not be treated as production
    authentication.
-2. Lock the matching `campaign_generation_draft` row with `SELECT ... FOR UPDATE`
+2. Lock the matching `campaign_generation_drafts` row with `SELECT ... FOR UPDATE`
    and enforce adviser and tenant ownership in the query.
 3. If the draft is already confirmed with the same idempotency key, return the
    previously created campaign. Reject conflicting repeated confirmation.
@@ -497,7 +534,7 @@ PostgreSQL transaction:
 8. Insert the `mock_campaign` row using parameterised SQL.
 9. Insert the corresponding `mock_campaign_advisor` ownership or assignment rows
    in the same transaction.
-10. Update `campaign_generation_draft` to `confirmed`, record the created campaign
+10. Update `campaign_generation_drafts` to `confirmed`, record the created campaign
     ID, confirmed revision, confirmation time and idempotency key.
 11. Commit and return the newly created `CampaignPayload`. If any step fails,
     roll back all three writes so no partial campaign or assignment remains.
@@ -535,8 +572,9 @@ database credentials or provider keys.
 
 ## Persistence and auditability
 
-Introduce a versioned PostgreSQL migration and a tenant-scoped
-`campaign_generation_draft` table rather than a module-global cache. The table
+Use idempotent prototype DDL now and introduce a versioned migration before any
+incompatible schema change. Store state in the tenant-scoped
+`campaign_generation_drafts` table rather than a module-global cache. The table
 should record:
 
 - `draft_id`, `tenant_id` and `fa_id`;
@@ -561,6 +599,12 @@ same `(tenant_id, campaign_id)` types as `mock_campaign`.
 
 Store only synthetic prototype data. Apply retention rules before any production
 use. Every read and mutation must enforce both adviser and tenant ownership.
+
+Stage 7 implements the fields required for generated/reviewed cross-turn state:
+scope, session, objective, references, structured draft, validation, revision,
+status, changed fields, model/prompt version placeholders and timestamps. The
+reviewed builder metadata, hashes, token expiry, idempotency and confirmed
+campaign linkage in the full target above remain Stage 8-10 additions.
 
 ## Testing and evaluation
 
@@ -647,7 +691,7 @@ normal test suite flaky.
 
 Complete each stage and its exit criteria before beginning a dependent stage.
 
-Implementation status as of 14 October 2026: Stages 1-5 and 5.5 are implemented
+Implementation status as of 17 October 2026: Stages 1-7 are implemented
 and covered by deterministic backend tests. They add shared contracts, a versioned
 12-entry synthetic catalogue, scoped deterministic retrieval, signed retrieval
 tokens, the read-only `find_campaign_references` MCP tool and the read-only
@@ -669,7 +713,33 @@ Completed clarification also produces an in-memory targeting lock. The lock is
 included in the generation instructions and enforced over the model's structured
 criteria immediately before `prepare_campaign_draft`; narrative targeting text
 must still pass the existing consistency checks.
-Structured HTTP retention, revision and persistence begin in later stages.
+Stage 6 adds the read-only `revise_campaign_draft` MCP boundary. It accepts an
+authoritative current draft and revision, the original objective and citations,
+an explicit selected-field list, and proposed values for exactly those fields.
+Server code merges only the selection, preserves every other supported field,
+checks that citations remain approved, valid and in scope, reruns complete
+policy validation, and returns revision `n + 1` with `created = false`. The tool
+does not access PostgreSQL or campaign tables. It remains intentionally omitted
+from ordinary model tool selection.
+Stage 7 changes orchestration to a typed answer-and-artifacts envelope, validates
+the retained artifact again at the FastAPI boundary and stores it in the scoped
+`campaign_generation_drafts` table. Successful chat generation returns the
+existing `ai_answer` plus an optional structured `campaignDraft` with a stable
+draft ID and revision. Recognised requests can revise one or several explicit
+fields across repeated turns: the server loads the active scoped draft (with a
+latest-reviewable compatibility fallback for older rows), uses a strict
+selected-field schema for the model proposal, invokes Stage 6 directly,
+and updates the same row only when its expected revision still matches. The
+draft update and matching chat exchange commit atomically. No generation or
+revision path writes `mock_campaign`.
+The Stage 7 hardening pass adds an explicit active-draft pointer per chat session
+and a state-aware turn resolver across the completed Stage 1-7 flow. It keeps
+ordinary MCP operations on their existing route, requires explicit intent before
+starting a new draft when one is active, renders the current artifact for requests
+such as "draft the full campaign", and supports revision-bound structured
+alternatives. Narrative options are persisted in
+`campaign_generation_draft_options`, expire after 15 minutes, and are applied
+only through the existing Stage 6 validation and Stage 7 optimistic update.
 
 ### Stage 1 Define shared contracts and lifecycle boundaries
 
@@ -807,36 +877,65 @@ Exit criteria:
 Implementation:
 
 - Register `revise_campaign_draft` as read-only and non-destructive.
-- Accept the validated current draft, current revision, selected fields and
-  adviser instruction.
-- Restore every unselected field in server code after generation.
+- Accept the original objective and citations, validated current draft, current
+  revision, selected fields, optional adviser instruction and proposed values
+  for exactly those fields.
+- Merge the proposal and restore every unselected field in server code.
 - Rerun complete schema, citation and policy validation.
-- Return the revised artifact; let the API persist the next revision.
+- Return an unpersisted revised artifact at revision `n + 1`; the Stage 7 API
+  boundary persists the next revision.
+- Keep the tool out of ordinary model selection until the API has a trusted
+  structured artifact to inject instead of reconstructing one from chat prose.
 
 Exit criteria:
 
 - Unselected fields remain exactly unchanged.
-- Any revision invalidates the prior preview token.
+- Revision advances exactly once; later preview tokens can bind to this revision
+  and therefore become stale after another revision.
 - Revision tool calls do not write campaign tables.
 
 ### Stage 7 Retain structured artifacts and persist draft revisions
+
+Status: implemented on 16 October 2026; state-aware turn routing and structured
+cross-turn option selection added on 17 October 2026.
 
 Implementation:
 
 - Change the orchestrator to return assistant text plus typed artifacts.
 - Validate MCP artifacts again at the API boundary.
-- Create the `campaign_generation_draft` migration, constraints and indexes.
+- Create the `campaign_generation_drafts` idempotent prototype DDL, constraints
+  and indexes.
 - Store generated artifacts and provenance after successful orchestration.
 - Add scoped read and optimistic-lock update functions for manual edits and
   revised artifacts.
 - Extend both `/chat/...` and `/api/chat/...` response forms without breaking
   existing consumers.
+- Detect explicit single- and multi-field revision requests before the new-draft
+  route, load the session's active scoped draft and invoke
+  `revise_campaign_draft` directly with server-owned context. Use the latest
+  reviewable row only as a compatibility fallback for drafts created before the
+  active pointer existed.
+- Track the active review draft explicitly on the chat session. Resolve plausible
+  draft turns into a strict action contract before considering new generation;
+  require explicit replacement intent while a draft is active.
+- Persist narrative alternatives as scoped, revision-bound option sets rather
+  than assistant prose. Apply a selected ordinal through
+  `revise_campaign_draft`, and expire or stale options that are no longer safe.
+- Leave ordinary campaign MCP requests outside this draft-state path.
+- Commit the draft insert/update and user/assistant exchange in one transaction.
 
 Exit criteria:
 
 - Chat returns a `draftId`, revision and structured draft without prose parsing.
 - Generation and revision write only the draft table and never campaign tables.
 - Stale draft updates and cross-adviser access are rejected.
+- Repeated revision requests keep the same draft ID and advance exactly once per
+  successful request; one request may change several explicitly selected fields.
+- Asking for alternatives does not change the revision; selecting one changes
+  only its bound field, and a later full-draft request returns the current draft
+  instead of restarting clarification or generation.
+- Active draft state does not intercept discovery, matching, follow-up,
+  performance or email tooling.
 
 ### Stage 8 Implement the frontend review and regeneration experience
 
@@ -929,7 +1028,8 @@ Exit criteria:
 - `backend/tables/create/create_campaign_generation_clarifications.sql`:
   pre-generation objective, answers and pending questions.
 - `backend/tables/create/create_campaign_generation_drafts.sql`: draft, revision,
-  provenance, confirmation and created-campaign linkage.
+  provenance, revision-bound option sets, confirmation and created-campaign
+  linkage.
 - `backend/setup.sh`: apply the new idempotent draft-table migration in order.
 - `backend/tests/`: model, tool, orchestrator, API and PostgreSQL tests.
 - `frontend/src/services/chatApi.ts`: structured response types.

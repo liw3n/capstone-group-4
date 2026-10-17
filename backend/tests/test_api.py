@@ -15,21 +15,39 @@ client = TestClient(main.app)
 
 
 class FakeOrchestrator:
-    def __init__(self, answer="Generated answer", artifacts=()):
+    def __init__(
+        self,
+        answer="Generated answer",
+        artifacts=(),
+        *,
+        requested_revision_fields=(),
+        selected_option_set_id=None,
+        selected_option_number=None,
+    ):
         self.answer = answer
         self.artifacts = tuple(artifacts)
+        self.requested_revision_fields = tuple(requested_revision_fields)
+        self.selected_option_set_id = selected_option_set_id
+        self.selected_option_number = selected_option_number
         self.calls = []
 
     def run(self, message, history, **context):
         self.calls.append((message, history, context))
-        return OrchestratorResult(self.answer, self.artifacts)
+        return OrchestratorResult(
+            self.answer,
+            self.artifacts,
+            self.selected_option_set_id,
+            self.selected_option_number,
+            self.requested_revision_fields,
+        )
 
 
-def session(fa_id="fa-1"):
+def session(fa_id="fa-1", active_campaign_draft_id=None):
     return ChatSession(
         session_id="session-1",
         fa_id=fa_id,
         timestamp="2026-10-03T00:00:00Z",
+        active_campaign_draft_id=active_campaign_draft_id,
     )
 
 
@@ -167,12 +185,15 @@ def test_revision_loads_authoritative_draft_and_returns_same_id_next_revision(mo
         changedFields=["name"],
         validation=current.validation,
     )
-    orchestrator = FakeOrchestrator("Rendered revised draft", (artifact,))
+    orchestrator = FakeOrchestrator(
+        "Rendered revised draft", (artifact,), requested_revision_fields=("name",)
+    )
     atomic_calls = []
     monkeypatch.setattr(main, "get_session", lambda _session_id: session())
     monkeypatch.setattr(main, "get_history", lambda _session_id: [])
     monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
     monkeypatch.setattr(main, "get_latest_campaign_draft", lambda *_args: current)
+    monkeypatch.setattr(main, "get_pending_campaign_draft_options", lambda *_args: None)
     monkeypatch.setattr(
         main,
         "append_exchange_with_campaign_draft",
@@ -197,7 +218,135 @@ def test_revision_loads_authoritative_draft_and_returns_same_id_next_revision(mo
     assert atomic_calls[0][1] == {
         "draft_id": current.draftId,
         "expected_revision": 1,
+        "selected_option_set_id": None,
+        "selected_option_number": None,
     }
+
+
+def test_structured_campaign_options_are_persisted_and_returned(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from app.campaigns.models import (
+        CampaignDraftOptionProposal,
+        PersistedCampaignDraftOptionSet,
+    )
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft()
+    proposal = CampaignDraftOptionProposal(
+        field="name",
+        options=["Name One", "Name Two", "Name Three", "Name Four", "Name Five"],
+        baseRevision=1,
+    )
+    persisted_options = PersistedCampaignDraftOptionSet(
+        optionSetId="22222222-2222-4222-8222-222222222222",
+        draftId=current.draftId,
+        baseRevision=1,
+        field="name",
+        options=proposal.options,
+        status="pending",
+        expiresAt=datetime.now(timezone.utc) + timedelta(minutes=10),
+    )
+    orchestrator = FakeOrchestrator("Five options", (proposal,))
+    atomic_calls = []
+    monkeypatch.setattr(
+        main,
+        "get_session",
+        lambda _session_id: session(active_campaign_draft_id=current.draftId),
+    )
+    monkeypatch.setattr(main, "get_history", lambda _session_id: [])
+    monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
+    monkeypatch.setattr(main, "get_campaign_draft", lambda *_args: current)
+    monkeypatch.setattr(main, "get_pending_campaign_draft_options", lambda *_args: None)
+    monkeypatch.setattr(
+        main,
+        "append_exchange_with_campaign_options",
+        lambda *args: atomic_calls.append(args) or persisted_options,
+    )
+
+    response = client.post(
+        "/chat/query",
+        json={
+            "fa_id": "fa-1",
+            "session_id": "session-1",
+            "message_content": "Give me five campaign name options",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["campaignDraft"] is None
+    assert response.json()["campaignDraftOptions"]["optionSetId"] == (
+        persisted_options.optionSetId
+    )
+    assert atomic_calls[0][4] == current.draftId
+    assert atomic_calls[0][5] == proposal
+
+
+def test_unrelated_chat_does_not_load_active_campaign_draft(monkeypatch):
+    orchestrator = FakeOrchestrator()
+    monkeypatch.setattr(
+        main,
+        "get_session",
+        lambda _session_id: session(
+            active_campaign_draft_id="11111111-1111-4111-8111-111111111111"
+        ),
+    )
+    monkeypatch.setattr(main, "get_history", lambda _session_id: [])
+    monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
+    monkeypatch.setattr(main, "append_exchange", lambda *_items: None)
+    monkeypatch.setattr(
+        main,
+        "get_campaign_draft",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("ordinary tool turns must not load campaign draft state")
+        ),
+    )
+
+    response = client.post(
+        "/chat/query",
+        json={
+            "fa_id": "fa-1",
+            "session_id": "session-1",
+            "message_content": "Which clients need a follow-up?",
+        },
+    )
+
+    assert response.status_code == 200
+    assert orchestrator.calls[0][2] == {
+        "scope": main.RequestScope("fa-1"),
+        "campaign_id": None,
+        "session_id": "session-1",
+    }
+
+
+def test_generation_wording_loads_active_draft_before_routing(monkeypatch):
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft()
+    orchestrator = FakeOrchestrator("Clarify whether to replace the draft")
+    monkeypatch.setattr(
+        main,
+        "get_session",
+        lambda _session_id: session(active_campaign_draft_id=current.draftId),
+    )
+    monkeypatch.setattr(main, "get_history", lambda _session_id: [])
+    monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
+    monkeypatch.setattr(main, "get_campaign_draft", lambda *_args: current)
+    monkeypatch.setattr(main, "get_pending_campaign_draft_options", lambda *_args: None)
+    monkeypatch.setattr(main, "append_exchange", lambda *_items: None)
+
+    response = client.post(
+        "/chat/query",
+        json={
+            "fa_id": "fa-1",
+            "session_id": "session-1",
+            "message_content": "Please create a retirement campaign",
+        },
+    )
+
+    assert response.status_code == 200
+    assert orchestrator.calls[0][2]["current_draft"] == current
+    assert orchestrator.calls[0][2]["revision_context_checked"] is True
 
 
 def test_query_rejects_session_owned_by_another_adviser(monkeypatch):

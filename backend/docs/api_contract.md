@@ -178,17 +178,34 @@ Response:
 {
   "user": "advisor-123",
   "timestamp": "2026-10-03T00:00:00Z",
-  "ai_answer": "..."
+  "ai_answer": "...",
+  "campaignDraft": null,
+  "campaignDraftOptions": null
 }
 ```
+
+`campaignDraft` is `null` for ordinary answers, clarification questions and
+failed draft validation. After successful campaign generation or selective
+revision it contains the complete server-validated structured draft, including
+its stable `draftId`, `revision`, lifecycle status, objective, citations,
+`changedFields`, validation warnings and `created: false`. Existing clients that
+read only `ai_answer` remain compatible.
+
+`campaignDraftOptions` is normally `null`. When the adviser asks for
+alternatives for one narrative field, it contains a persisted
+`campaign_draft_options` object with `optionSetId`, `draftId`, `baseRevision`,
+`field`, two to ten ordered `options`, `status`, `expiresAt` and `created: false`.
+The option response does not change `campaignDraft` or its revision.
 
 Provider or MCP tool-server failures are returned as `429`, `502`, `503`, or
 `504` depending on the failure category. Groq receives schemas discovered from
 the FastMCP server at `MCP_SERVER_URL`; tool calls are executed by that server.
 Tool execution is bounded by `LLM_MAX_TOOL_ROUNDS`.
 After a successful provider response, the user and assistant messages are stored
-in one PostgreSQL transaction. A failed provider request does not append a
-partial exchange, although a session explicitly created beforehand remains.
+in one PostgreSQL transaction. When the response carries a draft artifact, its
+insert or optimistic revision update occurs in that same transaction. A failed
+provider request or stale draft update does not append a partial exchange,
+although a session explicitly created beforehand remains.
 
 For a clear but underspecified campaign-generation request, the server responds
 with at most three server-selected clarification questions before reference
@@ -228,6 +245,44 @@ intent-extraction call may occur. The response
 continues to use the existing `ai_answer` string, so both route forms remain
 backward compatible.
 
+After a validated draft exists in the same scoped chat session, a request that
+explicitly names one or more supported fields can be routed to selective
+revision before new-campaign generation. For example, “generate a more unique
+campaign name” revises only `name`; “rewrite the campaign name and description”
+revises both in one operation. Supported fields are `name`, `description`,
+`clientMessage`, `ageGroups`, `genders`, `cashBands` and
+`targetDemographicSummary`. Ambiguous requests ask which fields to revise.
+
+The chat session stores the active draft ID. Before handling a plausible draft
+turn, the server resolves a strict action: ordinary chat, revise named fields,
+suggest alternatives, select a numbered alternative, show the current draft,
+start a new draft, or ask for clarification. Deterministic rules handle clear
+phrasing, with a schema-constrained model classifier as a bounded fallback.
+Starting new generation while a draft is active requires explicit new/separate/
+replacement intent. “Please draft the full campaign” therefore renders the
+current structured draft without changing it. Ordinary discovery, matching,
+follow-up, performance and campaign-email requests remain on their existing MCP
+tool path and do not load the active draft.
+
+For example, “give me five more unique campaign name options” returns a
+revision-bound option set. “Let's try the fifth option” resolves against that
+stored set, proposes exactly its fifth value for `name`, and invokes the same
+selective revision boundary. Option sets are tenant/adviser/session/draft scoped,
+expire after 15 minutes, and are marked stale after any successful revision.
+Missing, expired, out-of-range and stale selections do not modify the draft.
+
+The server loads the session's active draft by tenant, adviser and session
+(falling back to the latest reviewable draft only for pre-pointer rows), sends
+the model only that structured draft and a selected-field-only schema, and
+injects the objective, citations and current revision when invoking
+`revise_campaign_draft`. The complete result is revalidated and stored against
+the same `draftId` at revision `n + 1`; unselected fields cannot be overwritten.
+Repeated turns therefore support multiple sequential revisions. Generation and
+revision write chat and campaign-generation review tables only; neither writes
+`mock_campaign`. Option creation and selection are committed atomically with the
+matching chat exchange; selection and the resulting optimistic revision share
+one transaction.
+
 Example:
 
 ```bash
@@ -240,6 +295,7 @@ curl -X POST http://localhost:4000/chat/query \
 
 - `400`: neither the body nor query string supplies `fa_id`.
 - `404`: the selected session does not exist or belongs to another adviser.
+- `409`: a campaign draft revision is stale and cannot overwrite newer work.
 - `422`: request validation failed or the stripped message is empty.
 - `429`: the upstream model provider rate-limited the request.
 - `502`: provider authentication, response, or tool-loop failure.
@@ -410,8 +466,9 @@ A successful result has `type: campaign_draft`, `data_source: ai_generated`, the
 objective, exact citations, validated draft, `validation` with
 `schema_valid: true`, `policy_valid: true` and warnings,
 `requires_adviser_review: true`, and `created: false`. No draft ID, revision,
-campaign status, creator or timestamp exists at this stage because nothing has
-been persisted.
+campaign status, creator or timestamp exists in the MCP result because the tool
+does not persist. FastAPI adds the server-owned draft ID and revision only after
+validating and storing the artifact.
 
 Safe failures use `missing_context`, `invalid_draft`,
 `invalid_retrieval_token`, `expired_retrieval_token`, `scope_mismatch`,
@@ -424,17 +481,58 @@ prohibits claiming that a returned proposal was created, approved, activated or
 sent. After successful preparation, the orchestrator validates the returned
 artifact again, stops the model loop and deterministically renders every field
 as Markdown. The stored `ai_answer` therefore includes the description and all
-other draft sections without relying on a model-authored summary. The current
-chat API still exposes that rendering as `ai_answer`; returning the structured
-artifact in the HTTP response and persisting revisions remain later stages.
+other draft sections without relying on a model-authored summary. Stage 7 also
+persists the structured artifact and returns it as `campaignDraft`; this API-side
+write does not change the read-only MCP tool.
+
+### MCP: revise_campaign_draft
+
+This read-only, non-destructive Stage 6 tool validates a selective revision of
+an existing validated campaign draft. It does not persist a draft, create or
+update a campaign, select clients, activate outreach or send communications.
+
+Arguments are the original `objective`, existing `referencesUsed`, authoritative
+`currentDraft`, `revision`, an optional adviser `instruction`, one to seven
+selected `fields`, and `proposedChanges`. Supported fields are `name`,
+`description`, `clientMessage`, `ageGroups`, `genders`, `cashBands` and
+`targetDemographicSummary`. `proposedChanges` must contain exactly the selected
+fields; extra, missing, duplicate, null or unsupported changes are rejected.
+Age, gender and cash changes are merged into the nested criteria object.
+
+The handler resolves cited catalogue entries only when they remain approved,
+valid and available to the request tenant. It revalidates the current draft,
+applies only the selected changes, restores every other supported field and
+reruns disclaimer, unsupported-claim, personal-data and targeting-consistency
+checks. A targeting-only change that contradicts unchanged narrative fields is
+rejected with `inconsistent_targeting` instead of silently rewriting those
+fields.
+
+A successful result has `type: campaign_draft_revision`, `data_source:
+ai_generated`, the objective and citations, the complete validated draft,
+`previousRevision`, `revision` incremented by exactly one, `changedFields`,
+validation results, `requires_adviser_review: true` and `created: false`.
+Failures use the existing safe campaign-generation error codes and do not echo
+unsafe generated text.
+
+The tool is exposed directly by FastMCP but remains omitted from the generic
+model-facing tool list. For a recognised chat revision request, the Stage 7
+orchestrator loads the authoritative persisted artifact, asks the model through
+a strict selected-field-only schema, and invokes this tool directly with the
+server-held objective, citations, draft and revision. Stage 8 will add the
+editable frontend experience.
 
 ### Campaign generation contracts and ownership
 
-Stages 1-5.5 define and validate the draft workflow without enabling campaign
-creation.
+Stages 1-7 define generation, selective revision and review-only draft
+persistence without enabling campaign creation.
 The lifecycle values are `generated`, `reviewed`, `confirmed`, `rejected` and
-`expired`. The preparation tool returns an unpersisted generated artifact;
-revision, preview, confirmation and PostgreSQL persistence remain subsequent stages.
+`expired`. MCP preparation and revision remain read-only and return unpersisted
+artifacts. The FastAPI host validates those artifacts again and stores the
+current review-only state in `campaign_generation_drafts`, scoped by tenant,
+adviser and chat session. The chat session's active-draft pointer identifies the
+review context, while `campaign_generation_draft_options` stores short-lived,
+revision-bound narrative choices separately from chat prose. Preview and
+confirmation remain subsequent stages.
 
 Pre-generation clarification has its own implementation lifecycle (`active`,
 `completed`, `cancelled`) and is not a campaign draft lifecycle state. It stores

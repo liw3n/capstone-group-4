@@ -73,8 +73,11 @@ the frontend and backend are served separately.
   email receipts persist through FastAPI. Tasks, pipeline cards and role
   selection remain React state.
 - PULSE chat, contacts and campaigns are connected to the FastAPI backend.
-- Chat sessions and successful user/assistant exchanges persist in PostgreSQL;
-  drafts, open/closed panel state, and optimistic messages remain browser state.
+- Chat sessions, successful user/assistant exchanges and generated campaign
+  draft artifacts persist in PostgreSQL. The typed chat client accepts the
+  optional structured draft and draft-option responses, but the Stage 8 review
+  UI is not yet wired; open/closed panel state and optimistic messages remain
+  browser state.
 - Role selection is a prototype, not authentication or authorization.
 - No automated frontend test runner is configured; `npm run lint` is currently
   a strict TypeScript check.

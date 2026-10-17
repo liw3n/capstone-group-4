@@ -37,7 +37,11 @@ schemas and API client behavior aligned.
 ## Known gaps (current state)
 
 - Registered campaign tools use shared handlers for scoped synthetic discovery,
-  matching, performance, follow-up, reference retrieval and draft validation.
+  matching, performance, follow-up, reference retrieval, draft preparation and
+  read-only selective draft revision. The generic model-facing tool list still
+  hides revision; the chat orchestrator loads the authoritative persisted draft,
+  obtains schema-constrained values only for selected fields, and invokes the
+  revision tool directly.
 - There is no real authentication, production CRM integration, tool-level audit
   log or consent-safe consequential action/confirmation protocol.
 - The server starts beside FastAPI in local development and shares its optional

@@ -1,7 +1,7 @@
 """Scoped PostgreSQL persistence for review-only campaign draft revisions."""
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import psycopg
@@ -11,8 +11,10 @@ from psycopg.types.json import Jsonb
 from app import config
 from app.campaigns.models import (
     CampaignDraftArtifact,
+    CampaignDraftOptionProposal,
     CampaignDraftRevisionArtifact,
     PersistedCampaignDraftArtifact,
+    PersistedCampaignDraftOptionSet,
 )
 from app.campaigns.repository import RequestScope
 
@@ -66,6 +68,18 @@ def _from_row(row: dict) -> PersistedCampaignDraftArtifact:
         "status": row["status"],
         "changedFields": row["changed_fields"],
         "validation": row["validation"],
+    })
+
+
+def _option_from_row(row: dict) -> PersistedCampaignDraftOptionSet:
+    return PersistedCampaignDraftOptionSet.model_validate({
+        "optionSetId": row["option_set_id"],
+        "draftId": row["draft_id"],
+        "baseRevision": row["base_revision"],
+        "field": row["field_name"],
+        "options": row["options"],
+        "status": row["status"],
+        "expiresAt": row["expires_at"],
     })
 
 
@@ -128,6 +142,157 @@ def get_latest_campaign_draft(
     return _from_row(row) if row else None
 
 
+def get_pending_campaign_draft_options(
+    scope: RequestScope,
+    session_id: str,
+    draft_id: str,
+    revision: int,
+    *,
+    connection=None,
+) -> PersistedCampaignDraftOptionSet | None:
+    def read(active_connection):
+        active_connection.execute(
+            """
+            UPDATE campaign_generation_draft_options
+            SET status = 'expired'
+            WHERE tenant_id = %s AND fa_id = %s AND session_id = %s
+              AND draft_id = %s AND status = 'pending'
+              AND expires_at <= CURRENT_TIMESTAMP
+            """,
+            (scope.tenant_id, scope.fa_id, session_id, draft_id),
+        )
+        return active_connection.execute(
+            """
+            SELECT option_set_id, draft_id, base_revision, field_name, options,
+                   status, expires_at
+            FROM campaign_generation_draft_options
+            WHERE tenant_id = %s AND fa_id = %s AND session_id = %s
+              AND draft_id = %s AND base_revision = %s
+              AND status = 'pending' AND expires_at > CURRENT_TIMESTAMP
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (scope.tenant_id, scope.fa_id, session_id, draft_id, revision),
+        ).fetchone()
+
+    if connection is not None:
+        row = read(connection)
+    else:
+        with draft_transaction() as active_connection:
+            row = read(active_connection)
+    return _option_from_row(row) if row else None
+
+
+def create_campaign_draft_option_set(
+    scope: RequestScope,
+    session_id: str,
+    draft_id: str,
+    proposal: CampaignDraftOptionProposal,
+    *,
+    connection=None,
+) -> PersistedCampaignDraftOptionSet:
+    option_set_id = str(uuid4())
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+
+    def create(active_connection):
+        current = active_connection.execute(
+            """
+            SELECT revision
+            FROM campaign_generation_drafts
+            WHERE draft_id = %s AND tenant_id = %s AND fa_id = %s
+              AND session_id = %s AND status IN ('generated', 'reviewed')
+            FOR UPDATE
+            """,
+            (draft_id, scope.tenant_id, scope.fa_id, session_id),
+        ).fetchone()
+        if current is None:
+            raise CampaignDraftNotFound("campaign draft not found")
+        if current["revision"] != proposal.baseRevision:
+            raise CampaignDraftStaleRevision("campaign draft revision is stale")
+        active_connection.execute(
+            """
+            UPDATE campaign_generation_draft_options
+            SET status = 'stale'
+            WHERE tenant_id = %s AND fa_id = %s AND session_id = %s
+              AND draft_id = %s AND status = 'pending'
+            """,
+            (scope.tenant_id, scope.fa_id, session_id, draft_id),
+        )
+        return active_connection.execute(
+            """
+            INSERT INTO campaign_generation_draft_options
+                (option_set_id, tenant_id, fa_id, session_id, draft_id,
+                 base_revision, field_name, options, expires_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING option_set_id, draft_id, base_revision, field_name,
+                      options, status, expires_at
+            """,
+            (
+                option_set_id,
+                scope.tenant_id,
+                scope.fa_id,
+                session_id,
+                draft_id,
+                proposal.baseRevision,
+                proposal.field,
+                Jsonb(proposal.options),
+                expires_at,
+            ),
+        ).fetchone()
+
+    if connection is not None:
+        row = create(connection)
+    else:
+        with draft_transaction() as active_connection:
+            row = create(active_connection)
+    return _option_from_row(row)
+
+
+def mark_campaign_draft_option_selected(
+    scope: RequestScope,
+    session_id: str,
+    draft_id: str,
+    revision: int,
+    option_set_id: str,
+    option_number: int,
+    *,
+    connection=None,
+) -> None:
+    if not 1 <= option_number <= 10:
+        raise CampaignDraftStaleRevision("campaign draft option is unavailable")
+
+    def update(active_connection):
+        row = active_connection.execute(
+            """
+            UPDATE campaign_generation_draft_options
+            SET status = 'selected', selected_index = %s
+            WHERE option_set_id = %s AND tenant_id = %s AND fa_id = %s
+              AND session_id = %s AND draft_id = %s AND base_revision = %s
+              AND status = 'pending' AND expires_at > CURRENT_TIMESTAMP
+              AND %s <= jsonb_array_length(options)
+            RETURNING option_set_id
+            """,
+            (
+                option_number,
+                option_set_id,
+                scope.tenant_id,
+                scope.fa_id,
+                session_id,
+                draft_id,
+                revision,
+                option_number,
+            ),
+        ).fetchone()
+        if row is None:
+            raise CampaignDraftStaleRevision("campaign draft option is stale or unavailable")
+
+    if connection is not None:
+        update(connection)
+    else:
+        with draft_transaction() as active_connection:
+            update(active_connection)
+
+
 def create_campaign_draft(
     scope: RequestScope,
     session_id: str,
@@ -164,6 +329,15 @@ def create_campaign_draft(
                 scope.fa_id,
             ),
         ).fetchone()
+        if row is not None:
+            active_connection.execute(
+                """
+                UPDATE campaign_chat_sessions
+                SET active_campaign_draft_id = %s
+                WHERE session_id = %s AND fa_id = %s
+                """,
+                (draft_id, session_id, scope.fa_id),
+            )
         return row
 
     if connection is not None:
@@ -217,6 +391,15 @@ def update_campaign_draft_revision(
             ),
         ).fetchone()
         if row is not None:
+            active_connection.execute(
+                """
+                UPDATE campaign_generation_draft_options
+                SET status = 'stale'
+                WHERE tenant_id = %s AND fa_id = %s AND session_id = %s
+                  AND draft_id = %s AND status = 'pending'
+                """,
+                (scope.tenant_id, scope.fa_id, session_id, draft_id),
+            )
             return row
         scoped = active_connection.execute(
             """
