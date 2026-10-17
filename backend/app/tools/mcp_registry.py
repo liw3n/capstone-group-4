@@ -11,7 +11,11 @@ from app.campaigns.email import (
     ConfirmCampaignEmailArguments,
     PrepareCampaignEmailArguments,
 )
-from app.campaigns.models import CampaignReferenceQuery, PrepareCampaignDraftArguments
+from app.campaigns.models import (
+    CampaignReferenceQuery,
+    PrepareCampaignDraftArguments,
+    ReviseCampaignDraftArguments,
+)
 from app.campaigns.repository import RequestScope
 from app.llm.errors import LLMProviderError
 from app.tools.campaign import RecommendationArguments
@@ -70,6 +74,11 @@ class MCPToolRegistry:
 
         schemas = []
         for tool in tools:
+            if tool.name == "revise_campaign_draft":
+                # Stage 6 exposes the read-only boundary over MCP. PULSE chat
+                # must not ask the model to reconstruct an authoritative prior
+                # draft from prose; Stage 7 will inject a persisted artifact.
+                continue
             parameters = deepcopy(tool.input_schema)
             description = tool.description or ""
             if tool.name == "prepare_campaign_draft":
@@ -176,6 +185,26 @@ class MCPToolRegistry:
                     "data_source": "ai_generated",
                     "error_code": "invalid_draft",
                     "error": "Campaign draft arguments are invalid",
+                    "created": False,
+                })
+
+        if name == "revise_campaign_draft":
+            if self.scope is None:
+                return json.dumps({
+                    "data_source": "ai_generated",
+                    "error_code": "missing_context",
+                    "error": "Adviser request context is required",
+                    "created": False,
+                })
+            try:
+                arguments = ReviseCampaignDraftArguments.model_validate(
+                    arguments
+                ).model_dump(exclude_none=True)
+            except ValidationError:
+                return json.dumps({
+                    "data_source": "ai_generated",
+                    "error_code": "invalid_draft",
+                    "error": "Campaign draft revision arguments are invalid",
                     "created": False,
                 })
 

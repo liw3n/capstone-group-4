@@ -31,10 +31,15 @@ from app.campaigns.email import (
 from app.campaigns.models import (
     CampaignCategory,
     CampaignDraft,
+    CampaignDraftChanges,
+    CampaignDraftField,
     CampaignReferenceCitation,
 )
 from app.tools.campaign import execute_recommendation
-from app.tools.campaign_draft import execute_prepare_campaign_draft
+from app.tools.campaign_draft import (
+    execute_prepare_campaign_draft,
+    execute_revise_campaign_draft,
+)
 from app.tools.campaign_references import execute_find_campaign_references
 from app.tools.discovery import CampaignField, CampaignId, CampaignName, execute_discovery
 from app.tools.performance import execute_contact_performance, execute_contact_ranking
@@ -261,6 +266,46 @@ def prepare_campaign_draft(
             "retrievalToken": retrievalToken,
             "referencesUsed": [item.model_dump() for item in referencesUsed],
             "draft": draft.model_dump(),
+        },
+        _request_metadata(ctx),
+    )
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
+def revise_campaign_draft(
+    objective: Annotated[
+        str,
+        Field(
+            min_length=10,
+            max_length=2_000,
+            description="The original validated campaign business objective.",
+        ),
+    ],
+    referencesUsed: Annotated[list[CampaignReferenceCitation], Field(max_length=3)],
+    currentDraft: CampaignDraft,
+    proposedChanges: CampaignDraftChanges,
+    fields: Annotated[list[CampaignDraftField], Field(min_length=1, max_length=7)],
+    revision: Annotated[int, Field(ge=1, strict=True)],
+    ctx: Context,
+    instruction: Annotated[str | None, Field(max_length=2_000)] = None,
+) -> dict:
+    """Validate a selective revision of an existing campaign draft.
+
+    Read-only: only fields explicitly listed in fields may change. Every other
+    field is restored from currentDraft, the complete policy is rerun, and the
+    result remains an uncreated adviser-review artifact. The calling host must
+    supply the authoritative previously validated draft and revision.
+    """
+    logger.info("MCP tool called: revise_campaign_draft")
+    return execute_revise_campaign_draft(
+        {
+            "objective": objective,
+            "referencesUsed": [item.model_dump() for item in referencesUsed],
+            "currentDraft": currentDraft.model_dump(),
+            "proposedChanges": proposedChanges.model_dump(exclude_unset=True),
+            "fields": fields,
+            "instruction": instruction,
+            "revision": revision,
         },
         _request_metadata(ctx),
     )

@@ -201,16 +201,52 @@ class PrepareCampaignDraftArguments(StrictModel):
         return self
 
 
+class CampaignDraftChanges(StrictModel):
+    """Model-proposed values for only the fields selected for revision."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, min_length=1, max_length=10_000)
+    clientMessage: str | None = Field(default=None, min_length=1, max_length=10_000)
+    ageGroups: list[AgeGroup] | None = Field(default=None, max_length=5)
+    genders: list[Gender] | None = Field(default=None, max_length=2)
+    cashBands: list[CashBand] | None = Field(default=None, max_length=4)
+    targetDemographicSummary: str | None = Field(
+        default=None, min_length=1, max_length=1_000
+    )
+
+    @model_validator(mode="after")
+    def reject_duplicate_criteria(self):
+        for field_name in ("ageGroups", "genders", "cashBands"):
+            values = getattr(self, field_name)
+            if values is not None and len(values) != len(set(values)):
+                raise ValueError(f"{field_name} must not contain duplicates")
+        return self
+
+
 class ReviseCampaignDraftArguments(StrictModel):
+    objective: str = Field(min_length=10, max_length=2_000)
+    referencesUsed: list[CampaignReferenceCitation] = Field(max_length=3)
     currentDraft: CampaignDraft
+    proposedChanges: CampaignDraftChanges
     fields: list[CampaignDraftField] = Field(min_length=1, max_length=7)
     instruction: str | None = Field(default=None, max_length=2_000)
     revision: int = Field(ge=1, strict=True)
 
     @model_validator(mode="after")
-    def reject_duplicate_fields(self):
+    def validate_revision_selection(self):
         if len(self.fields) != len(set(self.fields)):
             raise ValueError("fields must not contain duplicates")
+        selected = set(self.fields)
+        proposed = set(self.proposedChanges.model_fields_set)
+        if selected != proposed:
+            raise ValueError("proposedChanges must contain exactly the selected fields")
+        if any(getattr(self.proposedChanges, field) is None for field in proposed):
+            raise ValueError("proposedChanges values must not be null")
+        citations = [
+            (citation.referenceId, citation.version) for citation in self.referencesUsed
+        ]
+        if len(citations) != len(set(citations)):
+            raise ValueError("referencesUsed must not contain duplicates")
         return self
 
 
@@ -238,6 +274,42 @@ class CampaignDraftArtifact(StrictModel):
     validation: CampaignDraftValidation
     requires_adviser_review: Literal[True] = True
     created: Literal[False] = False
+
+    @model_validator(mode="after")
+    def reject_duplicate_citations(self):
+        citations = [
+            (citation.referenceId, citation.version) for citation in self.referencesUsed
+        ]
+        if len(citations) != len(set(citations)):
+            raise ValueError("referencesUsed must not contain duplicates")
+        return self
+
+
+class CampaignDraftRevisionArtifact(StrictModel):
+    type: Literal["campaign_draft_revision"] = "campaign_draft_revision"
+    data_source: Literal["ai_generated"] = "ai_generated"
+    objective: str = Field(min_length=10, max_length=2_000)
+    referencesUsed: list[CampaignReferenceCitation] = Field(max_length=3)
+    draft: CampaignDraft
+    previousRevision: int = Field(ge=1, strict=True)
+    revision: int = Field(ge=2, strict=True)
+    changedFields: list[CampaignDraftField] = Field(min_length=1, max_length=7)
+    validation: CampaignDraftValidation
+    requires_adviser_review: Literal[True] = True
+    created: Literal[False] = False
+
+    @model_validator(mode="after")
+    def validate_revision_artifact(self):
+        if self.revision != self.previousRevision + 1:
+            raise ValueError("revision must advance exactly once")
+        if len(self.changedFields) != len(set(self.changedFields)):
+            raise ValueError("changedFields must not contain duplicates")
+        citations = [
+            (citation.referenceId, citation.version) for citation in self.referencesUsed
+        ]
+        if len(citations) != len(set(citations)):
+            raise ValueError("referencesUsed must not contain duplicates")
+        return self
 
 
 class CampaignDraftPreview(StrictModel):

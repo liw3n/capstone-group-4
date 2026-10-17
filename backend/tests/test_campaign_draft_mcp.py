@@ -12,7 +12,10 @@ from app.campaigns.reference_repository import (
     load_catalogue,
 )
 from app.campaigns.repository import DEMO_FA, RequestScope
-from app.tools.campaign_draft import execute_prepare_campaign_draft
+from app.tools.campaign_draft import (
+    execute_prepare_campaign_draft,
+    execute_revise_campaign_draft,
+)
 from app.tools.mcp_registry import MCPToolRegistry
 from test_campaign_mcp import server
 
@@ -71,6 +74,24 @@ def prepare_arguments(reference_result, objective=OBJECTIVE, citations=None):
         "retrievalToken": reference_result["retrievalToken"],
         "referencesUsed": citations,
         "draft": valid_draft(),
+    }
+
+
+def revision_arguments(reference_result, *, fields=None, changes=None):
+    citations = [{
+        "referenceId": reference_result["references"][0]["referenceId"],
+        "version": reference_result["references"][0]["version"],
+    }]
+    return {
+        "objective": OBJECTIVE,
+        "referencesUsed": citations,
+        "currentDraft": valid_draft(),
+        "proposedChanges": changes or {
+            "name": "Retirement Compass Income Review",
+        },
+        "fields": fields or ["name"],
+        "instruction": "Use a more distinctive campaign name",
+        "revision": 1,
     }
 
 
@@ -241,3 +262,107 @@ def test_registry_keeps_retrieval_token_and_objective_out_of_model_schema():
     result = json.loads(bound.execute("prepare_campaign_draft", json.dumps(arguments)))
     assert result["type"] == "campaign_draft"
     assert result["objective"] == OBJECTIVE
+
+
+def test_revise_changes_only_selected_fields_and_increments_revision(monkeypatch):
+    def database_access_is_forbidden():
+        raise AssertionError("draft revision must not access PostgreSQL")
+
+    monkeypatch.setattr(campaign_repository, "_connection", database_access_is_forbidden)
+    bound = registry()
+    references = retrieval(bound)
+    arguments = revision_arguments(references)
+
+    result = json.loads(bound.execute(
+        "revise_campaign_draft", json.dumps(arguments)
+    ))
+
+    assert result["type"] == "campaign_draft_revision"
+    assert result["created"] is False
+    assert result["requires_adviser_review"] is True
+    assert result["previousRevision"] == 1
+    assert result["revision"] == 2
+    assert result["changedFields"] == ["name"]
+    assert result["draft"]["name"] == "Retirement Compass Income Review"
+    original = arguments["currentDraft"].copy()
+    revised = result["draft"].copy()
+    original.pop("name")
+    revised.pop("name")
+    assert revised == original
+    assert not {"draftId", "status", "tenant_id", "fa_id"} & result.keys()
+
+
+def test_revise_revalidates_policy_and_targeting():
+    bound = registry()
+    references = retrieval(bound)
+
+    unsafe = revision_arguments(
+        references,
+        fields=["description"],
+        changes={"description": "Guaranteed returns for every client."},
+    )
+    result = json.loads(bound.execute(
+        "revise_campaign_draft", json.dumps(unsafe)
+    ))
+    assert result["error_code"] == "unsupported_claim"
+    assert result["field"] == "description"
+    assert result["rule"] == "guarantee_claim"
+
+    inconsistent = revision_arguments(
+        references,
+        fields=["genders"],
+        changes={"genders": ["female"]},
+    )
+    result = json.loads(bound.execute(
+        "revise_campaign_draft", json.dumps(inconsistent)
+    ))
+    assert result["error_code"] == "inconsistent_targeting"
+
+
+def test_revise_rejects_invalid_selection_citation_and_missing_scope():
+    bound = registry()
+    references = retrieval(bound)
+    arguments = revision_arguments(references)
+    arguments["proposedChanges"]["description"] = "Unselected change"
+    result = json.loads(bound.execute(
+        "revise_campaign_draft", json.dumps(arguments)
+    ))
+    assert result["error_code"] == "invalid_draft"
+
+    arguments = revision_arguments(references)
+    arguments["referencesUsed"] = [{
+        "referenceId": "campaign-pattern-not-returned-999",
+        "version": 1,
+    }]
+    result = execute_revise_campaign_draft(
+        arguments,
+        {"pulse_scope": {
+            "fa_id": DEMO_FA,
+            "tenant_id": RequestScope(DEMO_FA).tenant_id,
+        }},
+    )
+    assert result["error_code"] == "invalid_reference_citation"
+
+    result = json.loads(MCPToolRegistry(server).execute(
+        "revise_campaign_draft",
+        json.dumps(revision_arguments(references)),
+    ))
+    assert result["error_code"] == "missing_context"
+
+
+def test_revise_is_read_only_mcp_tool_but_not_yet_model_visible():
+    async def inspect_tools():
+        async with Client(server) as client:
+            return await client.list_tools()
+
+    tools = asyncio.run(inspect_tools())
+    tool = next(item for item in tools if item.name == "revise_campaign_draft")
+    assert tool.annotations.read_only_hint is True
+    assert tool.annotations.destructive_hint is False
+    assert set(tool.input_schema["properties"]) == {
+        "objective", "referencesUsed", "currentDraft", "proposedChanges",
+        "fields", "revision", "instruction",
+    }
+    assert "revise_campaign_draft" not in {
+        item["function"]["name"] for item in registry().schemas()
+    }

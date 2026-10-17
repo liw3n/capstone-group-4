@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from app.campaigns.models import (
     CampaignDraft,
+    CampaignDraftChanges,
     CampaignDraftConfirmationRequest,
     CampaignDraftCriteria,
     CampaignDraftPreviewRequest,
@@ -85,3 +86,33 @@ def test_reference_contract_validates_dates_and_targeting_rationale():
     }
     with pytest.raises(ValidationError):
         CampaignReference.model_validate(base)
+
+
+def test_revision_contract_requires_exact_selected_change_fields():
+    valid = {
+        "objective": "Invite clients to an educational retirement review",
+        "referencesUsed": [],
+        "currentDraft": valid_draft(),
+        "proposedChanges": {"name": "A more distinctive review name"},
+        "fields": ["name"],
+        "instruction": "Make the name more distinctive",
+        "revision": 1,
+    }
+    parsed = ReviseCampaignDraftArguments.model_validate(valid)
+    assert parsed.proposedChanges.name == "A more distinctive review name"
+
+    with pytest.raises(ValidationError):
+        ReviseCampaignDraftArguments.model_validate({
+            **valid,
+            "proposedChanges": {
+                "name": "A more distinctive review name",
+                "description": "An unselected description change",
+            },
+        })
+    with pytest.raises(ValidationError):
+        ReviseCampaignDraftArguments.model_validate({
+            **valid,
+            "fields": ["name", "name"],
+        })
+    with pytest.raises(ValidationError):
+        CampaignDraftChanges.model_validate({"genders": ["male", "male"]})
