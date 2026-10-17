@@ -19,6 +19,51 @@ export interface QueryResponse {
   user: boolean | string;
   timestamp: string;
   ai_answer: string;
+  campaignDraft?: CampaignDraftArtifact | null;
+}
+
+export type CampaignAgeGroup = 'under35' | '35to44' | '45to54' | '55to64' | '65plus';
+export type CampaignGender = 'male' | 'female';
+export type CampaignCashBand = 'under50k' | '50kTo250k' | '250kTo1m' | 'above1m';
+
+export interface CampaignDraftArtifact {
+  type: 'campaign_draft';
+  data_source: 'ai_generated';
+  draftId: string;
+  objective: string;
+  referencesUsed: Array<{ referenceId: string; version: number }>;
+  draft: {
+    name: string;
+    description: string;
+    clientMessage: string;
+    criteria: {
+      ageGroups: CampaignAgeGroup[];
+      genders: CampaignGender[];
+      cashBands: CampaignCashBand[];
+    };
+    targetDemographicSummary: string;
+    rationale: Record<'ageGroups' | 'genders' | 'cashBands', string>;
+    assumptions: string[];
+    disclaimer: string;
+  };
+  revision: number;
+  status: 'generated' | 'reviewed' | 'confirmed' | 'rejected' | 'expired';
+  changedFields: Array<
+    | 'name'
+    | 'description'
+    | 'clientMessage'
+    | 'ageGroups'
+    | 'genders'
+    | 'cashBands'
+    | 'targetDemographicSummary'
+  >;
+  validation: {
+    schema_valid: true;
+    policy_valid: true;
+    warnings: string[];
+  };
+  requires_adviser_review: true;
+  created: false;
 }
 
 export class ChatApiError extends Error {

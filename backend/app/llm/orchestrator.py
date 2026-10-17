@@ -1,4 +1,5 @@
 from copy import deepcopy
+from dataclasses import dataclass
 import json
 import re
 from typing import Any, Protocol
@@ -15,7 +16,12 @@ from app.campaigns.clarification import (
     is_campaign_clarification_cancel,
     render_campaign_clarification,
 )
-from app.campaigns.models import CampaignDraftArtifact
+from app.campaigns.models import (
+    CampaignDraftArtifact,
+    CampaignDraftField,
+    CampaignDraftRevisionArtifact,
+    PersistedCampaignDraftArtifact,
+)
 from app.campaigns.email import CONFIRMATION_PATTERN, render_campaign_email
 from app.campaigns.presentation import render_campaign_draft
 from app.campaigns.repository import RequestScope
@@ -166,6 +172,45 @@ not fabricate a draft outside the tool.
 """
 
 
+@dataclass(frozen=True, eq=False)
+class OrchestratorResult:
+    """Assistant text plus trusted structured artifacts retained from tools."""
+
+    answer: str
+    artifacts: tuple[
+        CampaignDraftArtifact | CampaignDraftRevisionArtifact,
+        ...,
+    ] = ()
+
+    # These small conveniences keep local callers that only display text easy to
+    # migrate while the API consumes the explicit typed fields.
+    def __str__(self) -> str:
+        return self.answer
+
+    def __contains__(self, value: str) -> bool:
+        return value in self.answer
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, str):
+            return self.answer == other
+        if isinstance(other, OrchestratorResult):
+            return (
+                self.answer == other.answer
+                and self.artifacts == other.artifacts
+            )
+        return NotImplemented
+
+
+def _answer(
+    value: str,
+    artifact: CampaignDraftArtifact | CampaignDraftRevisionArtifact | None = None,
+) -> OrchestratorResult:
+    return OrchestratorResult(
+        value,
+        (artifact,) if artifact is not None else (),
+    )
+
+
 def _prepared_campaign_draft(result: str) -> CampaignDraftArtifact | None:
     try:
         payload = json.loads(result)
@@ -177,6 +222,21 @@ def _prepared_campaign_draft(result: str) -> CampaignDraftArtifact | None:
         return CampaignDraftArtifact.model_validate(payload)
     except ValidationError as exc:
         raise LLMProviderError("Campaign draft tool returned an invalid artifact") from exc
+
+
+def _revised_campaign_draft(result: str) -> CampaignDraftRevisionArtifact | None:
+    try:
+        payload = json.loads(result)
+    except json.JSONDecodeError as exc:
+        raise LLMProviderError("Campaign draft revision tool returned invalid JSON") from exc
+    if not isinstance(payload, dict) or payload.get("type") != "campaign_draft_revision":
+        return None
+    try:
+        return CampaignDraftRevisionArtifact.model_validate(payload)
+    except ValidationError as exc:
+        raise LLMProviderError(
+            "Campaign draft revision tool returned an invalid artifact"
+        ) from exc
 
 
 def _is_campaign_reference_result(result: str) -> bool:
@@ -226,6 +286,113 @@ def _is_campaign_generation_request(message: str) -> bool:
             normalized,
         )
     )
+
+
+_REVISION_FIELD_PATTERNS: tuple[tuple[CampaignDraftField, re.Pattern[str]], ...] = (
+    ("name", re.compile(r"\b(?:campaign\s+)?(?:name|title)\b|\brename\b")),
+    ("description", re.compile(r"\b(?:campaign\s+)?description\b|\bbrief\b")),
+    (
+        "clientMessage",
+        re.compile(
+            r"\b(?:client\s+)?message\b|\boutreach\s+(?:copy|message)\b|"
+            r"\bemail\s+copy\b|\bclient\s+copy\b"
+        ),
+    ),
+    (
+        "ageGroups",
+        re.compile(
+            r"\bage(?:\s+groups?|\s+targeting)?\b|\bunder\s*35\b|"
+            r"\b(?:35\s*(?:to|[–-])\s*44|45\s*(?:to|[–-])\s*54|"
+            r"55\s*(?:to|[–-])\s*64|65\s*\+)\b"
+        ),
+    ),
+    (
+        "genders",
+        re.compile(r"\bgender(?:s|\s+targeting)?\b|\b(?:male|female|men|women)\b"),
+    ),
+    (
+        "cashBands",
+        re.compile(r"\bcash(?:\s+bands?|\s+threshold|\s+targeting)?\b"),
+    ),
+    (
+        "targetDemographicSummary",
+        re.compile(r"\b(?:target\s+)?demographic\s+summary\b|\baudience\s+summary\b"),
+    ),
+)
+
+
+def _campaign_revision_fields(message: str) -> tuple[CampaignDraftField, ...]:
+    normalized = " ".join(message.casefold().split())
+    if not re.search(
+        r"\b(?:regenerate|generate|revise|rewrite|change|update|edit|rename|"
+        r"make|improve|replace|adjust)\w*\b",
+        normalized,
+    ):
+        return ()
+    return tuple(
+        field_name
+        for field_name, pattern in _REVISION_FIELD_PATTERNS
+        if pattern.search(normalized)
+    )
+
+
+def _is_ambiguous_campaign_revision(message: str) -> bool:
+    normalized = " ".join(message.casefold().split())
+    return bool(
+        re.search(
+            r"\b(?:regenerate|revise|rewrite|change|update|edit|improve|adjust)\w*\b",
+            normalized,
+        )
+        and re.search(r"\b(?:campaign|draft|it|this)\b", normalized)
+        and not _campaign_revision_fields(message)
+    )
+
+
+def is_campaign_revision_candidate(message: str) -> bool:
+    """Return whether chat should load an authoritative stored draft first."""
+    return bool(_campaign_revision_fields(message)) or _is_ambiguous_campaign_revision(
+        message
+    )
+
+
+def campaign_revision_fields(message: str) -> tuple[CampaignDraftField, ...]:
+    """Return the deterministic supported-field selection for a chat request."""
+    return _campaign_revision_fields(message)
+
+
+def _campaign_revision_schema(fields: tuple[CampaignDraftField, ...]) -> dict[str, Any]:
+    properties: dict[str, dict[str, Any]] = {
+        "name": {"type": "string", "minLength": 1, "maxLength": 255},
+        "description": {"type": "string", "minLength": 1, "maxLength": 10_000},
+        "clientMessage": {"type": "string", "minLength": 1, "maxLength": 10_000},
+        "ageGroups": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": ["under35", "35to44", "45to54", "55to64", "65plus"],
+            },
+        },
+        "genders": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["male", "female"]},
+        },
+        "cashBands": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": ["under50k", "50kTo250k", "250kTo1m", "above1m"],
+            },
+        },
+        "targetDemographicSummary": {
+            "type": "string", "minLength": 1, "maxLength": 1_000,
+        },
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {field: properties[field] for field in fields},
+        "required": list(fields),
+    }
 
 
 def _strict_campaign_generation_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -287,6 +454,20 @@ def _campaign_draft_failure(result: str) -> str:
         "## Campaign draft could not be prepared\n\n"
         f"**Validation issue:** {message}{diagnostic}\n\n"
         "No campaign was created. Revise the objective or generated content and try again."
+    )
+
+
+def _render_campaign_revision(artifact: CampaignDraftRevisionArtifact) -> str:
+    prepared = CampaignDraftArtifact(
+        objective=artifact.objective,
+        referencesUsed=artifact.referencesUsed,
+        draft=artifact.draft,
+        validation=artifact.validation,
+    )
+    changed = ", ".join(artifact.changedFields)
+    return (
+        render_campaign_draft(prepared)
+        + f"\n\n**Revision {artifact.revision}** — changed fields: {changed}."
     )
 
 
@@ -372,7 +553,7 @@ class ChatOrchestrator:
         reference_result: str,
         preparation_tool: dict[str, Any],
         targeting_lock: CampaignTargetingLock | None = None,
-    ) -> str:
+    ) -> OrchestratorResult:
         targeting_instruction = ""
         if targeting_lock is not None:
             targeting_instruction = (
@@ -416,8 +597,8 @@ class ChatOrchestrator:
         prepared = registry.execute("prepare_campaign_draft", content)
         artifact = _prepared_campaign_draft(prepared)
         if artifact is not None:
-            return render_campaign_draft(artifact)
-        return _campaign_draft_failure(prepared)
+            return _answer(render_campaign_draft(artifact), artifact)
+        return _answer(_campaign_draft_failure(prepared))
 
     def _run_campaign_generation(
         self,
@@ -427,7 +608,7 @@ class ChatOrchestrator:
         objective: str,
         preparation_tool: dict[str, Any] | None,
         targeting_lock: CampaignTargetingLock,
-    ) -> str:
+    ) -> OrchestratorResult:
         if preparation_tool is None:
             raise LLMProviderError("Campaign preparation schema is unavailable")
         reference_result = registry.execute(
@@ -435,7 +616,7 @@ class ChatOrchestrator:
             json.dumps({"objective": objective, "limit": 3}),
         )
         if not _is_campaign_reference_result(reference_result):
-            return _campaign_reference_failure(reference_result)
+            return _answer(_campaign_reference_failure(reference_result))
         return self._generate_campaign_draft(
             registry=registry,
             prompt=prompt,
@@ -445,6 +626,84 @@ class ChatOrchestrator:
             targeting_lock=targeting_lock,
         )
 
+    def _run_campaign_revision(
+        self,
+        *,
+        registry: ToolExecutor,
+        current_draft: PersistedCampaignDraftArtifact,
+        user_message: str,
+        fields: tuple[CampaignDraftField, ...],
+    ) -> OrchestratorResult:
+        generation = self.client.create_structured_completion(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Revise only the selected fields of a review-only campaign "
+                        "draft. Return exactly the requested fields as JSON. Preserve "
+                        "the adviser's meaning, use educational non-advice language, "
+                        "and do not invent returns, guarantees, rates, client data or "
+                        "regulatory approval. The server will preserve all unselected "
+                        "fields and revalidate the complete draft."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "revisionInstruction": user_message,
+                            "selectedFields": list(fields),
+                            "objective": current_draft.objective,
+                            "currentDraft": current_draft.draft.model_dump(mode="json"),
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            _campaign_revision_schema(fields),
+            schema_name="campaign_draft_revision",
+        )
+        if not getattr(generation, "choices", None):
+            raise LLMProviderError("LLM provider returned no choices")
+        content = getattr(generation.choices[0].message, "content", None)
+        if not content:
+            raise LLMProviderError("LLM provider returned an empty campaign revision")
+        try:
+            changes = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise LLMProviderError(
+                "LLM provider returned invalid campaign revision JSON"
+            ) from exc
+        if not isinstance(changes, dict) or set(changes) != set(fields):
+            raise LLMProviderError("LLM provider returned an invalid campaign revision")
+
+        result = registry.execute(
+            "revise_campaign_draft",
+            json.dumps({
+                "objective": current_draft.objective,
+                "referencesUsed": [
+                    citation.model_dump(mode="json")
+                    for citation in current_draft.referencesUsed
+                ],
+                "currentDraft": current_draft.draft.model_dump(mode="json"),
+                "proposedChanges": changes,
+                "fields": list(fields),
+                "instruction": user_message,
+                "revision": current_draft.revision,
+            }),
+        )
+        artifact = _revised_campaign_draft(result)
+        if artifact is not None:
+            if artifact.previousRevision != current_draft.revision:
+                raise LLMProviderError(
+                    "Campaign draft revision did not use the current revision"
+                )
+            return _answer(
+                _render_campaign_revision(artifact),
+                artifact,
+            )
+        return _answer(_campaign_draft_failure(result))
+
     def run(
         self,
         user_message: str,
@@ -453,7 +712,9 @@ class ChatOrchestrator:
         scope: RequestScope | None = None,
         campaign_id: str | None = None,
         session_id: str | None = None,
-    ) -> str:
+        current_draft: PersistedCampaignDraftArtifact | None = None,
+        revision_context_checked: bool = False,
+    ) -> OrchestratorResult:
         if scope is not None:
             try:
                 registry = self.registry.bind_scope(
@@ -478,7 +739,7 @@ class ChatOrchestrator:
                 raise LLMProviderError("Campaign email tool returned invalid JSON") from exc
             if not isinstance(payload, dict):
                 raise LLMProviderError("Campaign email tool returned an invalid result")
-            return render_campaign_email(payload)
+            return _answer(render_campaign_email(payload))
         prompt = SYSTEM_PROMPT
         if scope is not None:
             prompt += "\nCurrent campaign context (server-validated): " + json.dumps(
@@ -501,6 +762,18 @@ class ChatOrchestrator:
             active_clarification = self.clarification_store.get_active(scope, session_id)
 
         if (
+            revision_context_checked
+            and current_draft is None
+            and active_clarification is None
+            and is_campaign_revision_candidate(user_message)
+        ):
+            return _answer(
+                "## No campaign draft is available to revise\n\n"
+                "Generate a campaign draft in this chat first. No campaign was created "
+                "or changed."
+            )
+
+        if (
             active_clarification is not None
             and is_campaign_clarification_cancel(user_message)
         ):
@@ -513,7 +786,7 @@ class ChatOrchestrator:
                 active_clarification.round_count,
                 status="cancelled",
             )
-            return (
+            return _answer(
                 "## Campaign draft cancelled\n\n"
                 "The pending clarification was discarded. No campaign was created."
             )
@@ -536,7 +809,7 @@ class ChatOrchestrator:
                     assessment.question_ids,
                     round_count,
                 )
-                return render_campaign_clarification(assessment.question_ids)
+                return _answer(render_campaign_clarification(assessment.question_ids))
             if assessment.question_ids:
                 self.clarification_store.update(
                     scope,
@@ -547,7 +820,7 @@ class ChatOrchestrator:
                     round_count,
                     status="cancelled",
                 )
-                return (
+                return _answer(
                     "## Campaign draft needs clearer instructions\n\n"
                     "I could not safely resolve the remaining targeting details after "
                     "three clarification rounds. Start a new campaign request with the "
@@ -566,6 +839,23 @@ class ChatOrchestrator:
             generation_objective = assessment.canonical_objective
             generation_targeting_lock = assessment.targeting_lock
 
+        if current_draft is not None and active_clarification is None:
+            revision_fields = _campaign_revision_fields(user_message)
+            if revision_fields:
+                return self._run_campaign_revision(
+                    registry=registry,
+                    current_draft=current_draft,
+                    user_message=user_message,
+                    fields=revision_fields,
+                )
+            if _is_ambiguous_campaign_revision(user_message):
+                return _answer(
+                    "## Which campaign fields should I revise?\n\n"
+                    "Choose one or more of: campaign name, description, client message, "
+                    "age groups, genders, cash bands, or target demographic summary. "
+                    "No draft fields were changed."
+                )
+
         if generation_objective is None and _is_campaign_generation_request(user_message):
             assessment = self._assess_campaign_objective(user_message)
             if assessment.question_ids:
@@ -577,7 +867,7 @@ class ChatOrchestrator:
                     self.clarification_store.start(
                         scope, session_id, user_message, assessment.question_ids
                     )
-                return render_campaign_clarification(assessment.question_ids)
+                return _answer(render_campaign_clarification(assessment.question_ids))
             generation_objective = assessment.canonical_objective
             generation_targeting_lock = assessment.targeting_lock
 
@@ -615,7 +905,7 @@ class ChatOrchestrator:
                 content = getattr(message, "content", None)
                 if not content:
                     raise LLMProviderError("LLM provider returned an empty answer")
-                return content
+                return _answer(content)
 
             messages.append(
                 {
@@ -643,7 +933,7 @@ class ChatOrchestrator:
                 if tool_call.function.name == "prepare_campaign_draft":
                     artifact = _prepared_campaign_draft(result)
                     if artifact is not None:
-                        return render_campaign_draft(artifact)
+                        return _answer(render_campaign_draft(artifact), artifact)
                 if tool_call.function.name in {
                     "prepare_campaign_email", "confirm_campaign_email"
                 }:
@@ -657,7 +947,7 @@ class ChatOrchestrator:
                         raise LLMProviderError(
                             "Campaign email tool returned an invalid result"
                         )
-                    return render_campaign_email(email_payload)
+                    return _answer(render_campaign_email(email_payload))
                 messages.append(
                     {
                         "role": "tool",

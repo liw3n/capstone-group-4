@@ -195,7 +195,7 @@ done
 
 if [[ "${DEPLOY_FAKECLOUD_ECS:-0}" != "1" ]]; then
     printf '\nLocal database provisioning complete.\n'
-    printf 'DATABASE_URL was written to %s and the chat / mock campaign tables are ready.\n' "$env_file"
+    printf 'DATABASE_URL was written to %s; chat, generated-draft and mock campaign tables are ready.\n' "$env_file"
     printf 'Start the application from the repository root with: make dev\n'
     printf 'Set DEPLOY_FAKECLOUD_ECS=1 to also build and deploy the emulated ECS image.\n'
     exit 0

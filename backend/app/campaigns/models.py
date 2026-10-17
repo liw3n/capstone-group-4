@@ -312,6 +312,34 @@ class CampaignDraftRevisionArtifact(StrictModel):
         return self
 
 
+class PersistedCampaignDraftArtifact(StrictModel):
+    """Canonical adviser/session-scoped draft returned by the chat API."""
+
+    type: Literal["campaign_draft"] = "campaign_draft"
+    data_source: Literal["ai_generated"] = "ai_generated"
+    draftId: str = Field(pattern=r"^[a-f0-9-]{36}$", min_length=36, max_length=36)
+    objective: str = Field(min_length=10, max_length=2_000)
+    referencesUsed: list[CampaignReferenceCitation] = Field(max_length=3)
+    draft: CampaignDraft
+    revision: int = Field(ge=1, strict=True)
+    status: CampaignDraftStatus
+    changedFields: list[CampaignDraftField] = Field(default_factory=list, max_length=7)
+    validation: CampaignDraftValidation
+    requires_adviser_review: Literal[True] = True
+    created: Literal[False] = False
+
+    @model_validator(mode="after")
+    def reject_duplicate_metadata(self):
+        if len(self.changedFields) != len(set(self.changedFields)):
+            raise ValueError("changedFields must not contain duplicates")
+        citations = [
+            (citation.referenceId, citation.version) for citation in self.referencesUsed
+        ]
+        if len(citations) != len(set(citations)):
+            raise ValueError("referencesUsed must not contain duplicates")
+        return self
+
+
 class CampaignDraftPreview(StrictModel):
     draftId: str = Field(min_length=1, max_length=128)
     revision: int = Field(ge=1, strict=True)

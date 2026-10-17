@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 pytestmark = pytest.mark.usefixtures("campaign_rows")
 
 from app import main
+from app.llm import OrchestratorResult
 from app.store import ChatHistoryItem, ChatSession, StoreUnavailableError
 
 
@@ -14,13 +15,14 @@ client = TestClient(main.app)
 
 
 class FakeOrchestrator:
-    def __init__(self, answer="Generated answer"):
+    def __init__(self, answer="Generated answer", artifacts=()):
         self.answer = answer
+        self.artifacts = tuple(artifacts)
         self.calls = []
 
     def run(self, message, history, **context):
         self.calls.append((message, history, context))
-        return self.answer
+        return OrchestratorResult(self.answer, self.artifacts)
 
 
 def session(fa_id="fa-1"):
@@ -110,6 +112,92 @@ def test_api_alias_uses_same_query_handler(monkeypatch):
     )
 
     assert response.status_code == 200
+
+
+def test_generation_returns_and_atomically_persists_structured_draft(monkeypatch):
+    from app.campaigns.models import CampaignDraftArtifact
+    from test_orchestrator import campaign_draft_artifact, persisted_campaign_draft
+
+    artifact = CampaignDraftArtifact.model_validate(campaign_draft_artifact())
+    persisted = persisted_campaign_draft()
+    orchestrator = FakeOrchestrator("Rendered draft", (artifact,))
+    atomic_calls = []
+    monkeypatch.setattr(main, "latest_session", lambda _fa_id: session())
+    monkeypatch.setattr(main, "get_history", lambda _session_id: [])
+    monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
+    monkeypatch.setattr(
+        main,
+        "append_exchange_with_campaign_draft",
+        lambda *args, **kwargs: atomic_calls.append((args, kwargs)) or persisted,
+    )
+    monkeypatch.setattr(
+        main,
+        "append_exchange",
+        lambda *_items: (_ for _ in ()).throw(
+            AssertionError("draft and exchange must use the atomic persistence path")
+        ),
+    )
+
+    response = client.post(
+        "/api/chat/query",
+        json={"fa_id": "fa-1", "message_content": "Create a retirement campaign"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ai_answer"] == "Rendered draft"
+    assert response.json()["campaignDraft"]["draftId"] == persisted.draftId
+    assert response.json()["campaignDraft"]["revision"] == 1
+    assert atomic_calls[0][0][4] == artifact
+
+
+def test_revision_loads_authoritative_draft_and_returns_same_id_next_revision(monkeypatch):
+    from app.campaigns.models import CampaignDraftRevisionArtifact
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft()
+    revised = persisted_campaign_draft(
+        revision=2, name="FutureFunders: Student Investing Lab"
+    ).model_copy(update={"changedFields": ["name"]})
+    artifact = CampaignDraftRevisionArtifact(
+        objective=current.objective,
+        referencesUsed=current.referencesUsed,
+        draft=revised.draft,
+        previousRevision=1,
+        revision=2,
+        changedFields=["name"],
+        validation=current.validation,
+    )
+    orchestrator = FakeOrchestrator("Rendered revised draft", (artifact,))
+    atomic_calls = []
+    monkeypatch.setattr(main, "get_session", lambda _session_id: session())
+    monkeypatch.setattr(main, "get_history", lambda _session_id: [])
+    monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
+    monkeypatch.setattr(main, "get_latest_campaign_draft", lambda *_args: current)
+    monkeypatch.setattr(
+        main,
+        "append_exchange_with_campaign_draft",
+        lambda *args, **kwargs: atomic_calls.append((args, kwargs)) or revised,
+    )
+
+    response = client.post(
+        "/chat/query",
+        json={
+            "fa_id": "fa-1",
+            "session_id": "session-1",
+            "message_content": "Generate a more unique campaign name",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["campaignDraft"]["draftId"] == current.draftId
+    assert response.json()["campaignDraft"]["revision"] == 2
+    assert response.json()["campaignDraft"]["changedFields"] == ["name"]
+    assert orchestrator.calls[0][2]["current_draft"] == current
+    assert orchestrator.calls[0][2]["revision_context_checked"] is True
+    assert atomic_calls[0][1] == {
+        "draft_id": current.draftId,
+        "expected_revision": 1,
+    }
 
 
 def test_query_rejects_session_owned_by_another_adviser(monkeypatch):

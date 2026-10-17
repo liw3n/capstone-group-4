@@ -11,13 +11,17 @@ from app.campaigns.clarification import (
     assess_campaign_objective,
 )
 from app.campaigns.repository import RequestScope
-from app.campaigns.models import CampaignDraftArtifact
+from app.campaigns.models import (
+    CampaignDraftArtifact,
+    PersistedCampaignDraftArtifact,
+)
 from app.campaigns.presentation import render_campaign_draft
 from app.llm.errors import LLMProviderError, LLMToolLoopError
 from app.llm.orchestrator import (
     ChatOrchestrator,
     SYSTEM_PROMPT,
     _is_campaign_generation_request,
+    is_campaign_revision_candidate,
 )
 from app.store import ChatHistoryItem
 from app.tools.registry import ToolDefinition, ToolRegistry
@@ -244,6 +248,55 @@ def campaign_draft_artifact():
     }
 
 
+def persisted_campaign_draft(revision=1, **draft_changes):
+    artifact = campaign_draft_artifact()
+    artifact["draft"] = artifact["draft"] | draft_changes
+    return PersistedCampaignDraftArtifact.model_validate({
+        **artifact,
+        "draftId": "11111111-1111-4111-8111-111111111111",
+        "revision": revision,
+        "status": "generated",
+        "changedFields": [],
+    })
+class CampaignRevisionRegistry:
+    def __init__(self):
+        self.executed = []
+
+    def bind_scope(self, _scope, _campaign_id=None):
+        return self
+
+    def schemas(self):
+        raise AssertionError("Selective revision must not use generic model tools")
+
+    def execute(self, name, arguments_json):
+        assert name == "revise_campaign_draft"
+        arguments = json.loads(arguments_json)
+        self.executed.append((name, arguments))
+        revised = json.loads(json.dumps(arguments["currentDraft"]))
+        for field_name, value in arguments["proposedChanges"].items():
+            if field_name in {"ageGroups", "genders", "cashBands"}:
+                revised["criteria"][field_name] = value
+            else:
+                revised[field_name] = value
+        return json.dumps({
+            "type": "campaign_draft_revision",
+            "data_source": "ai_generated",
+            "objective": arguments["objective"],
+            "referencesUsed": arguments["referencesUsed"],
+            "draft": revised,
+            "previousRevision": arguments["revision"],
+            "revision": arguments["revision"] + 1,
+            "changedFields": arguments["fields"],
+            "validation": {
+                "schema_valid": True,
+                "policy_valid": True,
+                "warnings": [],
+            },
+            "requires_adviser_review": True,
+            "created": False,
+        })
+
+
 def intent_extraction(**overrides):
     payload = {
         "planningFocus": "unspecified",
@@ -399,6 +452,97 @@ def test_campaign_queries_are_not_misrouted_to_generation(message_value):
     assert _is_campaign_generation_request(message_value) is False
 
 
+def test_existing_draft_name_regeneration_uses_selective_revision_pipeline():
+    current = persisted_campaign_draft()
+    registry = CampaignRevisionRegistry()
+    client = FakeClient([
+        completion(message(content=json.dumps({
+            "name": "FutureFunders: Student Investing Lab",
+        })))
+    ])
+    orchestrator = ChatOrchestrator(client, settings(), registry)
+
+    result = orchestrator.run(
+        "The campaign name is too generic, generate a more unique name for the campaign",
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        current_draft=current,
+        revision_context_checked=True,
+    )
+
+    assert is_campaign_revision_candidate(
+        "The campaign name is too generic, generate a more unique name for the campaign"
+    )
+    assert client.calls[0]["schema_name"] == "campaign_draft_revision"
+    assert set(client.calls[0]["schema"]["properties"]) == {"name"}
+    assert registry.executed[0][1]["fields"] == ["name"]
+    assert registry.executed[0][1]["currentDraft"] == current.draft.model_dump(mode="json")
+    assert result.artifacts[0].revision == 2
+    assert result.artifacts[0].draft.name == "FutureFunders: Student Investing Lab"
+    assert result.artifacts[0].draft.description == current.draft.description
+
+
+def test_revision_can_change_multiple_fields_in_one_revision():
+    current = persisted_campaign_draft(revision=4)
+    registry = CampaignRevisionRegistry()
+    client = FakeClient([
+        completion(message(content=json.dumps({
+            "name": "Retirement Compass",
+            "description": "A clearer educational retirement review invitation.",
+        })))
+    ])
+    orchestrator = ChatOrchestrator(client, settings(), registry)
+
+    result = orchestrator.run(
+        "Rewrite the campaign name and description",
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        current_draft=current,
+        revision_context_checked=True,
+    )
+
+    assert set(client.calls[0]["schema"]["properties"]) == {"name", "description"}
+    assert registry.executed[0][1]["revision"] == 4
+    assert registry.executed[0][1]["fields"] == ["name", "description"]
+    assert result.artifacts[0].previousRevision == 4
+    assert result.artifacts[0].revision == 5
+
+
+def test_ambiguous_revision_asks_for_fields_without_a_model_call():
+    orchestrator = ChatOrchestrator(
+        FakeClient([]), settings(), CampaignRevisionRegistry()
+    )
+
+    result = orchestrator.run(
+        "Please improve this campaign",
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        current_draft=persisted_campaign_draft(),
+        revision_context_checked=True,
+    )
+
+    assert "Which campaign fields should I revise" in result
+    assert result.artifacts == ()
+
+
+def test_revision_without_a_stored_draft_does_not_restart_generation():
+    orchestrator = ChatOrchestrator(
+        FakeClient([]), settings(), CampaignRevisionRegistry()
+    )
+
+    result = orchestrator.run(
+        "Generate a more unique campaign name",
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        revision_context_checked=True,
+    )
+
+    assert "No campaign draft is available to revise" in result
+    assert result.artifacts == ()
 def test_successful_campaign_draft_is_rendered_without_another_model_call():
     artifact = campaign_draft_artifact()
     client = FakeClient([

@@ -15,8 +15,19 @@ from app.campaigns.catalog import (
     update_engagement_status,
     get_engagement_status,
 )
-from app.campaigns.models import CampaignCriteriaPayload
+from app.campaigns.models import (
+    CampaignCriteriaPayload,
+    CampaignDraftArtifact,
+    CampaignDraftRevisionArtifact,
+    PersistedCampaignDraftArtifact,
+)
 from app.campaigns.clarification import PostgresCampaignClarificationStore
+from app.campaigns.draft_repository import (
+    CampaignDraftNotFound,
+    CampaignDraftStaleRevision,
+    CampaignDraftStorageUnavailable,
+    get_latest_campaign_draft,
+)
 
 from app.campaigns.repository import (
     CAMPAIGN_ID_PATTERN, CampaignInactive, CampaignStorageUnavailable, CampaignUnavailable,
@@ -29,7 +40,11 @@ from app.contacts.catalog import (
     replace_contact,
 )
 from app.config import get_settings
-from app.llm import ChatOrchestrator, LLMClient
+from app.llm import ChatOrchestrator, LLMClient, OrchestratorResult
+from app.llm.orchestrator import (
+    campaign_revision_fields,
+    is_campaign_revision_candidate,
+)
 from app.llm.errors import (
     LLMAuthenticationError,
     LLMConfigurationError,
@@ -41,6 +56,7 @@ from app.llm.errors import (
 from app.store import (
     ChatHistoryItem,
     append_exchange,
+    append_exchange_with_campaign_draft,
     create_session,
     get_history,
     get_session,
@@ -65,8 +81,19 @@ app.add_middleware(
 @app.exception_handler(CampaignStorageUnavailable)
 @app.exception_handler(ContactStorageUnavailable)
 @app.exception_handler(StoreUnavailableError)
+@app.exception_handler(CampaignDraftStorageUnavailable)
 def store_unavailable_handler(_request, exc: RuntimeError):
     return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
+@app.exception_handler(CampaignDraftNotFound)
+def draft_not_found_handler(_request, exc: CampaignDraftNotFound):
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(CampaignDraftStaleRevision)
+def draft_stale_handler(_request, exc: CampaignDraftStaleRevision):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
 class SessionResponse(BaseModel):
@@ -97,6 +124,32 @@ class QueryResponse(BaseModel):
     user: bool | str
     timestamp: str
     ai_answer: str
+    campaignDraft: PersistedCampaignDraftArtifact | None = None
+
+
+def _validate_revision_against_current(
+    artifact: CampaignDraftRevisionArtifact,
+    current: PersistedCampaignDraftArtifact,
+    requested_fields: tuple[str, ...],
+) -> None:
+    if artifact.previousRevision != current.revision:
+        raise ValueError("revision does not use the current draft")
+    if artifact.objective != current.objective:
+        raise ValueError("revision changed the original objective")
+    if artifact.referencesUsed != current.referencesUsed:
+        raise ValueError("revision changed the original citations")
+    if set(artifact.changedFields) != set(requested_fields):
+        raise ValueError("revision changed an unrequested field selection")
+
+    expected = current.draft.model_dump(mode="json")
+    revised = artifact.draft.model_dump(mode="json")
+    for field_name in artifact.changedFields:
+        if field_name in {"ageGroups", "genders", "cashBands"}:
+            expected["criteria"][field_name] = revised["criteria"][field_name]
+        else:
+            expected[field_name] = revised[field_name]
+    if expected != revised:
+        raise ValueError("revision changed an unselected draft field")
 
 
 class LeadStatsPayload(BaseModel):
@@ -424,11 +477,25 @@ def chat_query(
     if history is None:
         raise HTTPException(status_code=404, detail="chat session not found")
 
+    revision_context_checked = is_campaign_revision_candidate(message_content)
+    current_draft = (
+        get_latest_campaign_draft(scope, session.session_id)
+        if revision_context_checked
+        else None
+    )
+
     try:
-        ai_answer = get_orchestrator().run(
-            message_content, history, scope=scope, campaign_id=payload.campaign_id,
-            session_id=session.session_id,
-        )
+        orchestration_context = {
+            "scope": scope,
+            "campaign_id": payload.campaign_id,
+            "session_id": session.session_id,
+        }
+        if revision_context_checked:
+            orchestration_context.update({
+                "current_draft": current_draft,
+                "revision_context_checked": True,
+            })
+        result = get_orchestrator().run(message_content, history, **orchestration_context)
     except LLMConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except LLMAuthenticationError as exc:
@@ -440,6 +507,38 @@ def chat_query(
     except (LLMProviderError, LLMToolLoopError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    if not isinstance(result, OrchestratorResult):
+        raise HTTPException(status_code=502, detail="LLM orchestrator returned an invalid result")
+    if len(result.artifacts) > 1:
+        raise HTTPException(status_code=502, detail="LLM orchestrator returned ambiguous artifacts")
+    artifact: CampaignDraftArtifact | CampaignDraftRevisionArtifact | None = None
+    if result.artifacts:
+        candidate = result.artifacts[0]
+        try:
+            if isinstance(candidate, CampaignDraftRevisionArtifact):
+                artifact = CampaignDraftRevisionArtifact.model_validate(
+                    candidate.model_dump(mode="json")
+                )
+                if current_draft is None:
+                    raise ValueError("revision is missing its authoritative source")
+                _validate_revision_against_current(
+                    artifact,
+                    current_draft,
+                    campaign_revision_fields(message_content),
+                )
+            elif isinstance(candidate, CampaignDraftArtifact):
+                artifact = CampaignDraftArtifact.model_validate(
+                    candidate.model_dump(mode="json")
+                )
+            else:
+                raise ValueError("unsupported artifact")
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=502, detail="LLM orchestrator returned an invalid artifact"
+            ) from exc
+
+    ai_answer = result.answer
+
     user_item = ChatHistoryItem(
         timestamp=now_iso(),
         user=advisor_id,
@@ -450,10 +549,23 @@ def chat_query(
         user=False,
         message_content=ai_answer,
     )
-    append_exchange(session.session_id, user_item, assistant_item)
+    persisted_draft = None
+    if artifact is None:
+        append_exchange(session.session_id, user_item, assistant_item)
+    else:
+        persisted_draft = append_exchange_with_campaign_draft(
+            session.session_id,
+            user_item,
+            assistant_item,
+            scope,
+            artifact,
+            draft_id=current_draft.draftId if current_draft else None,
+            expected_revision=current_draft.revision if current_draft else None,
+        )
 
     return QueryResponse(
         user=advisor_id,
         timestamp=assistant_item.timestamp,
         ai_answer=ai_answer,
+        campaignDraft=persisted_draft,
     )

@@ -375,6 +375,89 @@ def test_campaign_clarification_state_is_scoped_and_survives_connections(databas
     ).fetchone() == ("completed", ["General planning for Under 35"])
 
 
+def test_campaign_draft_revisions_are_scoped_idempotent_and_optimistically_locked(
+    database, monkeypatch
+):
+    from app import store
+    from app.campaigns.draft_repository import (
+        CampaignDraftStaleRevision,
+        create_campaign_draft,
+        get_campaign_draft,
+        get_latest_campaign_draft,
+        update_campaign_draft_revision,
+    )
+    from app.campaigns.models import CampaignDraftArtifact, CampaignDraftRevisionArtifact
+    from test_orchestrator import campaign_draft_artifact
+
+    chat_sql = (CREATE_TABLES / "create_campaign_chat_sessions.sql").read_text()
+    draft_sql = (CREATE_TABLES / "create_campaign_generation_drafts.sql").read_text()
+    database.execute(chat_sql)
+    database.execute(draft_sql)
+    database.execute(draft_sql)
+    database.execute(
+        """
+        INSERT INTO campaign_chat_sessions (session_id, fa_id, session_title)
+        VALUES ('session-draft', %s, 'Draft persistence test')
+        """,
+        (DEMO_FA,),
+    )
+    scope = RequestScope(DEMO_FA)
+    initial = CampaignDraftArtifact.model_validate(campaign_draft_artifact())
+    campaign_count = database.execute("SELECT count(*) FROM mock_campaign").fetchone()[0]
+
+    created = create_campaign_draft(scope, "session-draft", initial)
+
+    assert created.revision == 1
+    assert get_latest_campaign_draft(scope, "session-draft") == created
+    assert get_campaign_draft(scope, "session-draft", created.draftId) == created
+    assert get_campaign_draft(
+        RequestScope("adv-other-demo"), "session-draft", created.draftId
+    ) is None
+
+    revised_draft = created.draft.model_copy(update={"name": "Retirement Compass"})
+    revision = CampaignDraftRevisionArtifact(
+        objective=created.objective,
+        referencesUsed=created.referencesUsed,
+        draft=revised_draft,
+        previousRevision=1,
+        revision=2,
+        changedFields=["name"],
+        validation=created.validation,
+    )
+    updated = update_campaign_draft_revision(
+        scope, "session-draft", created.draftId, 1, revision
+    )
+
+    assert updated.draftId == created.draftId
+    assert updated.revision == 2
+    assert updated.changedFields == ["name"]
+    with pytest.raises(CampaignDraftStaleRevision, match="stale"):
+        update_campaign_draft_revision(
+            scope, "session-draft", created.draftId, 1, revision
+        )
+    assert database.execute("SELECT count(*) FROM mock_campaign").fetchone()[0] == campaign_count
+
+    database.execute((CREATE_TABLES / "create_campaign_chat_messages.sql").read_text())
+    monkeypatch.setattr(store, "get_settings", config.get_settings)
+    stale_artifact = revision.model_copy(update={
+        "previousRevision": 99,
+        "revision": 100,
+    })
+    with pytest.raises(CampaignDraftStaleRevision):
+        store.append_exchange_with_campaign_draft(
+            "session-draft",
+            store.ChatHistoryItem("2026-10-16T00:00:00Z", DEMO_FA, "Revise name"),
+            store.ChatHistoryItem("2026-10-16T00:00:01Z", False, "Revised"),
+            scope,
+            stale_artifact,
+            draft_id=created.draftId,
+            expected_revision=99,
+        )
+    assert database.execute(
+        "SELECT count(*) FROM campaign_chat_messages WHERE session_id = 'session-draft'"
+    ).fetchone()[0] == 0
+
+
 def test_active_discovery_filters_dates_and_assignments_in_postgres(database):
     from datetime import date
     scope = RequestScope(DEMO_FA)

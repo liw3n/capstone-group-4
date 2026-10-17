@@ -7,6 +7,11 @@ import psycopg
 from psycopg.rows import dict_row
 
 from app.config import get_settings
+from app.campaigns.models import (
+    CampaignDraftArtifact,
+    CampaignDraftRevisionArtifact,
+)
+from app.campaigns.repository import RequestScope
 
 
 @dataclass
@@ -160,35 +165,78 @@ def append_exchange(
     assistant_item: ChatHistoryItem,
 ) -> None:
     """Persist one user/assistant exchange atomically."""
-    session_title = " ".join(user_item.message_content.split()[:5]) + "..."
     with _connection() as connection:
-        connection.execute(
-            """
-            INSERT INTO campaign_chat_messages
-                (session_id, timestamp, role, user_id, message_content)
-            VALUES (%s, %s, 'user', %s, %s)
-            """,
-            (
+        _append_exchange(connection, session_id, user_item, assistant_item)
+
+
+def _append_exchange(
+    connection,
+    session_id: str,
+    user_item: ChatHistoryItem,
+    assistant_item: ChatHistoryItem,
+) -> None:
+    session_title = " ".join(user_item.message_content.split()[:5]) + "..."
+    connection.execute(
+        """
+        INSERT INTO campaign_chat_messages
+            (session_id, timestamp, role, user_id, message_content)
+        VALUES (%s, %s, 'user', %s, %s)
+        """,
+        (
+            session_id,
+            user_item.timestamp,
+            str(user_item.user),
+            user_item.message_content,
+        ),
+    )
+    connection.execute(
+        """
+        UPDATE campaign_chat_sessions
+        SET session_title = %s
+        WHERE session_id = %s
+          AND (session_title IS NULL OR session_title = 'New chat')
+        """,
+        (session_title, session_id),
+    )
+    connection.execute(
+        """
+        INSERT INTO campaign_chat_messages
+            (session_id, timestamp, role, user_id, message_content)
+        VALUES (%s, %s, 'assistant', NULL, %s)
+        """,
+        (session_id, assistant_item.timestamp, assistant_item.message_content),
+    )
+
+
+def append_exchange_with_campaign_draft(
+    session_id: str,
+    user_item: ChatHistoryItem,
+    assistant_item: ChatHistoryItem,
+    scope: RequestScope,
+    artifact: CampaignDraftArtifact | CampaignDraftRevisionArtifact,
+    *,
+    draft_id: str | None = None,
+    expected_revision: int | None = None,
+):
+    """Atomically persist a chat exchange and its generated/revised draft."""
+    from app.campaigns.draft_repository import (
+        create_campaign_draft,
+        update_campaign_draft_revision,
+    )
+
+    with _connection() as connection:
+        _append_exchange(connection, session_id, user_item, assistant_item)
+        if isinstance(artifact, CampaignDraftRevisionArtifact):
+            if draft_id is None or expected_revision is None:
+                raise ValueError("current campaign draft context is required")
+            return update_campaign_draft_revision(
+                scope,
                 session_id,
-                user_item.timestamp,
-                str(user_item.user),
-                user_item.message_content,
-            ),
-        )
-        connection.execute(
-            """
-            UPDATE campaign_chat_sessions
-            SET session_title = %s
-            WHERE session_id = %s
-              AND (session_title IS NULL OR session_title = 'New chat')
-            """,
-            (session_title, session_id),
-        )
-        connection.execute(
-            """
-            INSERT INTO campaign_chat_messages
-                (session_id, timestamp, role, user_id, message_content)
-            VALUES (%s, %s, 'assistant', NULL, %s)
-            """,
-            (session_id, assistant_item.timestamp, assistant_item.message_content),
+                draft_id,
+                expected_revision,
+                artifact,
+                connection=connection,
+            )
+        return create_campaign_draft(
+            scope, session_id, artifact, connection=connection
         )
