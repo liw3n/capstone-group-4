@@ -142,6 +142,7 @@ def test_generation_returns_and_atomically_persists_structured_draft(monkeypatch
     atomic_calls = []
     monkeypatch.setattr(main, "latest_session", lambda _fa_id: session())
     monkeypatch.setattr(main, "get_history", lambda _session_id: [])
+    monkeypatch.setattr(main, "get_latest_campaign_draft", lambda *_args: None)
     monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
     monkeypatch.setattr(
         main,
@@ -166,6 +167,170 @@ def test_generation_returns_and_atomically_persists_structured_draft(monkeypatch
     assert response.json()["campaignDraft"]["draftId"] == persisted.draftId
     assert response.json()["campaignDraft"]["revision"] == 1
     assert atomic_calls[0][0][4] == artifact
+
+
+class FakeDraftReviewOrchestrator:
+    def __init__(self, artifact):
+        self.artifact = artifact
+        self.calls = []
+
+    def revise_campaign_draft(self, **kwargs):
+        self.calls.append(kwargs)
+        return OrchestratorResult(
+            "Campaign draft revision prepared",
+            (self.artifact,),
+            requested_revision_fields=kwargs["fields"],
+        )
+
+
+def _review_revision(current, *, name="Reviewed campaign", fields=("name",)):
+    from app.campaigns.models import CampaignDraftRevisionArtifact
+
+    revised_draft = current.draft.model_copy(update={"name": name})
+    return CampaignDraftRevisionArtifact(
+        objective=current.objective,
+        referencesUsed=current.referencesUsed,
+        draft=revised_draft,
+        previousRevision=current.revision,
+        revision=current.revision + 1,
+        changedFields=list(fields),
+        validation=current.validation,
+    )
+
+
+def test_review_draft_get_is_adviser_and_session_scoped(monkeypatch):
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft()
+    monkeypatch.setattr(main, "get_session", lambda _session_id: session())
+    monkeypatch.setattr(main, "get_campaign_draft", lambda *_args: current)
+
+    response = client.get(
+        f"/api/campaign-drafts/{current.draftId}",
+        params={"fa_id": "fa-1", "session_id": "session-1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["draftId"] == current.draftId
+    assert response.json()["revision"] == 1
+
+
+def test_review_draft_get_hides_cross_adviser_drafts(monkeypatch):
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft()
+    monkeypatch.setattr(main, "get_session", lambda _session_id: session("fa-2"))
+    monkeypatch.setattr(
+        main,
+        "get_campaign_draft",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("cross-adviser draft storage must not be queried")
+        ),
+    )
+
+    response = client.get(
+        f"/campaign-drafts/{current.draftId}",
+        params={"fa_id": "fa-1", "session_id": "session-1"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_review_draft_manual_update_uses_trusted_revision_boundary(monkeypatch):
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft()
+    artifact = _review_revision(current)
+    persisted = persisted_campaign_draft(revision=2, name="Reviewed campaign").model_copy(
+        update={"status": "reviewed", "changedFields": ["name"]}
+    )
+    orchestrator = FakeDraftReviewOrchestrator(artifact)
+    update_calls = []
+    monkeypatch.setattr(main, "get_session", lambda _session_id: session())
+    monkeypatch.setattr(main, "get_campaign_draft", lambda *_args: current)
+    monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
+    monkeypatch.setattr(
+        main,
+        "update_campaign_draft_revision",
+        lambda *args, **kwargs: update_calls.append((args, kwargs)) or persisted,
+    )
+
+    response = client.patch(
+        f"/api/campaign-drafts/{current.draftId}",
+        json={
+            "fa_id": "fa-1",
+            "session_id": "session-1",
+            "expectedRevision": 1,
+            "changes": {"name": "Reviewed campaign"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["revision"] == 2
+    assert response.json()["status"] == "reviewed"
+    assert orchestrator.calls[0]["fields"] == ("name",)
+    assert orchestrator.calls[0]["proposed_changes"] == {"name": "Reviewed campaign"}
+    assert update_calls[0][1] == {"status": "reviewed"}
+
+
+def test_review_draft_regeneration_is_selected_field_only(monkeypatch):
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft()
+    artifact = _review_revision(current, name="Regenerated campaign")
+    persisted = persisted_campaign_draft(
+        revision=2, name="Regenerated campaign"
+    ).model_copy(update={"status": "reviewed", "changedFields": ["name"]})
+    orchestrator = FakeDraftReviewOrchestrator(artifact)
+    monkeypatch.setattr(main, "get_session", lambda _session_id: session())
+    monkeypatch.setattr(main, "get_campaign_draft", lambda *_args: current)
+    monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
+    monkeypatch.setattr(
+        main, "update_campaign_draft_revision", lambda *_args, **_kwargs: persisted
+    )
+
+    response = client.post(
+        f"/api/campaign-drafts/{current.draftId}/regenerate",
+        json={
+            "fa_id": "fa-1",
+            "session_id": "session-1",
+            "expectedRevision": 1,
+            "fields": ["name"],
+            "instruction": "Make the name more distinctive.",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["draft"]["name"] == "Regenerated campaign"
+    assert orchestrator.calls[0]["fields"] == ("name",)
+    assert orchestrator.calls[0]["proposed_changes"] is None
+
+
+def test_review_draft_rejects_stale_revision_before_generation(monkeypatch):
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft(revision=2)
+    monkeypatch.setattr(main, "get_session", lambda _session_id: session())
+    monkeypatch.setattr(main, "get_campaign_draft", lambda *_args: current)
+    monkeypatch.setattr(
+        main,
+        "get_orchestrator",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("stale review must not call the model or MCP")
+        ),
+    )
+
+    response = client.patch(
+        f"/api/campaign-drafts/{current.draftId}",
+        json={
+            "fa_id": "fa-1",
+            "session_id": "session-1",
+            "expectedRevision": 1,
+            "changes": {"name": "Stale update"},
+        },
+    )
+
+    assert response.status_code == 409
 
 
 def test_revision_loads_authoritative_draft_and_returns_same_id_next_revision(monkeypatch):
@@ -221,6 +386,40 @@ def test_revision_loads_authoritative_draft_and_returns_same_id_next_revision(mo
         "selected_option_set_id": None,
         "selected_option_number": None,
     }
+
+
+def test_active_pointer_is_loaded_before_keyword_candidate_routing(monkeypatch):
+    from app.llm.orchestrator import is_campaign_turn_candidate
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft(revision=2)
+    orchestrator = FakeOrchestrator("Classified against the active draft")
+    message_value = "Age 65+, cash 250k and above."
+    assert is_campaign_turn_candidate(message_value) is False
+    monkeypatch.setattr(
+        main,
+        "get_session",
+        lambda _session_id: session(active_campaign_draft_id=current.draftId),
+    )
+    monkeypatch.setattr(main, "get_history", lambda _session_id: [])
+    monkeypatch.setattr(main, "get_campaign_draft", lambda *_args: current)
+    monkeypatch.setattr(main, "get_pending_campaign_draft_options", lambda *_args: None)
+    monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
+    monkeypatch.setattr(main, "append_exchange", lambda *_items: None)
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "fa_id": "fa-1",
+            "session_id": "session-1",
+            "message_content": message_value,
+        },
+    )
+
+    assert response.status_code == 200
+    context = orchestrator.calls[0][2]
+    assert context["current_draft"] == current
+    assert context["revision_context_checked"] is True
 
 
 def test_structured_campaign_options_are_persisted_and_returned(monkeypatch):
@@ -282,7 +481,7 @@ def test_structured_campaign_options_are_persisted_and_returned(monkeypatch):
     assert atomic_calls[0][5] == proposal
 
 
-def test_unrelated_chat_does_not_load_active_campaign_draft(monkeypatch):
+def test_ordinary_tool_turn_bypasses_active_campaign_draft(monkeypatch):
     orchestrator = FakeOrchestrator()
     monkeypatch.setattr(
         main,
@@ -298,7 +497,7 @@ def test_unrelated_chat_does_not_load_active_campaign_draft(monkeypatch):
         main,
         "get_campaign_draft",
         lambda *_args: (_ for _ in ()).throw(
-            AssertionError("ordinary tool turns must not load campaign draft state")
+            AssertionError("ordinary tool turns must not load draft state")
         ),
     )
 

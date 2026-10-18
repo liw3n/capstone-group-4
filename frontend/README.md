@@ -46,6 +46,7 @@ use the `VITE_` prefix.
 | `npm run build` | Production build to `dist/` |
 | `npm run preview` | Serve the production build |
 | `npm run lint` | `tsc --noEmit` type check |
+| `npm test` | Node component/service tests |
 
 ## Stack
 
@@ -62,6 +63,7 @@ src/
   data/seed.ts         fixed prototype date only; no CRM records
   services/ai.ts       simulated CRM meeting/campaign AI helpers
   services/chatApi.ts  typed client for the persisted PULSE chat API
+  services/campaignDraftApi.ts typed client for scoped draft review/revision
   services/campaignApi.ts typed client for persisted campaign records/state
   services/contactApi.ts typed client for scoped mock_client CRM records
   lib/format.ts        date, phone, due-in, empty-value formatting
@@ -82,6 +84,17 @@ There is no router and no state management library. `App.tsx` holds every
 `useState` and passes handlers down as props; `activeTab` (a string) plus
 `selectedContactId` / `selectedCampaignId` drive all navigation. `session`
 gates the whole app — when it is null you get the sign-in screen instead.
+
+Generated campaign drafts are returned to `ChatPanel` as structured artifacts.
+The Review draft action opens `CampaignDraftReview` inside the existing
+Campaigns workspace; it is a review mode, not a separate routed page. All seven
+generated fields are prefilled and editable, while rationale, assumptions,
+warnings and synthetic catalogue provenance remain visible. Saves and selected-
+field regeneration use the current optimistic revision. The preview is local
+and read-only: Stage 8 deliberately does not estimate a named audience, expose
+Confirm, create a campaign or send communications.
+If another chat or browser action advances the draft first, a stale update is
+rejected and the review reloads the latest scoped revision for rechecking.
 
 ## Domain model (`src/types.ts`)
 

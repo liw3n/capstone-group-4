@@ -52,6 +52,26 @@ retirement who may hold assets across multiple institutions.
 **Target cash availability:** SGD 250,000 and above.
 `cashBands: ["250kTo1m", "above1m"]`
 
+## Cross-turn revision routing cases
+
+These cases run only after a scoped active draft exists. Every successful edit
+must retain the draft ID, advance the revision exactly once, return a structured
+`campaignDraft`, preserve independent unselected fields and avoid campaign-table
+writes.
+
+| Adviser message | Expected action |
+| --- | --- |
+| `The target age should be above 65 years old and cash availability should be more than 250k` | Revise `ageGroups` and `cashBands`; server locks them to `65plus` and `250kTo1m` + `above1m`. Refresh description, client message, demographic summary and rationale without changing the name. Surface warnings that the strict thresholds were approximated by inclusive fixed bands. |
+| `Age 65+, cash 250k and above` | Use the strict active-draft classifier, then perform the same structured revision. Never return a prose-only proposal. |
+| `Actually remove the cash restriction` | Set `cashBands` to an empty list and refresh dependent targeting text. |
+| `Show clients above 65 with more than 250k cash` | Preserve client-matching tool intent; do not revise or load the active draft. |
+| `How did this campaign perform last week?` | Preserve performance-tool intent; do not revise the active draft. |
+| `Draft an email for this campaign` | Preserve email preview/confirmation routing; do not revise the active draft. |
+
+For concurrent review, submit revision `n` after revision `n + 1` already exists.
+The stale request must return `409`, must not write, and the frontend must reload
+the latest scoped revision before allowing another edit.
+
 ## Young family protection check-in
 
 **Plain-language objective**

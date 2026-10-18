@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1270" viewBox="0 0 1600 1270" role="img" aria-labelledby="diagram-title diagram-description">
   <title id="diagram-title">PULSE system architecture</title>
-  <desc id="diagram-description">Current local prototype: a React CRM served by Vite connects to FastAPI chat, contact and campaign endpoints. make dev starts local FastAPI, FastMCP and Vite processes together. Groq provides campaign intent, drafting, bounded active-draft turn classification, narrative options, selected-field revision proposals and tool selection; deterministic server validation owns targeting, state-aware routing, selective draft revision, consent and email confirmation. FastMCP includes campaign discovery, matching, review-only draft preparation and revision, email preview and confirmed delivery tools. PostgreSQL stores chat, adviser-scoped clarification state, active-draft pointers, review-only generated draft revisions and revision-bound option sets, scoped CRM contacts, campaigns, email batches and contact events. Email delivery is simulated by default; an optional server-side GWM Core Email API adapter is implemented but requires API-owner configuration. Simulated task and pipeline actions remain in the browser. make provision uses Terraform and FakeCloud for local infrastructure and PostgreSQL.</desc>
+  <desc id="diagram-description">Current local prototype: a React CRM served by Vite connects to FastAPI chat, contact, campaign and review-only campaign-draft endpoints. The existing Campaigns workspace includes a prefilled generated-draft review mode with optimistic manual edits, selected-field regeneration and local preview. make dev starts local FastAPI, FastMCP and Vite processes together. Groq provides campaign intent, drafting, bounded active-draft turn classification, narrative options, selected-field revision proposals and tool selection; deterministic server validation owns targeting, state-aware routing, selective draft revision, consent and email confirmation. FastMCP includes campaign discovery, matching, review-only draft preparation and revision, email preview and confirmed delivery tools. PostgreSQL stores chat, adviser-scoped clarification state, active-draft pointers, review-only generated draft revisions and revision-bound option sets, scoped CRM contacts, campaigns, email batches and contact events. Email delivery is simulated by default; an optional server-side GWM Core Email API adapter is implemented but requires API-owner configuration. Simulated task and pipeline actions remain in the browser. make provision uses Terraform and FakeCloud for local infrastructure and PostgreSQL.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="4" orient="auto"><path d="M0,0 L0,8 L9,4 z" fill="#64748b"/></marker>
     <marker id="planned-arrow" markerWidth="10" markerHeight="10" refX="9" refY="4" orient="auto"><path d="M0,0 L0,8 L9,4 z" fill="#94a3b8"/></marker>
@@ -30,14 +30,14 @@
   <text x="88" y="308" class="heading">React CRM + PULSE</text>
   <text x="88" y="333" class="small">Browser application</text>
   <text x="88" y="367" class="label">Contacts / leads / pipeline / tasks</text>
-  <text x="88" y="392" class="label">Campaigns / audience review / settings</text>
+  <text x="88" y="392" class="label">Campaigns / generated-draft review / settings</text>
   <text x="88" y="426" class="small">Contacts: PostgreSQL | tasks/pipeline: React state</text>
   <text x="88" y="448" class="small">Modal send: simulation | PULSE send: backend confirmation</text>
   <rect x="84" y="474" width="302" height="54" rx="8" fill="#fff" stroke="#bfdbfe" stroke-width="1.5"/>
   <text x="100" y="497" class="label">PULSE chat connects to the backend</text>
-  <text x="100" y="517" class="small">Messages + selected campaign context</text>
+  <text x="100" y="517" class="small">Messages + structured draft review action</text>
   <path d="M235 547 L235 583" class="arrow"/>
-  <text x="248" y="570" class="small">HTTP /api/chat, /api/contacts, /api/campaigns</text>
+  <text x="248" y="570" class="small">HTTP /api: chat + CRM + draft review</text>
   <rect x="68" y="583" width="335" height="109" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
   <text x="88" y="615" class="heading">Vite dev server :3000</text>
   <text x="88" y="641" class="label">Serves frontend assets</text>
@@ -47,7 +47,7 @@
   <text x="525" y="298" class="small">Local Python processes started together by run_services.sh</text>
   <rect x="526" y="323" width="598" height="113" rx="12" fill="#ecfdf5" stroke="#a7f3d0" stroke-width="1.5"/>
   <text x="547" y="353" class="heading">FastAPI / Uvicorn :4000</text>
-  <text x="547" y="380" class="label">Chat + scoped contact/campaign APIs + /health</text>
+  <text x="547" y="380" class="label">Chat + scoped contact/campaign/draft APIs + /health</text>
   <text x="547" y="405" class="small">Session ownership, active draft + scoped revision state</text>
   <text x="547" y="424" class="small">Both direct and /api-prefixed route forms</text>
   <path d="M403 637 L450 637 L450 379 L526 379" class="arrow"/>

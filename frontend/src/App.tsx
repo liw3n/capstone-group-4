@@ -14,6 +14,7 @@ import CampaignDetailView from './components/CampaignDetailView';
 import MarketingCampaignsView from './components/MarketingCampaignsView';
 import MarketingCampaignDetailView from './components/MarketingCampaignDetailView';
 import CampaignBuilder from './components/CampaignBuilder';
+import CampaignDraftReview from './components/CampaignDraftReview';
 import SignOffTemplateModal from './components/SignOffTemplateModal';
 import AddContactModal from './components/AddContactModal';
 import UploadContactsWizard from './components/UploadContactsWizard';
@@ -38,6 +39,7 @@ import {
   updateCampaignState,
 } from './services/campaignApi';
 import { createContact, listContacts, replaceContact } from './services/contactApi';
+import { CampaignDraftArtifact } from './services/chatApi';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -52,6 +54,10 @@ export default function App() {
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
   const [buildingCampaign, setBuildingCampaign] = useState(false);
+  const [campaignDraftReview, setCampaignDraftReview] = useState<{
+    draft: CampaignDraftArtifact;
+    sessionId: string;
+  } | null>(null);
   // Belongs to the advisor, not to a campaign — one template, reused by every send.
   const [signOff, setSignOff] = useState(DEFAULT_SIGN_OFF);
   const [editingSignOff, setEditingSignOff] = useState(false);
@@ -144,6 +150,7 @@ export default function App() {
     setSelectedContactId(null);
     setSelectedCampaignId(null);
     setBuildingCampaign(false);
+    setCampaignDraftReview(null);
   };
 
   /** Campaigns are reloaded from PostgreSQL for the next signed-in role. */
@@ -152,6 +159,7 @@ export default function App() {
     setSelectedContactId(null);
     setSelectedCampaignId(null);
     setBuildingCampaign(false);
+    setCampaignDraftReview(null);
   };
 
   /* ---------- contacts ---------- */
@@ -502,6 +510,8 @@ export default function App() {
   const viewKey =
     activeTab === 'contacts' && selectedContact
       ? 'contact-detail'
+      : activeTab === 'campaigns' && campaignDraftReview
+        ? `campaign-draft-${campaignDraftReview.draft.draftId}`
       : activeTab === 'campaigns' && buildingCampaign
         ? 'campaign-builder'
         : activeTab === 'campaigns' && selectedCampaign
@@ -521,6 +531,7 @@ export default function App() {
             setSelectedContactId(null);
             setSelectedCampaignId(null);
             setBuildingCampaign(false);
+            setCampaignDraftReview(null);
           }}
         />
 
@@ -613,7 +624,17 @@ export default function App() {
                 )}
 
                 {activeTab === 'campaigns' &&
-                  (buildingCampaign ? (
+                  (campaignDraftReview && session.advisorId ? (
+                    <CampaignDraftReview
+                      advisorId={session.advisorId}
+                      sessionId={campaignDraftReview.sessionId}
+                      initialDraft={campaignDraftReview.draft}
+                      onCancel={() => setCampaignDraftReview(null)}
+                      onDraftUpdated={(draft) => setCampaignDraftReview((current) =>
+                        current ? { ...current, draft } : current,
+                      )}
+                    />
+                  ) : buildingCampaign ? (
                     <CampaignBuilder
                       contacts={activeContacts}
                       createdBy={session.name}
@@ -636,7 +657,10 @@ export default function App() {
                       <MarketingCampaignsView
                         campaigns={marketingCampaigns}
                         contacts={contacts}
-                        onNewCampaign={() => setBuildingCampaign(true)}
+                        onNewCampaign={() => {
+                          setCampaignDraftReview(null);
+                          setBuildingCampaign(true);
+                        }}
                         onOpenCampaign={setSelectedCampaignId}
                       />
                     )
@@ -668,7 +692,10 @@ export default function App() {
                       campaigns={advisorCampaigns}
                       contacts={contacts}
                       onOpenCampaign={setSelectedCampaignId}
-                      onNewCampaign={() => setBuildingCampaign(true)}
+                      onNewCampaign={() => {
+                        setCampaignDraftReview(null);
+                        setBuildingCampaign(true);
+                      }}
                       onEditSignOff={() => setEditingSignOff(true)}
                     />
                   ))}
@@ -722,6 +749,12 @@ export default function App() {
           advisorId={session.advisorId}
           campaignId={selectedCampaign?.id}
           campaignName={selectedCampaign?.name}
+          onReviewCampaignDraft={(draft, sessionId) => {
+            setActiveTab('campaigns');
+            setSelectedCampaignId(null);
+            setBuildingCampaign(false);
+            setCampaignDraftReview({ draft, sessionId });
+          }}
         />
       )}
     </div>

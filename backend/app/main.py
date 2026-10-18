@@ -16,12 +16,17 @@ from app.campaigns.catalog import (
     get_engagement_status,
 )
 from app.campaigns.models import (
+    CAMPAIGN_TARGETING_FIELDS,
     CampaignCriteriaPayload,
     CampaignDraftArtifact,
+    CampaignDraftField,
     CampaignDraftOptionProposal,
+    CampaignDraftRegenerationRequest,
     CampaignDraftRevisionArtifact,
+    CampaignDraftUpdateRequest,
     PersistedCampaignDraftArtifact,
     PersistedCampaignDraftOptionSet,
+    campaign_revision_changed_fields,
 )
 from app.campaigns.clarification import PostgresCampaignClarificationStore
 from app.campaigns.draft_repository import (
@@ -31,6 +36,7 @@ from app.campaigns.draft_repository import (
     get_campaign_draft,
     get_latest_campaign_draft,
     get_pending_campaign_draft_options,
+    update_campaign_draft_revision,
 )
 
 from app.campaigns.repository import (
@@ -45,7 +51,10 @@ from app.contacts.catalog import (
 )
 from app.config import get_settings
 from app.llm import ChatOrchestrator, LLMClient, OrchestratorResult
-from app.llm.orchestrator import is_campaign_turn_candidate
+from app.llm.orchestrator import (
+    is_active_campaign_turn_candidate,
+    is_campaign_turn_candidate,
+)
 from app.llm.errors import (
     LLMAuthenticationError,
     LLMConfigurationError,
@@ -102,6 +111,7 @@ class SessionResponse(BaseModel):
     session_id: str
     timestamp: str
     session_title: str
+    active_campaign_draft_id: str | None = None
 
 
 class NewSessionResponse(BaseModel):
@@ -141,16 +151,19 @@ def _validate_revision_against_current(
         raise ValueError("revision changed the original objective")
     if artifact.referencesUsed != current.referencesUsed:
         raise ValueError("revision changed the original citations")
-    if set(artifact.changedFields) != set(requested_fields):
+    allowed_fields = campaign_revision_changed_fields(requested_fields)
+    if set(artifact.changedFields) != set(allowed_fields):
         raise ValueError("revision changed an unrequested field selection")
 
     expected = current.draft.model_dump(mode="json")
     revised = artifact.draft.model_dump(mode="json")
     for field_name in artifact.changedFields:
-        if field_name in {"ageGroups", "genders", "cashBands"}:
+        if field_name in CAMPAIGN_TARGETING_FIELDS:
             expected["criteria"][field_name] = revised["criteria"][field_name]
         else:
             expected[field_name] = revised[field_name]
+    if CAMPAIGN_TARGETING_FIELDS.intersection(artifact.changedFields):
+        expected["rationale"] = revised["rationale"]
     if expected != revised:
         raise ValueError("revision changed an unselected draft field")
 
@@ -423,6 +436,7 @@ def chat_sessions(fa_id: str = Query(min_length=1)) -> list[SessionResponse]:
             session_id=session.session_id,
             timestamp=session.timestamp,
             session_title=session.session_title,
+            active_campaign_draft_id=session.active_campaign_draft_id,
         )
         for session in list_sessions(fa_id)
     ]
@@ -442,6 +456,165 @@ def chat_history(session_id: str = Query(min_length=1)) -> list[HistoryResponse]
     if history is None:
         raise HTTPException(status_code=404, detail="chat session not found")
     return [HistoryResponse(**item.__dict__) for item in history]
+
+
+CampaignDraftId = Annotated[
+    str,
+    Path(
+        min_length=36,
+        max_length=36,
+        pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+    ),
+]
+
+
+def _review_campaign_draft(
+    draft_id: str, fa_id: str, session_id: str
+) -> tuple[RequestScope, PersistedCampaignDraftArtifact]:
+    advisor_id = fa_id.strip()
+    active_session = get_session(session_id)
+    if active_session is None or active_session.fa_id != advisor_id:
+        raise HTTPException(status_code=404, detail="campaign draft not found")
+    scope = RequestScope(advisor_id)
+    current = get_campaign_draft(scope, session_id, draft_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="campaign draft not found")
+    if current.status not in {"generated", "reviewed"}:
+        raise HTTPException(status_code=409, detail="campaign draft is not reviewable")
+    return scope, current
+
+
+def _run_campaign_draft_review_revision(
+    *,
+    current: PersistedCampaignDraftArtifact,
+    scope: RequestScope,
+    session_id: str,
+    fields: tuple[CampaignDraftField, ...],
+    instruction: str,
+    proposed_changes: dict | None = None,
+) -> CampaignDraftRevisionArtifact:
+    try:
+        result = get_orchestrator().revise_campaign_draft(
+            current_draft=current,
+            fields=fields,
+            instruction=instruction,
+            scope=scope,
+            session_id=session_id,
+            proposed_changes=proposed_changes,
+        )
+    except LLMConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LLMAuthenticationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except LLMRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except LLMTimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except (LLMProviderError, LLMToolLoopError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if not isinstance(result, OrchestratorResult) or len(result.artifacts) != 1:
+        detail = result.answer if isinstance(result, OrchestratorResult) else None
+        raise HTTPException(
+            status_code=422,
+            detail=detail or "campaign draft revision failed validation",
+        )
+    artifact = result.artifacts[0]
+    if not isinstance(artifact, CampaignDraftRevisionArtifact):
+        raise HTTPException(status_code=502, detail="campaign draft revision is invalid")
+    try:
+        _validate_revision_against_current(artifact, current, fields)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="campaign draft revision is invalid") from exc
+    return artifact
+
+
+@app.get(
+    "/campaign-drafts/{draft_id}", response_model=PersistedCampaignDraftArtifact
+)
+@app.get(
+    "/api/campaign-drafts/{draft_id}", response_model=PersistedCampaignDraftArtifact
+)
+def campaign_draft_get(
+    draft_id: CampaignDraftId,
+    fa_id: str = Query(min_length=1, max_length=64),
+    session_id: str = Query(min_length=1, max_length=64),
+) -> PersistedCampaignDraftArtifact:
+    _scope, current = _review_campaign_draft(draft_id, fa_id, session_id)
+    return current
+
+
+@app.patch(
+    "/campaign-drafts/{draft_id}", response_model=PersistedCampaignDraftArtifact
+)
+@app.patch(
+    "/api/campaign-drafts/{draft_id}", response_model=PersistedCampaignDraftArtifact
+)
+def campaign_draft_update(
+    draft_id: CampaignDraftId,
+    payload: CampaignDraftUpdateRequest,
+) -> PersistedCampaignDraftArtifact:
+    scope, current = _review_campaign_draft(
+        draft_id, payload.fa_id, payload.session_id
+    )
+    if current.revision != payload.expectedRevision:
+        raise CampaignDraftStaleRevision("campaign draft revision is stale")
+    selected = payload.changes.model_fields_set
+    fields = tuple(
+        field for field in CampaignDraftField.__args__ if field in selected
+    )
+    changes = payload.changes.model_dump(include=selected, exclude_none=True)
+    artifact = _run_campaign_draft_review_revision(
+        current=current,
+        scope=scope,
+        session_id=payload.session_id,
+        fields=fields,
+        instruction="Apply the adviser's structured review edits exactly.",
+        proposed_changes=changes,
+    )
+    return update_campaign_draft_revision(
+        scope,
+        payload.session_id,
+        draft_id,
+        payload.expectedRevision,
+        artifact,
+        status="reviewed",
+    )
+
+
+@app.post(
+    "/campaign-drafts/{draft_id}/regenerate",
+    response_model=PersistedCampaignDraftArtifact,
+)
+@app.post(
+    "/api/campaign-drafts/{draft_id}/regenerate",
+    response_model=PersistedCampaignDraftArtifact,
+)
+def campaign_draft_regenerate(
+    draft_id: CampaignDraftId,
+    payload: CampaignDraftRegenerationRequest,
+) -> PersistedCampaignDraftArtifact:
+    scope, current = _review_campaign_draft(
+        draft_id, payload.fa_id, payload.session_id
+    )
+    if current.revision != payload.expectedRevision:
+        raise CampaignDraftStaleRevision("campaign draft revision is stale")
+    fields = tuple(payload.fields)
+    artifact = _run_campaign_draft_review_revision(
+        current=current,
+        scope=scope,
+        session_id=payload.session_id,
+        fields=fields,
+        instruction=payload.instruction,
+    )
+    return update_campaign_draft_revision(
+        scope,
+        payload.session_id,
+        draft_id,
+        payload.expectedRevision,
+        artifact,
+        status="reviewed",
+    )
 
 
 @app.post("/chat/query", response_model=QueryResponse)
@@ -481,16 +654,25 @@ def chat_query(
         raise HTTPException(status_code=404, detail="chat session not found")
 
     campaign_turn_candidate = is_campaign_turn_candidate(message_content)
+    active_campaign_turn_candidate = is_active_campaign_turn_candidate(
+        message_content
+    )
     current_draft = None
-    if campaign_turn_candidate:
-        if session.active_campaign_draft_id is not None:
-            current_draft = get_campaign_draft(
-                scope, session.session_id, session.active_campaign_draft_id
-            )
-        if current_draft is None:
-            # Compatibility for rows created before the active pointer existed,
-            # and for a pointer whose draft is no longer reviewable.
-            current_draft = get_latest_campaign_draft(scope, session.session_id)
+    if (
+        session.active_campaign_draft_id is not None
+        and active_campaign_turn_candidate
+    ):
+        current_draft = get_campaign_draft(
+            scope, session.session_id, session.active_campaign_draft_id
+        )
+        if current_draft is not None and current_draft.status not in {
+            "generated", "reviewed"
+        }:
+            current_draft = None
+    if campaign_turn_candidate and current_draft is None:
+        # Compatibility for rows created before the active pointer existed,
+        # and for a pointer whose draft is no longer reviewable.
+        current_draft = get_latest_campaign_draft(scope, session.session_id)
     pending_draft_options = (
         get_pending_campaign_draft_options(
             scope,
@@ -501,7 +683,7 @@ def chat_query(
         if current_draft is not None
         else None
     )
-    revision_context_checked = campaign_turn_candidate
+    revision_context_checked = campaign_turn_candidate or current_draft is not None
 
     try:
         orchestration_context = {

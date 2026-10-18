@@ -107,20 +107,27 @@ checks and startup commands are in `backend/AGENTS.md`.
   adviser's choices. Validated structured drafts are stored separately from
   campaigns and returned by chat with a stable draft ID and optimistic revision.
   Cross-turn selective revision can regenerate one or several named fields while
-  preserving every unselected field and rerunning policy validation. Active
-  draft turns are routed separately from ordinary MCP work; explicit new-draft
-  intent is required before replacing review context. Narrative alternatives
+  preserving unselected independent fields and rerunning policy validation.
+  Criteria changes refresh dependent targeting summary/rationale and, for chat
+  regeneration, dependent client-facing copy. Active-draft routing recognises
+  declarative and compact field/value instructions while explicit discovery,
+  matching, performance, follow-up and email intents retain precedence;
+  explicit new-draft intent is required before replacing review context. Narrative alternatives
   are stored as short-lived, revision-bound option sets so numbered selections
-  do not rely on parsing chat prose. Drafts remain review-only: preview,
-  confirmation and campaign creation are not yet implemented.
+  do not rely on parsing chat prose. The Campaigns workspace now provides a
+  structured, prefilled review mode with optimistic manual edits, selected-field
+  regeneration, stale-revision reload and a local read-only preview. Drafts remain review-only:
+  server-issued preview tokens, confirmation and campaign creation are not yet
+  implemented.
 - `campaign`, `campaign_member`, `interaction`, and `task_item` are described by
   the company schema document, but their column definitions are absent. Do not
   invent a production-compatible schema without documenting the prototype
   assumptions.
 - There is no real authentication/authorization or verified tenant boundary.
   UI role selection and request-supplied adviser IDs are prototype mechanisms.
-- There is no automated frontend test runner, end-to-end test suite, CI
-  workflow, or pre-commit configuration.
+- There is a small Node frontend test suite for campaign-draft review helpers
+  and server-rendered UI. There is no browser end-to-end suite, CI workflow, or
+  pre-commit configuration.
 - FastMCP runs over HTTP on port `8001` in the API container, and the API calls
   it through the MCP protocol. Implemented campaign tools remain synthetic and
   read-only.

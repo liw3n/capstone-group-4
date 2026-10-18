@@ -253,16 +253,18 @@ revises both in one operation. Supported fields are `name`, `description`,
 `clientMessage`, `ageGroups`, `genders`, `cashBands` and
 `targetDemographicSummary`. Ambiguous requests ask which fields to revise.
 
-The chat session stores the active draft ID. Before handling a plausible draft
-turn, the server resolves a strict action: ordinary chat, revise named fields,
+The chat session stores the active draft ID. A broad, scoped gate recognises
+field/value phrasing whenever that pointer exists, including declarative and
+compact instructions that omit the words `campaign` and `draft`. Before handling
+such a turn, the server resolves a strict action: ordinary chat, revise named fields,
 suggest alternatives, select a numbered alternative, show the current draft,
 start a new draft, or ask for clarification. Deterministic rules handle clear
 phrasing, with a schema-constrained model classifier as a bounded fallback.
 Starting new generation while a draft is active requires explicit new/separate/
 replacement intent. “Please draft the full campaign” therefore renders the
 current structured draft without changing it. Ordinary discovery, matching,
-follow-up, performance and campaign-email requests remain on their existing MCP
-tool path and do not load the active draft.
+follow-up, performance and campaign-email intents have precedence, remain on
+their existing MCP tool path and do not load the active draft.
 
 For example, “give me five more unique campaign name options” returns a
 revision-bound option set. “Let's try the fifth option” resolves against that
@@ -276,7 +278,17 @@ The server loads the session's active draft by tenant, adviser and session
 the model only that structured draft and a selected-field-only schema, and
 injects the objective, citations and current revision when invoking
 `revise_campaign_draft`. The complete result is revalidated and stored against
-the same `draftId` at revision `n + 1`; unselected fields cannot be overwritten.
+the same `draftId` at revision `n + 1`; unselected independent fields cannot be
+overwritten. When age, gender or cash criteria change, the server derives the
+demographic summary and field-level rationale as dependent metadata. Chat and
+regeneration revisions also request consistent description and client-message
+copy using any explicitly resolved targeting as authoritative context. Explicit
+targeting values in the adviser instruction are normalized and locked to
+supported enums after model output, so the model cannot substitute a different
+band. Generated drafts still use fixed bands: `above 65` maps to
+`65plus`, while `more than 250k` maps to both `250kTo1m` and `above1m`. Because
+those bands include the boundary values, the returned validation warnings make
+the approximation visible for adviser review.
 Repeated turns therefore support multiple sequential revisions. Generation and
 revision write chat and campaign-generation review tables only; neither writes
 `mock_campaign`. Option creation and selection are committed atomically with the
@@ -501,11 +513,12 @@ Age, gender and cash changes are merged into the nested criteria object.
 
 The handler resolves cited catalogue entries only when they remain approved,
 valid and available to the request tenant. It revalidates the current draft,
-applies only the selected changes, restores every other supported field and
-reruns disclaimer, unsupported-claim, personal-data and targeting-consistency
-checks. A targeting-only change that contradicts unchanged narrative fields is
-rejected with `inconsistent_targeting` instead of silently rewriting those
-fields.
+applies only the selected changes, restores every other independent supported
+field and reruns disclaimer, unsupported-claim, personal-data and targeting-
+consistency checks. Criteria revisions deterministically refresh the complete
+field-level rationale and, when it was not explicitly selected, the demographic
+summary. This derived metadata cannot retain an obsolete unrestricted-audience
+claim after age, gender or cash criteria change.
 
 A successful result has `type: campaign_draft_revision`, `data_source:
 ai_generated`, the objective and citations, the complete validated draft,
@@ -518,21 +531,86 @@ The tool is exposed directly by FastMCP but remains omitted from the generic
 model-facing tool list. For a recognised chat revision request, the Stage 7
 orchestrator loads the authoritative persisted artifact, asks the model through
 a strict selected-field-only schema, and invokes this tool directly with the
-server-held objective, citations, draft and revision. Stage 8 will add the
-editable frontend experience.
+server-held objective, citations, draft and revision. Stage 8 uses the same
+boundary for both structured manual edits and selected-field regeneration from
+the editable Campaigns review experience.
+
+### Campaign draft review
+
+Every route below is available both with and without the `/api` prefix. Drafts
+are review artifacts, not campaign records. These endpoints never write
+`mock_campaign`, select a named audience, activate outreach or send messages.
+
+`GET /campaign-drafts/{draft_id}?fa_id=<adviser>&session_id=<session>` returns
+the current `campaign_draft` artifact only when it belongs to that adviser and
+chat session and remains in `generated` or `reviewed` state. Missing,
+cross-adviser and cross-session drafts return `404` without disclosing which
+condition failed; a scoped draft in a non-reviewable lifecycle state returns
+`409`.
+
+`PATCH /campaign-drafts/{draft_id}` applies one or more exact adviser edits:
+
+```json
+{
+  "fa_id": "advisor-123",
+  "session_id": "session-uuid",
+  "expectedRevision": 1,
+  "changes": {
+    "name": "Clearer retirement check-in",
+    "cashBands": ["50kTo250k"]
+  }
+}
+```
+
+Supported change keys are `name`, `description`, `clientMessage`, `ageGroups`,
+`genders`, `cashBands` and `targetDemographicSummary`. At least one non-null
+change is required. The server invokes `revise_campaign_draft` with the stored
+objective, citations and current artifact, reruns complete policy validation,
+preserves every unselected field and stores the next revision as `reviewed`.
+For a manual criteria edit, `targetDemographicSummary` and rationale are updated
+as dependent metadata; `changedFields` includes the demographic summary.
+
+`POST /campaign-drafts/{draft_id}/regenerate` asks the model to propose values
+for only the selected independent fields, then passes the proposal through the
+same trusted revision boundary. Selecting an age, gender or cash field also
+regenerates description, client message and demographic summary so visible copy
+does not continue describing the previous audience:
+
+```json
+{
+  "fa_id": "advisor-123",
+  "session_id": "session-uuid",
+  "expectedRevision": 2,
+  "fields": ["description", "clientMessage"],
+  "instruction": "Make these sections warmer and more concise."
+}
+```
+
+`fields` must contain one to seven unique supported fields, and `instruction`
+must be non-empty. Both mutation routes return the complete persisted artifact
+with the same `draftId`, revision advanced exactly once, `status: reviewed`,
+and `changedFields`. A stale expected revision returns `409`; invalid request or
+policy content returns `422`; unavailable storage returns `503`; regeneration
+may also return `429`, `502` or `504` for provider failures.
+
+`GET /chat/sessions` includes nullable `active_campaign_draft_id`. The frontend
+uses this pointer to restore the current structured draft rather than parsing
+assistant prose. On a `409` save/regeneration conflict, the frontend reloads the
+latest scoped revision and asks the adviser to review it before continuing.
 
 ### Campaign generation contracts and ownership
 
-Stages 1-7 define generation, selective revision and review-only draft
-persistence without enabling campaign creation.
+Stages 1-8 define generation, selective revision, review-only draft persistence
+and the editable review experience without enabling campaign creation.
 The lifecycle values are `generated`, `reviewed`, `confirmed`, `rejected` and
 `expired`. MCP preparation and revision remain read-only and return unpersisted
 artifacts. The FastAPI host validates those artifacts again and stores the
 current review-only state in `campaign_generation_drafts`, scoped by tenant,
 adviser and chat session. The chat session's active-draft pointer identifies the
 review context, while `campaign_generation_draft_options` stores short-lived,
-revision-bound narrative choices separately from chat prose. Preview and
-confirmation remain subsequent stages.
+revision-bound narrative choices separately from chat prose. The Stage 8 browser
+preview is local and read-only. Server-issued preview tokens and confirmation
+remain subsequent stages.
 
 Pre-generation clarification has its own implementation lifecycle (`active`,
 `completed`, `cancelled`) and is not a campaign draft lifecycle state. It stores

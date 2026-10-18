@@ -2,6 +2,7 @@ export interface ChatSession {
   session_id: string;
   timestamp: string;
   session_title: string;
+  active_campaign_draft_id?: string | null;
 }
 
 export interface ChatMessage {
@@ -26,6 +27,14 @@ export interface QueryResponse {
 export type CampaignAgeGroup = 'under35' | '35to44' | '45to54' | '55to64' | '65plus';
 export type CampaignGender = 'male' | 'female';
 export type CampaignCashBand = 'under50k' | '50kTo250k' | '250kTo1m' | 'above1m';
+export type CampaignDraftField =
+  | 'name'
+  | 'description'
+  | 'clientMessage'
+  | 'ageGroups'
+  | 'genders'
+  | 'cashBands'
+  | 'targetDemographicSummary';
 
 export interface CampaignDraftArtifact {
   type: 'campaign_draft';
@@ -49,15 +58,7 @@ export interface CampaignDraftArtifact {
   };
   revision: number;
   status: 'generated' | 'reviewed' | 'confirmed' | 'rejected' | 'expired';
-  changedFields: Array<
-    | 'name'
-    | 'description'
-    | 'clientMessage'
-    | 'ageGroups'
-    | 'genders'
-    | 'cashBands'
-    | 'targetDemographicSummary'
-  >;
+  changedFields: CampaignDraftField[];
   validation: {
     schema_valid: true;
     policy_valid: true;
@@ -73,7 +74,7 @@ export interface CampaignDraftOptionSet {
   draftId: string;
   baseRevision: number;
   field: Exclude<
-    CampaignDraftArtifact['changedFields'][number],
+    CampaignDraftField,
     'ageGroups' | 'genders' | 'cashBands'
   >;
   options: string[];

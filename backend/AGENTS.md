@@ -59,12 +59,19 @@ Terraform. Do not use it as a lightweight unit-test command.
   preparation and selective draft revision use scoped synthetic data. Ordinary
   PULSE chat now persists validated drafts, routes active-draft turns explicitly,
   and can revise named fields or select revision-bound narrative alternatives
-  across turns; the MCP revision boundary itself remains read-only. Consent-safe
+  across turns. Broad declarative field/value instructions enter this scoped
+  route, while ordinary MCP tool intents retain precedence. Criteria revisions
+  refresh dependent targeting metadata and client-facing copy; the MCP revision
+  boundary itself remains read-only. Consent-safe
   outreach, interaction/task mutation and outcome tools remain incomplete.
 - Campaign clarification state is persisted per tenant, adviser and chat
   session. Generated structured drafts and their current optimistic revision are
   retained separately from campaign records; short-lived option sets are stored
   separately from both draft content and chat prose.
+- Adviser/session-scoped draft review routes support exact manual edits and
+  selected-field regeneration through the same policy boundary. They update
+  review state only; server preview tokens, confirmation and campaign creation
+  remain unimplemented.
 - Adviser identity is caller-supplied. There is no authentication or verified
   tenant middleware; current scope checks are prototype boundaries.
 - There is no production CRM adapter for `gwm_api/`.

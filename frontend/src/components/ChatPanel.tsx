@@ -1,20 +1,23 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Bot, MessageCircle, Plus, Send, X } from 'lucide-react';
+import { Bot, FileText, MessageCircle, Plus, Send, X } from 'lucide-react';
 import AssistantMessage from './AssistantMessage';
 import {
   ChatMessage,
   ChatSession,
+  CampaignDraftArtifact,
   createChatSession,
   getChatHistory,
   listChatSessions,
   sendChatMessage,
 } from '../services/chatApi';
+import { getCampaignDraft } from '../services/campaignDraftApi';
 
 interface ChatPanelProps {
   advisorId: string;
   campaignId?: string;
   campaignName?: string;
+  onReviewCampaignDraft?: (draft: CampaignDraftArtifact, sessionId: string) => void;
 }
 
 type ErrorSource = 'sessions' | 'history' | 'create' | 'send';
@@ -47,11 +50,18 @@ function titleFromMessage(message: string): string {
   return `${message.split(/\s+/).slice(0, 5).join(' ')}...`;
 }
 
-export default function ChatPanel({ advisorId, campaignId, campaignName }: ChatPanelProps) {
+export default function ChatPanel({
+  advisorId,
+  campaignId,
+  campaignName,
+  onReviewCampaignDraft,
+}: ChatPanelProps) {
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [latestCampaignDraft, setLatestCampaignDraft] =
+    useState<CampaignDraftArtifact | null>(null);
   const [draft, setDraft] = useState('');
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -65,6 +75,9 @@ export default function ChatPanel({ advisorId, campaignId, campaignName }: ChatP
   const messagesEnd = useRef<HTMLDivElement | null>(null);
   const createRequest = useRef<AbortController | null>(null);
   const sendRequest = useRef<AbortController | null>(null);
+  const activeCampaignDraftId = sessions.find(
+    (session) => session.session_id === activeSessionId,
+  )?.active_campaign_draft_id;
 
   useEffect(() => {
     loadedForAdvisor.current = null;
@@ -74,6 +87,7 @@ export default function ChatPanel({ advisorId, campaignId, campaignName }: ChatP
     setSessions([]);
     setActiveSessionId(null);
     setMessages([]);
+    setLatestCampaignDraft(null);
     setDraft('');
     setError(null);
     setLoadingSessions(false);
@@ -121,6 +135,7 @@ export default function ChatPanel({ advisorId, campaignId, campaignName }: ChatP
   useEffect(() => {
     if (!open || !activeSessionId) {
       setMessages([]);
+      setLatestCampaignDraft(null);
       setLoadingHistory(false);
       return;
     }
@@ -133,11 +148,25 @@ export default function ChatPanel({ advisorId, campaignId, campaignName }: ChatP
 
     let cancelled = false;
     setLoadingHistory(true);
+    setLatestCampaignDraft(null);
     setError((current) => (current?.source === 'history' ? null : current));
     const controller = new AbortController();
-    getChatHistory(activeSessionId, controller.signal)
-      .then((history) => {
-        if (!cancelled) setMessages(history);
+    Promise.all([
+      getChatHistory(activeSessionId, controller.signal),
+      activeCampaignDraftId
+        ? getCampaignDraft(
+          advisorId,
+          activeSessionId,
+          activeCampaignDraftId,
+          controller.signal,
+        )
+        : Promise.resolve(null),
+    ])
+      .then(([history, campaignDraft]) => {
+        if (!cancelled) {
+          setMessages(history);
+          setLatestCampaignDraft(campaignDraft);
+        }
       })
       .catch((reason: unknown) => {
         if (!cancelled && !isAbortError(reason)) {
@@ -155,7 +184,7 @@ export default function ChatPanel({ advisorId, campaignId, campaignName }: ChatP
       cancelled = true;
       controller.abort();
     };
-  }, [activeSessionId, historyLoadAttempt, open]);
+  }, [activeCampaignDraftId, activeSessionId, advisorId, historyLoadAttempt, open]);
 
   useEffect(() => {
     messagesEnd.current?.scrollIntoView({ behavior: 'smooth' });
@@ -176,6 +205,7 @@ export default function ChatPanel({ advisorId, campaignId, campaignName }: ChatP
       skipHistoryForSession.current = session.session_id;
       setActiveSessionId(session.session_id);
       setMessages([]);
+      setLatestCampaignDraft(null);
       return session;
     } catch (reason) {
       if (!isAbortError(reason)) {
@@ -242,6 +272,14 @@ export default function ChatPanel({ advisorId, campaignId, campaignName }: ChatP
           message_content: response.ai_answer,
         },
       ]);
+      if (response.campaignDraft) {
+        setLatestCampaignDraft(response.campaignDraft);
+        setSessions((current) => current.map((session) =>
+          session.session_id === sessionId
+            ? { ...session, active_campaign_draft_id: response.campaignDraft?.draftId }
+            : session,
+        ));
+      }
     } catch (reason) {
       if (!isAbortError(reason)) {
         setMessages((current) => current.filter((message) => message !== optimisticMessage));
@@ -404,6 +442,34 @@ export default function ChatPanel({ advisorId, campaignId, campaignName }: ChatP
                     </div>
                   );
                 })}
+                {latestCampaignDraft && activeSessionId && (
+                  <div className="rounded-xl border border-accent/25 bg-accent-soft p-3 shadow-sm">
+                    <div className="flex items-start gap-2.5">
+                      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-accent">
+                        <FileText size={16} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[12px] font-semibold text-ink">Campaign draft ready for review</p>
+                        <p className="mt-0.5 truncate text-[12px] text-body">
+                          {latestCampaignDraft.draft.name}
+                        </p>
+                        <p className="mt-1 text-[10px] text-muted">
+                          Revision {latestCampaignDraft.revision} · Adviser review required
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onReviewCampaignDraft?.(latestCampaignDraft, activeSessionId);
+                            setOpen(false);
+                          }}
+                          className="mt-2 rounded-md bg-accent px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-accent-hover"
+                        >
+                          Review draft
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {sending && (
                   <div className="flex justify-start">
                     <div className="rounded-xl rounded-tl-sm border border-line-soft bg-white px-3 py-2 text-[12px] text-muted shadow-sm">

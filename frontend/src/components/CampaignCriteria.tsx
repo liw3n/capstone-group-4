@@ -13,6 +13,7 @@ import {
 interface PickerProps {
   criteria: CampaignCriteria;
   onChange: (criteria: CampaignCriteria) => void;
+  allowCustomRanges?: boolean;
 }
 
 const chipClass = (isOn: boolean) =>
@@ -137,7 +138,11 @@ function RangeInputs({
  * bands, and a contact matches the dimension on either — same OR rule that
  * already applies between bands, so nothing new has to be explained.
  */
-export function CriteriaPicker({ criteria, onChange }: PickerProps) {
+export function CriteriaPicker({
+  criteria,
+  onChange,
+  allowCustomRanges = true,
+}: PickerProps) {
   const toggle = (key: 'ageGroups' | 'genders' | 'cashBands', value: string) => {
     const current = criteria[key] as string[];
     const next = current.includes(value)
@@ -179,15 +184,17 @@ export function CriteriaPicker({ criteria, onChange }: PickerProps) {
             </button>
           ))}
         </div>
-        <RangeInputs
-          keyName="ageRange"
-          range={criteria.ageRange}
-          minPlaceholder="42"
-          maxPlaceholder="47"
-          step={1}
-          onSet={(bound, raw) => setRange('ageRange', bound, raw)}
-          onClear={() => onChange({ ...criteria, ageRange: undefined })}
-        />
+        {allowCustomRanges && (
+          <RangeInputs
+            keyName="ageRange"
+            range={criteria.ageRange}
+            minPlaceholder="42"
+            maxPlaceholder="47"
+            step={1}
+            onSet={(bound, raw) => setRange('ageRange', bound, raw)}
+            onClear={() => onChange({ ...criteria, ageRange: undefined })}
+          />
+        )}
       </Dimension>
 
       <Dimension title="Target demographic" note={noteFor(criteria.genders.length)}>
@@ -223,16 +230,18 @@ export function CriteriaPicker({ criteria, onChange }: PickerProps) {
             </button>
           ))}
         </div>
-        <RangeInputs
-          keyName="cashRange"
-          range={criteria.cashRange}
-          prefix="S$"
-          minPlaceholder="300000"
-          maxPlaceholder="450000"
-          step={1000}
-          onSet={(bound, raw) => setRange('cashRange', bound, raw)}
-          onClear={() => onChange({ ...criteria, cashRange: undefined })}
-        />
+        {allowCustomRanges && (
+          <RangeInputs
+            keyName="cashRange"
+            range={criteria.cashRange}
+            prefix="S$"
+            minPlaceholder="300000"
+            maxPlaceholder="450000"
+            step={1000}
+            onSet={(bound, raw) => setRange('cashRange', bound, raw)}
+            onClear={() => onChange({ ...criteria, cashRange: undefined })}
+          />
+        )}
       </Dimension>
     </div>
   );

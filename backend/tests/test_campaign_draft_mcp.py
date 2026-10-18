@@ -292,7 +292,7 @@ def test_revise_changes_only_selected_fields_and_increments_revision(monkeypatch
     assert not {"draftId", "status", "tenant_id", "fa_id"} & result.keys()
 
 
-def test_revise_revalidates_policy_and_targeting():
+def test_revise_revalidates_policy_and_normalizes_targeting_metadata():
     bound = registry()
     references = retrieval(bound)
 
@@ -308,15 +308,31 @@ def test_revise_revalidates_policy_and_targeting():
     assert result["field"] == "description"
     assert result["rule"] == "guarantee_claim"
 
-    inconsistent = revision_arguments(
+    targeting = revision_arguments(
         references,
-        fields=["genders"],
-        changes={"genders": ["female"]},
+        fields=["ageGroups", "genders", "cashBands"],
+        changes={
+            "ageGroups": ["65plus"],
+            "genders": ["female"],
+            "cashBands": ["250kTo1m", "above1m"],
+        },
+    )
+    targeting["instruction"] = (
+        "The target age should be above 65 and cash should be more than 250k."
     )
     result = json.loads(bound.execute(
-        "revise_campaign_draft", json.dumps(inconsistent)
+        "revise_campaign_draft", json.dumps(targeting)
     ))
-    assert result["error_code"] == "inconsistent_targeting"
+    assert result["type"] == "campaign_draft_revision"
+    assert result["changedFields"] == [
+        "ageGroups", "genders", "cashBands", "targetDemographicSummary"
+    ]
+    assert result["draft"]["criteria"] == targeting["proposedChanges"]
+    assert "65 and above" in result["draft"]["targetDemographicSummary"]
+    assert "SGD 250k to SGD 1m" in result["draft"]["targetDemographicSummary"]
+    assert "No age restriction" not in result["draft"]["rationale"]["ageGroups"]
+    assert any("65-and-above" in warning for warning in result["validation"]["warnings"])
+    assert any("250k-to-1m" in warning for warning in result["validation"]["warnings"])
 
 
 def test_revise_rejects_invalid_selection_citation_and_missing_scope():

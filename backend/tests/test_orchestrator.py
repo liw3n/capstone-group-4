@@ -16,6 +16,7 @@ from app.campaigns.models import (
     CampaignDraftArtifact,
     PersistedCampaignDraftArtifact,
     PersistedCampaignDraftOptionSet,
+    campaign_revision_changed_fields,
 )
 from app.campaigns.presentation import render_campaign_draft
 from app.llm.errors import LLMProviderError, LLMToolLoopError
@@ -309,7 +310,9 @@ class CampaignRevisionRegistry:
             "draft": revised,
             "previousRevision": arguments["revision"],
             "revision": arguments["revision"] + 1,
-            "changedFields": arguments["fields"],
+            "changedFields": list(campaign_revision_changed_fields(
+                tuple(arguments["fields"])
+            )),
             "validation": {
                 "schema_valid": True,
                 "policy_valid": True,
@@ -534,6 +537,119 @@ def test_revision_can_change_multiple_fields_in_one_revision():
     assert result.artifacts[0].revision == 5
 
 
+def test_declarative_targeting_change_revises_structured_draft_and_dependent_copy():
+    current = persisted_campaign_draft(revision=2)
+    registry = CampaignRevisionRegistry()
+    client = FakeClient([
+        completion(message(content=json.dumps({
+            "ageGroups": ["under35"],
+            "cashBands": ["under50k"],
+            "description": "An educational retirement review for male clients aged 65 and above with at least SGD 250k in available cash.",
+            "clientMessage": "Review your retirement plans with an adviser. This is educational information, not financial advice, and any next step requires individual suitability review.",
+        })))
+    ])
+    orchestrator = ChatOrchestrator(client, settings(), registry)
+
+    instruction = (
+        "the target age should be above 65 years old and cash availability "
+        "should be more than 250k"
+    )
+    result = orchestrator.run(
+        instruction,
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        current_draft=current,
+        revision_context_checked=True,
+    )
+
+    expected_fields = {
+        "ageGroups", "cashBands", "description", "clientMessage",
+    }
+    assert is_campaign_revision_candidate(instruction) is True
+    assert client.calls[0]["schema_name"] == "campaign_draft_revision"
+    assert set(client.calls[0]["schema"]["properties"]) == expected_fields
+    assert set(registry.executed[0][1]["fields"]) == expected_fields
+    revision_context = json.loads(client.calls[0]["messages"][1]["content"])
+    assert revision_context["authoritativeTargeting"] == {
+        "ageGroups": ["65plus"],
+        "cashBands": ["250kTo1m", "above1m"],
+    }
+    assert registry.executed[0][1]["proposedChanges"]["ageGroups"] == ["65plus"]
+    assert registry.executed[0][1]["proposedChanges"]["cashBands"] == [
+        "250kTo1m", "above1m"
+    ]
+    assert result.artifacts[0].draft.name == current.draft.name
+    assert result.artifacts[0].draft.criteria.ageGroups == ["65plus"]
+    assert result.artifacts[0].draft.criteria.cashBands == ["250kTo1m", "above1m"]
+    assert result.artifacts[0].revision == 3
+
+
+def test_compact_targeting_values_use_active_draft_classifier_then_revision():
+    current = persisted_campaign_draft()
+    registry = CampaignRevisionRegistry()
+    client = FakeClient([
+        completion(message(content=json.dumps({
+            "action": "revise_fields",
+            "fields": ["ageGroups"],
+            "optionNumber": None,
+        }))),
+        completion(message(content=json.dumps({
+            "ageGroups": ["under35"],
+            "cashBands": ["under50k"],
+            "description": "An educational retirement review for clients aged 65 and above with SGD 250k or more in cash.",
+            "clientMessage": "Review your retirement plans with an adviser. This is educational information, not financial advice, and requires an individual suitability review.",
+        }))),
+    ])
+    orchestrator = ChatOrchestrator(client, settings(), registry)
+
+    result = orchestrator.run(
+        "Age 65+, cash 250k and above.",
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        current_draft=current,
+        revision_context_checked=True,
+    )
+
+    assert client.calls[0]["schema_name"] == "campaign_turn_decision"
+    assert client.calls[1]["schema_name"] == "campaign_draft_revision"
+    assert registry.executed[0][1]["proposedChanges"]["ageGroups"] == ["65plus"]
+    assert registry.executed[0][1]["proposedChanges"]["cashBands"] == [
+        "250kTo1m", "above1m"
+    ]
+    assert result.artifacts[0].revision == 2
+
+
+def test_ordinary_classifier_cannot_return_a_prose_only_pseudo_revision():
+    client = FakeClient([
+        completion(message(content=json.dumps({
+            "action": "ordinary_chat",
+            "fields": [],
+            "optionNumber": None,
+        }))),
+        completion(message(content=(
+            "## Draft campaign proposal\n\n"
+            "Campaign name: Unsaved replacement\n\n"
+            "Target criteria: age 65+"
+        ))),
+    ])
+    orchestrator = ChatOrchestrator(client, settings(), tool_registry())
+
+    result = orchestrator.run(
+        "Could the age targeting be more tailored?",
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        current_draft=persisted_campaign_draft(),
+        revision_context_checked=True,
+    )
+
+    assert result.artifacts == ()
+    assert "Campaign draft change was not saved" in result.answer
+    assert "No draft fields were changed" in result.answer
+
+
 def test_ambiguous_revision_asks_for_fields_without_a_model_call():
     orchestrator = ChatOrchestrator(
         FakeClient([]), settings(), CampaignRevisionRegistry()
@@ -708,6 +824,36 @@ def test_active_draft_does_not_intercept_an_unrelated_tool_request():
     assert result == "The total is 5."
     assert client.calls[0]["structured"] is False
     assert client.calls[0]["tools"][0]["function"]["name"] == "calculate_sum"
+
+
+@pytest.mark.parametrize(
+    "message_value",
+    [
+        "Show clients above 65 with more than 250k cash",
+        "Which male clients match this campaign?",
+        "How did this campaign perform last week?",
+        "Draft an email for this campaign",
+    ],
+)
+def test_active_draft_preserves_existing_tool_intent_precedence(message_value):
+    client = FakeClient([completion(message(content="Ordinary tool answer"))])
+    orchestrator = ChatOrchestrator(client, settings(), tool_registry())
+
+    result = orchestrator.run(
+        message_value,
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        current_draft=persisted_campaign_draft(),
+        revision_context_checked=True,
+    )
+
+    assert result == "Ordinary tool answer"
+    assert len(client.calls) == 1
+    assert client.calls[0]["structured"] is False
+    assert "Do not present, rewrite or claim to save a campaign draft" in (
+        client.calls[0]["messages"][0]["content"]
+    )
 
 
 @pytest.mark.parametrize(

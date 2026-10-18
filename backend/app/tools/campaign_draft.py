@@ -1,14 +1,17 @@
 """Shared read-only handlers for preparing and revising campaign drafts."""
 from copy import deepcopy
+import re
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
 from app.campaigns.models import (
+    CAMPAIGN_TARGETING_FIELDS,
     CampaignDraftArtifact,
     CampaignDraftRevisionArtifact,
     PrepareCampaignDraftArguments,
     ReviseCampaignDraftArguments,
+    campaign_revision_changed_fields,
 )
 from app.campaigns.reference_repository import (
     CampaignReferenceRepository,
@@ -136,19 +139,96 @@ def _revision_references(
         ) from exc
 
 
+_AGE_LABELS = {
+    "under35": "Under 35",
+    "35to44": "35 to 44",
+    "45to54": "45 to 54",
+    "55to64": "55 to 64",
+    "65plus": "65 and above",
+}
+_GENDER_LABELS = {"male": "Male", "female": "Female"}
+_CASH_LABELS = {
+    "under50k": "Below SGD 50k",
+    "50kTo250k": "SGD 50k to SGD 250k",
+    "250kTo1m": "SGD 250k to SGD 1m",
+    "above1m": "Above SGD 1m",
+}
+
+
+def _targeting_text(criteria) -> tuple[str, dict[str, str]]:
+    age = ", ".join(_AGE_LABELS[value] for value in criteria.ageGroups)
+    genders = ", ".join(_GENDER_LABELS[value] for value in criteria.genders)
+    cash = ", ".join(_CASH_LABELS[value] for value in criteria.cashBands)
+    age = age or "any age"
+    genders = genders or "all genders"
+    cash = cash or "no cash threshold"
+    summary = (
+        f"Clients in the following age targeting: {age}; gender targeting: "
+        f"{genders}; cash targeting: {cash}."
+    )
+    rationale = {
+        "ageGroups": (
+            f"The adviser selected these age groups during draft review: {age}."
+            if criteria.ageGroups
+            else "No age restriction is set for this draft."
+        ),
+        "genders": (
+            f"The adviser selected this gender targeting during draft review: {genders}."
+            if criteria.genders
+            else "No gender restriction is set; the draft applies to all genders."
+        ),
+        "cashBands": (
+            f"The adviser selected these cash bands during draft review: {cash}."
+            if criteria.cashBands
+            else "No cash threshold is set for this draft."
+        ),
+    }
+    return summary, rationale
+
+
+def _targeting_normalization_warnings(request: ReviseCampaignDraftArguments) -> list[str]:
+    instruction = (request.instruction or "").casefold()
+    warnings: list[str] = []
+    if "ageGroups" in request.fields and re.search(
+        r"\b(?:above|over|older than)\s*65\b", instruction
+    ):
+        warnings.append(
+            "The requested age threshold was normalized to the supported "
+            "65-and-above age group."
+        )
+    if "cashBands" in request.fields and re.search(
+        r"\b(?:above|over|more than)\s*(?:sgd|\$)?\s*"
+        r"250(?:,?000|\s*k)\b",
+        instruction,
+    ):
+        warnings.append(
+            "The requested cash threshold was normalized to the supported "
+            "SGD 250k-to-1m and above-SGD-1m bands."
+        )
+    return warnings
+
+
 def _apply_revision_changes(request: ReviseCampaignDraftArguments):
     revised = deepcopy(request.currentDraft.model_dump())
     changes = request.proposedChanges.model_dump(exclude_unset=True)
     for field_name in request.fields:
-        if field_name in {"ageGroups", "genders", "cashBands"}:
+        if field_name in CAMPAIGN_TARGETING_FIELDS:
             revised["criteria"][field_name] = changes[field_name]
         else:
             revised[field_name] = changes[field_name]
+    selected_targeting = CAMPAIGN_TARGETING_FIELDS.intersection(request.fields)
+    if selected_targeting:
+        criteria = request.currentDraft.criteria.__class__.model_validate(
+            revised["criteria"]
+        )
+        summary, rationale = _targeting_text(criteria)
+        revised["rationale"] = rationale
+        revised["targetDemographicSummary"] = summary
     return request.currentDraft.__class__.model_validate(revised)
 
 
 def _field_value(draft, field_name: str):
-    if field_name in {"ageGroups", "genders", "cashBands"}:
+    if field_name in CAMPAIGN_TARGETING_FIELDS:
         return getattr(draft.criteria, field_name)
     return getattr(draft, field_name)
 
@@ -179,7 +259,8 @@ def execute_revise_campaign_draft(
         revised_draft = _apply_revision_changes(request)
         normalized_draft, review_warnings = add_required_review_language(revised_draft)
 
-        selected = set(request.fields)
+        changed_fields = campaign_revision_changed_fields(request.fields)
+        selected = set(changed_fields)
         for field_name in (
             "name", "description", "clientMessage", "ageGroups", "genders",
             "cashBands", "targetDemographicSummary",
@@ -199,7 +280,11 @@ def execute_revise_campaign_draft(
         )
         validation = validation.model_copy(update={
             "warnings": list(dict.fromkeys(
-                [*review_warnings, *validation.warnings]
+                [
+                    *review_warnings,
+                    *_targeting_normalization_warnings(request),
+                    *validation.warnings,
+                ]
             ))[:10]
         })
     except CatalogueConfigurationError:
@@ -217,6 +302,6 @@ def execute_revise_campaign_draft(
         draft=normalized_draft,
         previousRevision=request.revision,
         revision=request.revision + 1,
-        changedFields=request.fields,
+        changedFields=list(changed_fields),
         validation=validation,
     ).model_dump(mode="json")

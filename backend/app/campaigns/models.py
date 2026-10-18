@@ -20,6 +20,18 @@ CampaignDraftField = Literal[
     "name", "description", "clientMessage", "ageGroups", "genders",
     "cashBands", "targetDemographicSummary",
 ]
+CAMPAIGN_TARGETING_FIELDS = frozenset({"ageGroups", "genders", "cashBands"})
+
+
+def campaign_revision_changed_fields(
+    fields: list[CampaignDraftField] | tuple[CampaignDraftField, ...],
+) -> tuple[CampaignDraftField, ...]:
+    """Include review metadata that must track an explicit criteria revision."""
+    expanded = list(fields)
+    if CAMPAIGN_TARGETING_FIELDS.intersection(fields):
+        if "targetDemographicSummary" not in expanded:
+            expanded.append("targetDemographicSummary")
+    return tuple(expanded)
 CampaignDraftStatus = Literal[
     "generated", "reviewed", "confirmed", "rejected", "expired"
 ]
@@ -229,6 +241,40 @@ class CampaignDraftChanges(StrictModel):
             values = getattr(self, field_name)
             if values is not None and len(values) != len(set(values)):
                 raise ValueError(f"{field_name} must not contain duplicates")
+        return self
+
+
+class CampaignDraftUpdateRequest(StrictModel):
+    """Adviser-authored changes to one persisted review draft revision."""
+
+    fa_id: str = Field(min_length=1, max_length=64)
+    session_id: str = Field(min_length=1, max_length=64)
+    expectedRevision: int = Field(ge=1, strict=True)
+    changes: CampaignDraftChanges
+
+    @model_validator(mode="after")
+    def require_changes(self):
+        selected = self.changes.model_fields_set
+        if not selected:
+            raise ValueError("at least one campaign draft field must change")
+        if any(getattr(self.changes, field) is None for field in selected):
+            raise ValueError("campaign draft changes must not be null")
+        return self
+
+
+class CampaignDraftRegenerationRequest(StrictModel):
+    """Selected fields to regenerate from the authoritative persisted draft."""
+
+    fa_id: str = Field(min_length=1, max_length=64)
+    session_id: str = Field(min_length=1, max_length=64)
+    expectedRevision: int = Field(ge=1, strict=True)
+    fields: list[CampaignDraftField] = Field(min_length=1, max_length=7)
+    instruction: str = Field(min_length=1, max_length=2_000)
+
+    @model_validator(mode="after")
+    def reject_duplicate_fields(self):
+        if len(self.fields) != len(set(self.fields)):
+            raise ValueError("fields must not contain duplicates")
         return self
 
 

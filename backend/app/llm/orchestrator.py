@@ -16,8 +16,10 @@ from app.campaigns.clarification import (
     assess_campaign_objective,
     is_campaign_clarification_cancel,
     render_campaign_clarification,
+    resolve_campaign_revision_targeting,
 )
 from app.campaigns.models import (
+    CAMPAIGN_TARGETING_FIELDS,
     CampaignDraftArtifact,
     CampaignDraftField,
     CampaignDraftOptionProposal,
@@ -473,9 +475,15 @@ _REVISION_FIELD_PATTERNS: tuple[tuple[CampaignDraftField, re.Pattern[str]], ...]
 
 def _campaign_revision_fields(message: str) -> tuple[CampaignDraftField, ...]:
     normalized = " ".join(message.casefold().split())
+    if re.match(
+        r"^(?:what|why|how|when|where|who|which|is|are|do|does)\b",
+        normalized,
+    ):
+        return ()
     if not re.search(
         r"\b(?:regenerate|generate|revise|rewrite|change|update|edit|rename|"
-        r"make|improve|replace|adjust)\w*\b",
+        r"make|improve|replace|adjust|set|switch|use)\w*\b|"
+        r"\b(?:should|needs?|must)\s+(?:now\s+)?be\b",
         normalized,
     ):
         return ()
@@ -548,6 +556,15 @@ def is_campaign_turn_candidate(message: str) -> bool:
     )
 
 
+def is_active_campaign_turn_candidate(message: str) -> bool:
+    """Broader semantic gate used only after a scoped active draft was loaded."""
+    if _is_email_campaign_request(message) or _is_ordinary_campaign_operation(message):
+        return False
+    return is_campaign_turn_candidate(message) or bool(
+        _campaign_fields_mentioned(message)
+    )
+
+
 def _deterministic_campaign_turn(
     message: str,
     pending_options: PersistedCampaignDraftOptionSet | None,
@@ -603,6 +620,18 @@ def _deterministic_campaign_turn(
 def campaign_revision_fields(message: str) -> tuple[CampaignDraftField, ...]:
     """Return the deterministic supported-field selection for a chat request."""
     return _campaign_revision_fields(message)
+
+
+def _looks_like_prose_campaign_draft(content: str) -> bool:
+    normalized = content.casefold()
+    markers = sum(
+        marker in normalized
+        for marker in (
+            "campaign name", "client message", "target criteria",
+            "target demographic", "draft campaign", "draft proposal",
+        )
+    )
+    return markers >= 2 and "draft" in normalized
 
 
 def _campaign_revision_schema(fields: tuple[CampaignDraftField, ...]) -> dict[str, Any]:
@@ -879,6 +908,15 @@ class ChatOrchestrator:
         user_message: str,
         fields: tuple[CampaignDraftField, ...],
     ) -> OrchestratorResult:
+        authoritative_targeting = resolve_campaign_revision_targeting(
+            user_message, fields
+        )
+        effective_fields = list(fields)
+        if CAMPAIGN_TARGETING_FIELDS.intersection(fields):
+            for dependent in ("description", "clientMessage"):
+                if dependent not in effective_fields:
+                    effective_fields.append(dependent)
+        revision_fields = tuple(effective_fields)
         generation = self.client.create_structured_completion(
             [
                 {
@@ -888,8 +926,10 @@ class ChatOrchestrator:
                         "draft. Return exactly the requested fields as JSON. Preserve "
                         "the adviser's meaning, use educational non-advice language, "
                         "and do not invent returns, guarantees, rates, client data or "
-                        "regulatory approval. The server will preserve all unselected "
-                        "fields and revalidate the complete draft."
+                        "regulatory approval. Treat authoritativeTargeting as fixed "
+                        "when it is present and keep all generated copy consistent "
+                        "with it. The server derives the demographic summary, preserves "
+                        "all other unselected fields and revalidates the complete draft."
                     ),
                 },
                 {
@@ -897,7 +937,8 @@ class ChatOrchestrator:
                     "content": json.dumps(
                         {
                             "revisionInstruction": user_message,
-                            "selectedFields": list(fields),
+                            "selectedFields": list(revision_fields),
+                            "authoritativeTargeting": authoritative_targeting,
                             "objective": current_draft.objective,
                             "currentDraft": current_draft.draft.model_dump(mode="json"),
                         },
@@ -905,7 +946,7 @@ class ChatOrchestrator:
                     ),
                 },
             ],
-            _campaign_revision_schema(fields),
+            _campaign_revision_schema(revision_fields),
             schema_name="campaign_draft_revision",
         )
         if not getattr(generation, "choices", None):
@@ -919,8 +960,9 @@ class ChatOrchestrator:
             raise LLMProviderError(
                 "LLM provider returned invalid campaign revision JSON"
             ) from exc
-        if not isinstance(changes, dict) or set(changes) != set(fields):
+        if not isinstance(changes, dict) or set(changes) != set(revision_fields):
             raise LLMProviderError("LLM provider returned an invalid campaign revision")
+        changes.update(authoritative_targeting)
 
         result = registry.execute(
             "revise_campaign_draft",
@@ -932,7 +974,7 @@ class ChatOrchestrator:
                 ],
                 "currentDraft": current_draft.draft.model_dump(mode="json"),
                 "proposedChanges": changes,
-                "fields": list(fields),
+                "fields": list(revision_fields),
                 "instruction": user_message,
                 "revision": current_draft.revision,
             }),
@@ -946,7 +988,57 @@ class ChatOrchestrator:
             return _answer(
                 _render_campaign_revision(artifact),
                 artifact,
-                requested_revision_fields=fields,
+                requested_revision_fields=tuple(artifact.changedFields),
+            )
+        return _answer(_campaign_draft_failure(result))
+
+    def revise_campaign_draft(
+        self,
+        *,
+        current_draft: PersistedCampaignDraftArtifact,
+        fields: tuple[CampaignDraftField, ...],
+        instruction: str,
+        scope: RequestScope,
+        session_id: str,
+        proposed_changes: dict[str, Any] | None = None,
+    ) -> OrchestratorResult:
+        """Run the trusted Stage 6 boundary for the Stage 8 review interface."""
+        try:
+            registry = self.registry.bind_scope(
+                scope, None, session_id, instruction
+            )
+        except TypeError:
+            registry = self.registry.bind_scope(scope, None)
+
+        if proposed_changes is None:
+            return self._run_campaign_revision(
+                registry=registry,
+                current_draft=current_draft,
+                user_message=instruction,
+                fields=fields,
+            )
+
+        result = registry.execute(
+            "revise_campaign_draft",
+            json.dumps({
+                "objective": current_draft.objective,
+                "referencesUsed": [
+                    citation.model_dump(mode="json")
+                    for citation in current_draft.referencesUsed
+                ],
+                "currentDraft": current_draft.draft.model_dump(mode="json"),
+                "proposedChanges": proposed_changes,
+                "fields": list(fields),
+                "instruction": instruction,
+                "revision": current_draft.revision,
+            }),
+        )
+        artifact = _revised_campaign_draft(result)
+        if artifact is not None:
+            return _answer(
+                _render_campaign_revision(artifact),
+                artifact,
+                requested_revision_fields=tuple(artifact.changedFields),
             )
         return _answer(_campaign_draft_failure(result))
 
@@ -959,7 +1051,7 @@ class ChatOrchestrator:
         deterministic = _deterministic_campaign_turn(user_message, pending_options)
         if deterministic is not None:
             return deterministic
-        if not is_campaign_turn_candidate(user_message):
+        if not is_active_campaign_turn_candidate(user_message):
             return CampaignTurnDecision(action="ordinary_chat")
 
         response = self.client.create_structured_completion(
@@ -968,7 +1060,10 @@ class ChatOrchestrator:
                     "role": "system",
                     "content": (
                         "Classify the latest adviser message against the active review-only "
-                        "campaign draft. A request to edit named fields is revise_fields; "
+                        "campaign draft. Imperative, declarative, corrective and compact "
+                        "requests that assign new values to named draft fields are "
+                        "revise_fields, including phrases such as 'should be', 'set', "
+                        "'use', 'target' and 'actually'. "
                         "asking for alternatives is suggest_field_options; choosing a numbered "
                         "stored alternative is select_field_option; asking to see the complete "
                         "existing draft is show_current_draft. start_new_draft requires explicit "
@@ -986,6 +1081,7 @@ class ChatOrchestrator:
                             "activeDraft": {
                                 "draftId": current_draft.draftId,
                                 "revision": current_draft.revision,
+                                "currentValues": current_draft.draft.model_dump(mode="json"),
                                 "supportedFields": [
                                     "name", "description", "clientMessage", "ageGroups",
                                     "genders", "cashBands", "targetDemographicSummary",
@@ -1018,6 +1114,12 @@ class ChatOrchestrator:
             and not _is_explicit_new_campaign_request(user_message)
         ):
             return CampaignTurnDecision(action="needs_clarification")
+        if decision.action == "revise_fields":
+            mentioned = _campaign_fields_mentioned(user_message)
+            if mentioned:
+                decision = decision.model_copy(update={
+                    "fields": list(dict.fromkeys([*decision.fields, *mentioned]))
+                })
         return decision
 
     @staticmethod
@@ -1372,6 +1474,15 @@ class ChatOrchestrator:
                     "the current draft, or say explicitly that you want to start a new "
                     "campaign. No draft fields were changed."
                 )
+            if campaign_turn.action == "ordinary_chat":
+                prompt += (
+                    "\nA review-only campaign draft is active in this chat, but this turn "
+                    "was classified as an ordinary request. Do not present, rewrite or "
+                    "claim to save a campaign draft in prose. Draft changes are valid only "
+                    "through the structured revision path. Continue with the ordinary tool "
+                    "or informational request only."
+                )
+                messages[0]["content"] = prompt
 
         start_new_draft = (
             campaign_turn is not None
@@ -1435,6 +1546,18 @@ class ChatOrchestrator:
                 content = getattr(message, "content", None)
                 if not content:
                     raise LLMProviderError("LLM provider returned an empty answer")
+                if (
+                    current_draft is not None
+                    and campaign_turn is not None
+                    and campaign_turn.action == "ordinary_chat"
+                    and _looks_like_prose_campaign_draft(content)
+                ):
+                    return _answer(
+                        "## Campaign draft change was not saved\n\n"
+                        "I could not safely map that request to structured draft fields. "
+                        "Name the fields to revise, such as age groups, cash bands, "
+                        "description or client message. No draft fields were changed."
+                    )
                 return _answer(content)
 
             messages.append(

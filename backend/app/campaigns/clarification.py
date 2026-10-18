@@ -228,7 +228,18 @@ _AGE_VALUE_PATTERNS = (
     ("35to44", re.compile(r"\b35\s*(?:to|[–-])\s*44\b")),
     ("45to54", re.compile(r"\b45\s*(?:to|[–-])\s*54\b")),
     ("55to64", re.compile(r"\b55\s*(?:to|[–-])\s*64\b")),
-    ("65plus", re.compile(r"\b65\s*(?:\+|and (?:above|over|older))")),
+    (
+        "65plus",
+        re.compile(
+            r"\b65\s*(?:\+|and (?:above|over|older))|"
+            r"\b(?:above|over|older than|at least)\s*65\b"
+        ),
+    ),
+)
+_CASH_250K_PLUS_PATTERN = re.compile(
+    r"\b(?:above|over|more than|at least)\s*(?:sgd|\$)?\s*"
+    r"250(?:,?000|\s*k)\b|"
+    r"\b250(?:,?000|\s*k)\s*(?:\+|and (?:above|over|more))\b"
 )
 _CASH_VALUE_PATTERNS = (
     (
@@ -245,11 +256,55 @@ _CASH_VALUE_PATTERNS = (
             r"\b250(?:,?000|\s*k)\s*(?:to|[–-])\s*1(?:,?000,?000|\s*m)\b"
         ),
     ),
+    ("250kTo1m", _CASH_250K_PLUS_PATTERN),
+    ("above1m", _CASH_250K_PLUS_PATTERN),
     (
         "above1m",
         re.compile(r"\b(?:above|over)\s*(?:sgd|\$)?\s*1(?:,?000,?000|\s*m)\b"),
     ),
 )
+
+
+def resolve_campaign_revision_targeting(
+    message: str, fields: tuple[str, ...]
+) -> dict[str, list[str]]:
+    """Resolve explicit review targeting to server-supported enums."""
+    normalized = message.casefold()
+    selected = set(fields)
+    changes: dict[str, list[str]] = {}
+    if "ageGroups" in selected:
+        if re.search(r"\b(?:no age restriction|all ages|any age)\b", normalized):
+            changes["ageGroups"] = []
+        else:
+            values = _matched_values(normalized, _AGE_VALUE_PATTERNS)
+            if values:
+                changes["ageGroups"] = list(dict.fromkeys(values))
+    if "genders" in selected:
+        if re.search(
+            r"\b(?:no gender restriction|all genders|any gender)\b", normalized
+        ):
+            changes["genders"] = []
+        else:
+            genders = [
+                gender
+                for gender, pattern in (
+                    ("male", re.compile(r"\b(?:male|men|man)\b")),
+                    ("female", re.compile(r"\b(?:female|women|woman)\b")),
+                )
+                if pattern.search(normalized)
+            ]
+            if genders:
+                changes["genders"] = genders
+    if "cashBands" in selected:
+        if re.search(
+            r"\b(?:no cash restriction|no cash threshold|any cash)\b", normalized
+        ):
+            changes["cashBands"] = []
+        else:
+            values = _matched_values(normalized, _CASH_VALUE_PATTERNS)
+            if values:
+                changes["cashBands"] = list(dict.fromkeys(values))
+    return changes
 
 
 def _matched_values(

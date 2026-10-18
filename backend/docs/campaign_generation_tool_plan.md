@@ -62,7 +62,7 @@ User objective
     -> FastMCP validates and returns a campaign_draft artifact
     -> ChatOrchestrator retains the structured artifact
     -> FastAPI returns assistant text plus campaignDraft JSON
-    -> CampaignBuilder opens an editable review
+    -> CampaignDraftReview opens inside the existing Campaigns workspace
 ```
 
 Once a draft exists, chat uses a state-aware turn resolver before either the
@@ -83,7 +83,8 @@ discarding an existing draft.
 - Return catalogue provenance with the generated draft.
 - Validate exact age, gender and cash-band enum values.
 - Return assumptions and field-level targeting rationale.
-- Regenerate selected fields while preserving all other fields.
+- Regenerate selected fields while preserving all independent fields and
+  refreshing targeting-dependent copy and rationale when criteria change.
 - Return structured JSON to the frontend rather than requiring prose parsing.
 - Require an explicit, server-verified confirmation before creation.
 - Create approved campaigns with `draft` status.
@@ -600,11 +601,12 @@ same `(tenant_id, campaign_id)` types as `mock_campaign`.
 Store only synthetic prototype data. Apply retention rules before any production
 use. Every read and mutation must enforce both adviser and tenant ownership.
 
-Stage 7 implements the fields required for generated/reviewed cross-turn state:
+Stages 7-8 implement the fields required for generated/reviewed cross-turn state:
 scope, session, objective, references, structured draft, validation, revision,
-status, changed fields, model/prompt version placeholders and timestamps. The
-reviewed builder metadata, hashes, token expiry, idempotency and confirmed
-campaign linkage in the full target above remain Stage 8-10 additions.
+status, changed fields, model/prompt version placeholders and timestamps. Stage
+8 uses those fields for editable review without adding builder metadata. Hashes,
+token expiry, idempotency and confirmed campaign linkage in the full target
+above remain Stage 9-10 additions.
 
 ## Testing and evaluation
 
@@ -691,8 +693,8 @@ normal test suite flaky.
 
 Complete each stage and its exit criteria before beginning a dependent stage.
 
-Implementation status as of 17 October 2026: Stages 1-7 are implemented
-and covered by deterministic backend tests. They add shared contracts, a versioned
+Implementation status as of 18 October 2026: Stages 1-8 are implemented and
+covered by deterministic backend and frontend tests. They add shared contracts, a versioned
 12-entry synthetic catalogue, scoped deterministic retrieval, signed retrieval
 tokens, the read-only `find_campaign_references` MCP tool and the read-only
 `prepare_campaign_draft` validation boundary. Preparation returns an unpersisted
@@ -740,6 +742,27 @@ such as "draft the full campaign", and supports revision-bound structured
 alternatives. Narrative options are persisted in
 `campaign_generation_draft_options`, expire after 15 minutes, and are applied
 only through the existing Stage 6 validation and Stage 7 optimistic update.
+
+Stage 8 adds adviser/session-scoped REST reads and optimistic manual/regeneration
+updates in both direct and `/api` route forms. `ChatPanel` exposes a structured
+review action that opens the draft inside the existing Campaigns workspace. The
+review mode prepopulates all generated fields, shows rationale, assumptions,
+warnings and catalogue provenance, supports exact manual edits and multi-field
+regeneration, and offers a local read-only preview. It does not calculate a
+named audience, create a campaign, activate outreach or send communications.
+The Stage 8 routing hardening loads an active scoped draft for broad field/value
+instructions even when they omit `campaign` or `draft`, while explicit discovery,
+matching, performance, follow-up and email intents continue to bypass draft
+routing. Declarative and compact edits use the strict turn classifier rather
+than falling through to prose-only generation. Server normalization locks
+explicit natural-language targeting to supported bands after model output.
+Strict thresholds are represented by the closest available fixed bands and
+surface an adviser-visible approximation warning; for example, `above 65` uses
+`65plus`, and `more than 250k` uses `250kTo1m` plus `above1m`.
+Criteria changes refresh dependent summary/rationale metadata, and chat-driven
+criteria regeneration also revises description and client message against the
+resolved criteria, while the server derives the demographic summary and
+rationale. A stale review save reloads the latest revision in place.
 
 ### Stage 1 Define shared contracts and lifecycle boundaries
 
@@ -939,20 +962,31 @@ Exit criteria:
 
 ### Stage 8 Implement the frontend review and regeneration experience
 
+Status: implemented on 18 October 2026.
+
 Implementation:
 
-- Add an action in `ChatPanel` to open the draft in `CampaignBuilder`.
-- Populate editable fields from the structured artifact.
-- Display assumptions, rationale, validation warnings and catalogue provenance.
-- Save manual edits with revision checks.
-- Connect per-section regeneration to `revise_campaign_draft`.
-- Add a final preview step; do not show Confirm until the server validates the
-  latest revision.
+- `ChatPanel` exposes a Review draft action for the active structured artifact
+  and restores it from the session's active-draft pointer.
+- `CampaignDraftReview` renders inside the existing Campaigns workspace and
+  populates every editable generated field from the structured artifact.
+- The review shows assumptions, rationale, validation warnings and synthetic
+  catalogue provenance.
+- Paired `GET` and `PATCH /campaign-drafts/{draft_id}` routes load and save the
+  scoped draft with expected-revision checks. Manual changes still pass through
+  the trusted `revise_campaign_draft` validation boundary.
+- Paired `POST /campaign-drafts/{draft_id}/regenerate` routes regenerate one or
+  several explicitly selected fields. Criteria selections also refresh their
+  dependent targeting metadata and client-facing copy.
+- A local read-only preview is available only for the latest saved revision.
+  Confirm remains unavailable until Stage 9 supplies a server-issued preview.
 
 Exit criteria:
 
-- The adviser can edit or regenerate every generated field.
+- The adviser can edit or regenerate every supported editable generated field.
 - Stale responses cannot overwrite newer edits.
+- Natural declarative and compact field/value instructions cannot produce a
+  prose-only pseudo-revision, and ordinary MCP tool intents retain precedence.
 - No review action creates or activates a campaign.
 
 ### Stage 9 Implement preview and confirmation endpoints

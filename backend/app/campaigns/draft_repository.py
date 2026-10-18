@@ -357,19 +357,22 @@ def update_campaign_draft_revision(
     expected_revision: int,
     artifact: CampaignDraftRevisionArtifact,
     *,
+    status: str = "generated",
     connection=None,
 ) -> PersistedCampaignDraftArtifact:
     if artifact.previousRevision != expected_revision:
         raise CampaignDraftStaleRevision("campaign draft revision is stale")
     if artifact.revision != expected_revision + 1:
         raise CampaignDraftStaleRevision("campaign draft revision must advance once")
+    if status not in {"generated", "reviewed"}:
+        raise ValueError("campaign draft revision status is invalid")
 
     def update(active_connection):
         row = active_connection.execute(
             f"""
             UPDATE campaign_generation_drafts
             SET objective = %s, references_used = %s, draft = %s,
-                validation = %s, revision = %s, status = 'generated',
+                validation = %s, revision = %s, status = %s,
                 changed_fields = %s, updated_at = CURRENT_TIMESTAMP
             WHERE draft_id = %s AND tenant_id = %s AND fa_id = %s
               AND session_id = %s AND revision = %s
@@ -382,6 +385,7 @@ def update_campaign_draft_revision(
                 Jsonb(artifact.draft.model_dump(mode="json")),
                 Jsonb(artifact.validation.model_dump(mode="json")),
                 artifact.revision,
+                status,
                 list(artifact.changedFields),
                 draft_id,
                 scope.tenant_id,

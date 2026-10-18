@@ -137,7 +137,8 @@ the campaign workflow.
 `revise_campaign_draft` is the Stage 6 read-only selective-revision boundary.
 It accepts an authoritative validated draft, its objective and citations, an
 explicit field list, and proposed values for exactly those fields. Server code
-restores every unselected field, reruns complete schema and policy validation,
+restores every unselected independent field, refreshes derived targeting summary
+and rationale when criteria change, reruns complete schema and policy validation,
 and returns the next review-only revision with `created: false`. It never reads
 or writes campaign tables. The direct MCP boundary remains omitted from the
 generic model tool list. Instead, Stage 7 stores the validated structured draft,
@@ -157,6 +158,17 @@ option` applies only that field through `revise_campaign_draft` and the same
 optimistic update. Ordinary discovery, matching, follow-up, performance and
 email tools remain on their existing routes.
 
+Active-draft routing accepts declarative and compact field/value instructions
+that omit `campaign` or `draft`. Explicit discovery, matching, performance,
+follow-up and email intents retain precedence and bypass draft loading. For chat
+criteria revisions, server-normalized age/gender/cash values override untrusted
+model proposals and are supplied as authoritative context for dependent
+description/message regeneration. The MCP boundary derives the demographic
+summary and field-level rationale directly from the final criteria. Generated
+targeting uses fixed bands, so strict requests such as `above 65` and `more than
+250k` map to `65plus` and the two upper cash bands respectively, with a validation warning
+that tells the adviser about the approximation.
+
 Successful generation and revision responses include an optional
 `campaignDraft` object alongside the existing `ai_answer`. It contains a stable
 `draftId`, the current revision, the complete validated draft, provenance and
@@ -164,8 +176,19 @@ warnings. The draft row and the matching user/assistant exchange are committed
 in one PostgreSQL transaction. Updates use optimistic locking, so a stale
 revision cannot overwrite newer work. These writes affect only
 `campaign_generation_drafts` and chat tables; they do not create or update
-`mock_campaign`. The editable review UI, preview token and explicit campaign
-creation confirmation are later stages.
+`mock_campaign`. Stage 8 exposes adviser/session-scoped GET, PATCH and selected-
+field regeneration routes at `/campaign-drafts/{draft_id}` (and matching `/api`
+forms). Manual edits and model proposals both pass through the same selective-
+revision validation boundary and optimistic revision check.
+
+The frontend opens the artifact in a prefilled review mode inside the existing
+Campaigns workspace. It shows rationale, assumptions, warnings and synthetic
+catalogue provenance, supports editing and multi-section regeneration, and has
+a local read-only preview. It does not show a named audience or create a
+campaign. Server-issued preview tokens and explicit campaign creation
+confirmation remain later stages.
+If an optimistic save is stale, the review reloads the latest scoped revision
+in place rather than directing the adviser back through chat.
 
 Alternative-generation responses additionally use optional
 `campaignDraftOptions` structured state. The options are scoped to the tenant,
