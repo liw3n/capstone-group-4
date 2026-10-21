@@ -246,7 +246,9 @@ own the client in the synthetic data. Both performance tools filter reads by the
 request-scoped adviser's tenant and ID. This prototype history is not the
 company's `interaction` table. The read-only
 `get_campaign_contact_performance` tool reports one campaign's distinct
-contacted-client counts; `get_campaign_contact_ranking` compares all accessible
+contacted-client counts to date, this week, last week, or for a specific
+Monday–Sunday week containing a date supplied by the adviser. Weeks use
+Singapore time. `get_campaign_contact_ranking` compares all accessible
 campaigns by that same measure, including zero-contact campaigns and ties. The
 API still accepts a caller-supplied FA ID, so this local prototype does not
 provide production authentication.

@@ -341,17 +341,25 @@ def get_campaign_contact_performance(
               min_length=1, max_length=255),
     ] = None,
     period: Annotated[
-        Literal["this_week", "last_week"],
-        Field(description="Use last_week for the previous Monday through Sunday in Singapore time; defaults to this_week."),
+        Literal["this_week", "last_week", "specific_week"],
+        Field(description="Use specific_week with week_of for the Monday through Sunday containing a named date in Singapore time; defaults to this_week."),
     ] = "this_week",
+    week_of: Annotated[
+        str | None,
+        Field(description="Required for specific_week: a date within the requested week as YYYY-MM-DD. Omit otherwise.",
+              min_length=10, max_length=10, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    ] = None,
 ) -> dict:
     """Count distinct clients contacted for one accessible synthetic campaign.
 
-    Returns campaign-to-date, current-week and previous-week counts from recorded outreach events.
+    Returns campaign-to-date, current-week, previous-week, and optional named-week
+    counts from recorded outreach events. Weeks run Monday through Sunday in
+    Singapore time; week_of can be any date in the named week.
     Adviser and tenant scope come from API metadata, never model arguments.
     """
     logger.info("MCP tool called: get_campaign_contact_performance")
-    return execute_contact_performance({"campaign": campaign, "period": period},
+    return execute_contact_performance({"campaign": campaign, "period": period,
+                                        "week_of": week_of},
                                        _request_metadata(ctx))
 
 

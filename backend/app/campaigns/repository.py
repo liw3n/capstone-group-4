@@ -190,6 +190,22 @@ def count_campaign_contacts(scope: RequestScope, campaign_id: str,
             row["first_contacted_clients_last_week"])
 
 
+def count_campaign_contacts_in_period(scope: RequestScope, campaign_id: str,
+                                      period_start: datetime, period_end: datetime) -> int:
+    """Count distinct clients contacted in one bounded campaign period."""
+    with _connection() as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(DISTINCT contact_id) AS contacted_clients
+            FROM mock_campaign_contact_event
+            WHERE tenant_id = %s AND fa_id = %s AND campaign_id = %s
+              AND contacted_at >= %s AND contacted_at < %s
+            """,
+            (scope.tenant_id, scope.fa_id, campaign_id, period_start, period_end),
+        ).fetchone()
+    return row["contacted_clients"]
+
+
 def rank_campaigns_by_contacts(scope: RequestScope, period_start: datetime | None,
                                period_end: datetime) -> tuple[dict, ...]:
     """Rank accessible campaigns by distinct contacted clients, including zeroes."""

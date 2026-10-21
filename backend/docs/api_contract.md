@@ -690,7 +690,19 @@ measurement remain separate workflow work.
 
 This read-only tool reports recorded outreach for one accessible synthetic
 campaign. Model-facing arguments: optional `campaign` (exact name or ID, at most
-255 characters) and optional `period` (`this_week`, the default, or `last_week`).
+255 characters), optional `period` (`this_week`, the default, `last_week`, or
+`specific_week`), and optional `week_of` (a `YYYY-MM-DD` date, required only for
+`specific_week`). For a question about a specific week, set `period` to
+`specific_week` and `week_of` to any date within that week. The tool uses the
+Monday–Sunday week containing that date in Singapore time.
+
+Tool arguments for a specific week (`YYYY-MM-DD` stands for the adviser's
+requested date):
+
+```json
+{"campaign":"camp-1","period":"specific_week","week_of":"YYYY-MM-DD"}
+```
+
 `last_week` means the previous complete Monday–Sunday in Singapore time.
 When `/chat/query` or `/api/chat/query` includes a selected
 `campaign_id`, that server-bound selection takes precedence. Otherwise the tool
@@ -711,6 +723,14 @@ event is never counted. `contacted_clients_last_week` and
 excluding, this Monday 00:00. The campaign-period bounds still apply. No client
 details are returned.
 
+For `specific_week`, the tool counts distinct clients with an event in the
+requested Monday–Sunday window, intersected with the campaign period and capped
+at the current Singapore time. A client contacted repeatedly in that week
+counts once. A missing, malformed, or inconsistent `week_of` returns
+`invalid_arguments`. A date later in the current week is allowed; the count
+stops at the current time. Only a week that
+has not started returns `future_period`.
+
 Result keys: `data_source: synthetic`, `campaign_id`, `campaign_name`,
 `campaign_status`, `reporting_state`, `campaign_start_date`, `campaign_end_date`,
 `reporting_period_start`, `reporting_period_end`, `as_of_date`, `as_of_time`,
@@ -719,11 +739,14 @@ Result keys: `data_source: synthetic`, `campaign_id`, `campaign_name`,
 `metric_definition`. For the supplied sample data, the exact counts vary with
 the reporting date. The `summary` is generated from the counts, so the assistant
 can answer without estimating.
+For `specific_week`, the result also contains `week_of`,
+`requested_week_start_date`, `requested_week_end_date`, and
+`contacted_clients_requested_week`.
 
 Missing context or campaign and database outages return structured errors
 (`missing_context`, `missing_campaign`, `campaign_unavailable`,
-`campaign_ambiguous`, `invalid_campaign_context`, `invalid_arguments`, or
-`storage_unavailable`) without counts or raw database details. The existing
+`campaign_ambiguous`, `invalid_campaign_context`, `invalid_arguments`,
+`future_period`, or `storage_unavailable`) without counts or raw database details. The existing
 `fa_id` in the chat request is caller-supplied; this is a local prototype, not
 authenticated adviser identity. No service sales or acquisitions are counted.
 

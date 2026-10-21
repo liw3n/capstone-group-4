@@ -18,7 +18,9 @@ SINGAPORE = ZoneInfo("Asia/Singapore")
 class ContactPerformanceArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
     campaign: str | None = Field(default=None, min_length=1, max_length=255)
-    period: Literal["this_week", "last_week"] = "this_week"
+    period: Literal["this_week", "last_week", "specific_week"] = "this_week"
+    week_of: str | None = Field(default=None, min_length=10, max_length=10,
+                                pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
 class ContactRankingArguments(BaseModel):
@@ -70,6 +72,21 @@ def execute_contact_performance(arguments: dict, metadata: dict | None) -> dict:
         query = ContactPerformanceArguments.model_validate(arguments)
     except ValidationError:
         return _error("invalid_arguments", "Invalid tool arguments")
+    requested_week_date = None
+    if query.period == "specific_week":
+        if query.week_of is None:
+            return _error("invalid_arguments", "week_of is required for a specific week")
+        try:
+            requested_week_date = date.fromisoformat(query.week_of)
+        except ValueError:
+            return _error("invalid_arguments", "week_of must be a valid YYYY-MM-DD date")
+    elif query.week_of is not None:
+        return _error("invalid_arguments", "week_of is only used for a specific week")
+    requested_week_start_date = (requested_week_date -
+                                 timedelta(days=requested_week_date.weekday())
+                                 if requested_week_date is not None else None)
+    requested_week_end_date = (requested_week_start_date + timedelta(days=6)
+                               if requested_week_start_date is not None else None)
 
     selected_id = metadata.get("campaign_id")
     if selected_id is not None and (
@@ -85,6 +102,8 @@ def execute_contact_performance(arguments: dict, metadata: dict | None) -> dict:
         campaign = _resolve_campaign(campaign_query, selected_id, scope)
         now = current_time().astimezone(SINGAPORE)
         today = now.date()
+        if requested_week_start_date is not None and requested_week_start_date > today:
+            return _error("future_period", "The requested week has not started")
         period_start = datetime.combine(campaign.start_date, time.min, SINGAPORE)
         campaign_end = datetime.combine(campaign.end_date + timedelta(days=1), time.min,
                                         SINGAPORE)
@@ -98,6 +117,22 @@ def execute_contact_performance(arguments: dict, metadata: dict | None) -> dict:
                   repository.count_campaign_contacts(scope, campaign.campaign_id,
                                                      period_start, period_end, week_start,
                                                      last_week_start))
+        requested_week_count = None
+        if requested_week_start_date is not None:
+            requested_start = max(
+                period_start, datetime.combine(requested_week_start_date, time.min, SINGAPORE)
+            )
+            requested_end = min(
+                period_end,
+                datetime.combine(requested_week_end_date + timedelta(days=1),
+                                 time.min, SINGAPORE),
+            )
+            requested_week_count = (
+                0 if requested_end <= requested_start else
+                repository.count_campaign_contacts_in_period(
+                    scope, campaign.campaign_id, requested_start, requested_end
+                )
+            )
     except CampaignUnavailable as exc:
         return _error("campaign_unavailable", str(exc))
     except CampaignAmbiguous as exc:
@@ -108,7 +143,15 @@ def execute_contact_performance(arguments: dict, metadata: dict | None) -> dict:
     total, this_week, first_this_week, last_week, first_last_week = counts
     state, state_words = _state(campaign, today)
     date_words = f"{today.day} {today:%B %Y}"
-    if query.period == "last_week":
+    if query.period == "specific_week":
+        start_words = (f"{requested_week_start_date.day} "
+                       f"{requested_week_start_date:%B %Y}")
+        end_words = (f"{requested_week_end_date.day} "
+                     f"{requested_week_end_date:%B %Y}")
+        summary = (f"{campaign.name} {state_words}. {requested_week_count} "
+                   f"{'client was' if requested_week_count == 1 else 'clients were'} "
+                   f"contacted during the week of {start_words} to {end_words}.")
+    elif query.period == "last_week":
         start_words = f"{last_week_start_date.day} {last_week_start_date:%B %Y}"
         end_words = f"{last_week_end_date.day} {last_week_end_date:%B %Y}"
         summary = (f"{campaign.name} {state_words}. {last_week} "
@@ -118,7 +161,7 @@ def execute_contact_performance(arguments: dict, metadata: dict | None) -> dict:
         summary = (f"{campaign.name} {state_words}. As of {date_words}, "
                    f"{total} {'client has' if total == 1 else 'clients have'} been contacted. "
                    f"{this_week} {'was' if this_week == 1 else 'were'} contacted this week.")
-    return {
+    result = {
         "data_source": "synthetic",
         "campaign_id": campaign.campaign_id,
         "campaign_name": campaign.name,
@@ -146,9 +189,18 @@ def execute_contact_performance(arguments: dict, metadata: dict | None) -> dict:
             "Weekly contacts include repeat contacts within that week; first-contacted "
             "counts clients whose earliest campaign contact is in that week. "
             "Last week is the previous Monday through Sunday in Singapore time. "
+            "A specific week is the Monday through Sunday containing week_of. "
             "Only recorded synthetic contact events are included."
         ),
     }
+    if requested_week_date is not None:
+        result.update({
+            "week_of": requested_week_date.isoformat(),
+            "requested_week_start_date": requested_week_start_date.isoformat(),
+            "requested_week_end_date": requested_week_end_date.isoformat(),
+            "contacted_clients_requested_week": requested_week_count,
+        })
+    return result
 
 
 def execute_contact_ranking(arguments: dict, metadata: dict | None) -> dict:

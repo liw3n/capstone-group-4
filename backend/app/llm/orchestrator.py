@@ -145,6 +145,12 @@ For campaign contact performance questions, call get_campaign_contact_performanc
 When the latest question says "last week", set period to "last_week"; this means
 the previous Monday through Sunday in Singapore time. Use the tool's last-week
 count and dates in the answer. For "this week", use period "this_week".
+For a specific calendar week, set period to "specific_week" and week_of to
+the date named by the user, converted to YYYY-MM-DD. This means the Monday
+through Sunday containing that date in Singapore time. Use the returned
+requested-week count and exact start/end dates; never substitute this week or
+last week.
+If the year is missing or the date is ambiguous, ask for clarification.
 Use its exact counts, reporting date and campaign state; do not estimate from
 recommendations or follow-up lists. The currently selected campaign takes
 precedence; otherwise use only the campaign named in the latest user message.

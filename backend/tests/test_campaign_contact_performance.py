@@ -26,11 +26,11 @@ def call(args=None, scope=None, selected_id=None):
     return json.loads(registry.execute("get_campaign_contact_performance", json.dumps(args or {})))
 
 
-def test_model_schema_exposes_campaign_and_period_but_no_adviser_identity():
+def test_model_schema_exposes_campaign_period_and_week_but_no_adviser_identity():
     schemas = MCPToolRegistry(server).schemas()
     schema = next(item["function"]["parameters"] for item in schemas
                   if item["function"]["name"] == "get_campaign_contact_performance")
-    assert set(schema["properties"]) == {"campaign", "period"}
+    assert set(schema["properties"]) == {"campaign", "period", "week_of"}
 
 
 def test_selected_campaign_returns_grounded_distinct_counts(monkeypatch):
@@ -67,6 +67,58 @@ def test_last_week_answer_uses_previous_complete_week(monkeypatch):
     assert result["summary"] == ("Legacy Protection Refresh is ongoing. "
                                  "4 clients were contacted last week "
                                  "(5 October 2026 to 11 October 2026).")
+
+
+def test_specific_week_uses_monday_to_sunday_containing_named_date(monkeypatch):
+    monkeypatch.setattr(repository, "count_campaign_contacts",
+                        lambda *_: (12, 5, 3, 4, 2))
+
+    def named_week_count(scope, campaign_id, start, end):
+        assert scope.fa_id == DEMO_FA and scope.tenant_id == "pulse-demo"
+        assert campaign_id == "camp-1"
+        assert start.isoformat() == "2026-09-28T00:00:00+08:00"
+        assert end.isoformat() == "2026-10-05T00:00:00+08:00"
+        return 3
+
+    monkeypatch.setattr(repository, "count_campaign_contacts_in_period", named_week_count)
+    result = call({"period": "specific_week", "week_of": "2026-10-04"},
+                  selected_id="camp-1")
+    assert result["requested_period"] == "specific_week"
+    assert result["requested_week_start_date"] == "2026-09-28"
+    assert result["requested_week_end_date"] == "2026-10-04"
+    assert result["contacted_clients_requested_week"] == 3
+    assert result["summary"] == ("Legacy Protection Refresh is ongoing. "
+                                 "3 clients were contacted during the week of "
+                                 "28 September 2026 to 4 October 2026.")
+
+
+def test_specific_week_requires_valid_nonfuture_date(monkeypatch):
+    monkeypatch.setattr(repository, "count_campaign_contacts",
+                        lambda *_: (_ for _ in ()).throw(AssertionError("count must not run")))
+    assert call({"period": "specific_week"}, selected_id="camp-1")["error_code"] == "invalid_arguments"
+    assert call({"period": "specific_week", "week_of": "2026-02-30"},
+                selected_id="camp-1")["error_code"] == "invalid_arguments"
+    assert call({"period": "this_week", "week_of": "2026-10-04"},
+                selected_id="camp-1")["error_code"] == "invalid_arguments"
+    assert call({"period": "specific_week", "week_of": "2026-10-20"},
+                selected_id="camp-1")["error_code"] == "future_period"
+
+
+def test_specific_week_date_later_in_current_week_counts_only_to_now(monkeypatch):
+    monkeypatch.setattr(repository, "count_campaign_contacts",
+                        lambda *_: (12, 5, 3, 4, 2))
+
+    def current_week_count(scope, campaign_id, start, end):
+        assert start.isoformat() == "2026-10-12T00:00:00+08:00"
+        assert end == NOW
+        return 5
+
+    monkeypatch.setattr(repository, "count_campaign_contacts_in_period", current_week_count)
+    result = call({"period": "specific_week", "week_of": "2026-10-18"},
+                  selected_id="camp-1")
+    assert result["requested_week_start_date"] == "2026-10-12"
+    assert result["requested_week_end_date"] == "2026-10-18"
+    assert result["contacted_clients_requested_week"] == 5
 
 
 def test_exact_name_resolution_and_missing_campaign(monkeypatch):

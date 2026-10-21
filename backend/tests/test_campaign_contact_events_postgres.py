@@ -228,6 +228,49 @@ def test_real_mcp_counts_contacts_within_period_and_adviser_scope(database, monk
     assert "contacted_clients_total" not in denied
 
 
+def test_specific_week_counts_distinct_clients_at_week_boundaries(database, monkeypatch):
+    import json
+    from zoneinfo import ZoneInfo
+
+    from app.tools import performance
+    from app.tools.mcp_registry import MCPToolRegistry
+    from app.campaigns.repository import RequestScope
+    from test_campaign_mcp import server
+
+    database.execute(CONTACT_EVENT_TABLE_SQL.read_text())
+    database.execute(CONTACT_EVENT_SEED_SQL.read_text())
+    monkeypatch.setattr(performance, "current_time",
+                        lambda: datetime(2026, 10, 12, 18, 0,
+                                         tzinfo=ZoneInfo("Asia/Singapore")))
+    database.execute("""
+        INSERT INTO mock_campaign_contact_event
+            (tenant_id, contact_event_id, campaign_id, fa_id, contact_id, contacted_at)
+        VALUES
+            ('pulse-demo', 'before-named-week', 'camp-1', 'adv-steven-raynaldi',
+             'client-004', '2026-09-27 23:59:00+08'),
+            ('pulse-demo', 'named-week-monday', 'camp-1', 'adv-steven-raynaldi',
+             'client-003', '2026-09-28 00:00:00+08'),
+            ('pulse-demo', 'named-week-sunday', 'camp-1', 'adv-steven-raynaldi',
+             'client-005', '2026-10-04 23:59:00+08'),
+            ('pulse-demo', 'named-week-repeat', 'camp-1', 'adv-steven-raynaldi',
+             'client-005', '2026-10-04 23:59:30+08')
+    """)
+    registry = MCPToolRegistry(server).bind_scope(RequestScope("adv-steven-raynaldi"))
+    named = json.loads(registry.execute("get_campaign_contact_performance",
+        '{"campaign":"camp-1","period":"specific_week","week_of":"2026-10-04"}'))
+    assert named["requested_week_start_date"] == "2026-09-28"
+    assert named["requested_week_end_date"] == "2026-10-04"
+    assert named["contacted_clients_requested_week"] == 2
+    next_week = json.loads(registry.execute("get_campaign_contact_performance",
+        '{"campaign":"camp-1","period":"specific_week","week_of":"2026-10-05"}'))
+    assert next_week["requested_week_start_date"] == "2026-10-05"
+    assert next_week["contacted_clients_requested_week"] == 2
+    other = MCPToolRegistry(server).bind_scope(RequestScope("adv-other-demo"))
+    denied = json.loads(other.execute("get_campaign_contact_performance",
+        '{"campaign":"camp-1","period":"specific_week","week_of":"2026-10-04"}'))
+    assert denied["error_code"] == "campaign_unavailable"
+
+
 def test_chat_routes_pass_contact_performance_tool_result(database, monkeypatch):
     import json
     from datetime import datetime
@@ -315,6 +358,50 @@ def test_chat_route_passes_last_week_selection_to_tool(database, monkeypatch):
     tool_result = json.loads(provider.calls[1]["messages"][-1]["content"])
     assert tool_result["requested_period"] == "last_week"
     assert tool_result["contacted_clients_last_week"] == 3
+
+
+def test_chat_route_passes_named_week_to_tool(database, monkeypatch):
+    import json
+    from zoneinfo import ZoneInfo
+
+    from fastapi.testclient import TestClient
+
+    from app import main, store
+    from app.llm.orchestrator import ChatOrchestrator
+    from app.tools import performance
+    from app.tools.mcp_registry import MCPToolRegistry
+    from test_campaign_mcp import server
+    from test_orchestrator import FakeClient, completion, message, settings, tool_call
+
+    database.execute(CONTACT_EVENT_TABLE_SQL.read_text())
+    database.execute(CONTACT_EVENT_SEED_SQL.read_text())
+    database.execute((CREATE_TABLES / "create_campaign_chat_sessions.sql").read_text())
+    database.execute((CREATE_TABLES / "create_campaign_chat_messages.sql").read_text())
+    monkeypatch.setattr(store, "get_settings", config.get_settings)
+    monkeypatch.setattr(performance, "current_time",
+                        lambda: datetime(2026, 10, 12, 18, 0,
+                                         tzinfo=ZoneInfo("Asia/Singapore")))
+
+    provider = FakeClient([
+        completion(message(tool_calls=[tool_call(
+            "performance-named-week", "get_campaign_contact_performance",
+            '{"period":"specific_week","week_of":"2026-10-08"}'
+        )])),
+        completion(message(content="3 clients were contacted in that week (synthetic data).")),
+    ])
+    orchestrator = ChatOrchestrator(provider, settings(), MCPToolRegistry(server))
+    monkeypatch.setattr(main, "get_orchestrator", lambda: orchestrator)
+    response = TestClient(main.app).post("/chat/query", json={
+        "fa_id": "adv-steven-raynaldi", "campaign_id": "camp-2",
+        "message_content": "How many clients did I contact in the week of 8 October 2026?",
+    })
+    assert response.status_code == 200
+    assert "3 clients" in response.json()["ai_answer"]
+    tool_result = json.loads(provider.calls[1]["messages"][-1]["content"])
+    assert tool_result["requested_period"] == "specific_week"
+    assert tool_result["requested_week_start_date"] == "2026-10-05"
+    assert tool_result["requested_week_end_date"] == "2026-10-11"
+    assert tool_result["contacted_clients_requested_week"] == 3
 
 
 def test_contact_ranking_uses_recorded_counts_and_adviser_scope(database, monkeypatch):
