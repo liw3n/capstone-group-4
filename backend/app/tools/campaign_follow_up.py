@@ -15,7 +15,7 @@ def get_campaign_id(campaign: str) -> str:
             """
             SELECT campaign_id
             FROM mock_campaign
-            WHERE name LIKE %s
+            WHERE LOWER(name) LIKE LOWER(%s)
             """,
             (f"%{campaign}%",),
         ).fetchall()

@@ -74,7 +74,13 @@ def campaign_follow_up(
     ctx: Context,
     campaign: Annotated[
         str | None,
-        Field(description="Campaign name or ID from the current user message. Used only when no campaign is selected."),
+        Field(
+            description=(
+                "The campaign name or ID explicitly mentioned by the user in the conversation "
+                "(e.g., 'Q3 Wealth Campaign', 'Retirement Boost'). Always extract this from the "
+                "user's query when a session campaign ID is not already active in metadata."
+            )
+        ),
     ] = None,
     limit: Annotated[int, Field(ge=1, le=100, strict=True)] = 5,
 ) -> dict:
@@ -92,6 +98,7 @@ def campaign_follow_up(
     metadata = request.meta if request is not None else None
     if metadata is not None and not isinstance(metadata, dict):
         metadata = metadata.model_dump()
+    
     pulse_scope = metadata.get("pulse_scope") if isinstance(metadata, dict) else None
     fa_id = pulse_scope.get("fa_id") if isinstance(pulse_scope, dict) else None
     if not isinstance(fa_id, str) or not fa_id.strip():
@@ -100,8 +107,10 @@ def campaign_follow_up(
             "error_code": "missing_context",
         }
 
-    # 1. Get campaign and unreplied client IDs
+    # 1. Resolve campaign source: prioritize metadata if present, otherwise use the parsed tool argument
     selected_campaign_id = metadata.get("campaign_id") if isinstance(metadata, dict) else None
+    
+    campaign_query = None
     if selected_campaign_id is not None:
         if (not isinstance(selected_campaign_id, str)
                 or re.fullmatch(CAMPAIGN_ID_PATTERN, selected_campaign_id) is None):
@@ -112,9 +121,11 @@ def campaign_follow_up(
         campaign_query = selected_campaign_id
     else:
         campaign_query = campaign
+
+    # If both are missing, return a descriptive error that prompts the model to extract it from user text
     if not isinstance(campaign_query, str) or not campaign_query.strip():
         return {
-            "error": "A selected campaign or campaign name from the current message is required",
+            "error": "Campaign name or ID is missing. Please extract the campaign name directly from the user's message and pass it into the 'campaign' parameter.",
             "error_code": "missing_campaign",
         }
 
@@ -127,30 +138,23 @@ def campaign_follow_up(
     for client_id, last_engagement_date in client_info:
         portfolio = fetch_client_portfolio(client_id)
         profile = fetch_client_profile(client_id)
-        follow_up_reason = (
-            "No response is recorded after contact on "
-            f"{last_engagement_date.isoformat()}."
-            if last_engagement_date
-            else "No response is recorded after contact; the last contact date is unavailable."
-        )
         client_profiles.append({
             "client_id": client_id,
             "portfolio_data": portfolio,
             "profile_data": profile,
             "last_engagement_date": last_engagement_date.isoformat() if last_engagement_date else None,
-            "follow_up_reason": follow_up_reason,
         })
 
     additional_instructions = (
         "These candidates have already been contacted and have no recorded reply; "
         "they are not a pre-contact eligible audience. Do not add other clients or "
-        "claim a reply status not present in the results. Give each candidate's follow_up_reason. "
-        "You should infer suitability and priority only from the campaign's eligibility criteria, "
-        "the client's portfolio and profile, and the last engagement date. "
+        "claim a reply status not present in the results. "
+        "Dynamically formulate and explain a tailored follow-up justification for each candidate "
+        "by evaluating their specific portfolio data, profile attributes, and the elapsed time since "
+        "their last engagement date against the campaign's eligibility criteria. "
         "Do not infer suitability or priority from any other context. "
-        "priority, or a campaign-specific need from them. This tool does not check "
-        "outreach consent or authorise another communication; adviser confirmation "
-        "and separate channel consent checks are required before outreach."
+        "This tool does not check outreach consent or authorise another communication; "
+        "adviser confirmation and separate channel consent checks are required before outreach."
     )
 
     # 3. Return the rich data back to the LLM
