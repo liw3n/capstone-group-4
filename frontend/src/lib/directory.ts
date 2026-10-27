@@ -119,7 +119,7 @@ export const TEAMS: AdvisorTeam[] = built.teams;
  * silently hides the demo data would read as a bug.
  */
 export const DEMO_ADVISOR: Advisor = {
-  id: 'adv-steven-raynaldi',
+  id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
   name: 'Steven Raynaldi',
   email: 'steven.raynaldi@mywealth.com.sg',
   teamId: 'marina-bay-branch',

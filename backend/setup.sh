@@ -159,38 +159,40 @@ run_sql_file() {
 
 ##### Create tables before dependent tables #####
 create_dir="$BACKEND_DIR/tables/create"
-for table_script in create_campaign_chat_sessions.sql create_mock_campaign.sql create_mock_client.sql create_mock_campaign_advisor.sql create_campaign_email_send.sql create_mock_campaign_contact_event.sql; do
-    if [[ -f "$create_dir/$table_script" ]]; then
-        run_sql_file "$create_dir/$table_script"
+create_scripts=(
+    create_campaign_chat_sessions.sql
+    create_campaign_generation_clarifications.sql
+    create_campaign_generation_drafts.sql
+    create_campaign_chat_messages.sql
+    create_mock_user_account.sql
+    create_campaign.sql
+    create_contact.sql
+    create_campaign_member.sql
+)
+for table_script in "${create_scripts[@]}"; do
+    if [[ ! -f "$create_dir/$table_script" ]]; then
+        printf 'Required table script not found: %s\n' "$create_dir/$table_script" >&2
+        exit 1
     fi
+    run_sql_file "$create_dir/$table_script"
 done
 
-for table_script in "$create_dir"/*.sql; do
-    [[ -f "$table_script" ]] || continue
-    case "${table_script##*/}" in
-        create_campaign_chat_sessions.sql|create_mock_campaign.sql|create_mock_client.sql|create_mock_campaign_advisor.sql|create_campaign_email_send.sql|create_mock_campaign_contact_event.sql)
-            continue
-            ;;
-    esac
-    run_sql_file "$table_script"
-done
+printf 'Skipping legacy mock_campaign_advisor and campaign_email_send tables; they depend on the removed mock_campaign schema.\n'
 
 ##### Load mock data in foreign-key dependency order #####
 mock_data_dir="$BACKEND_DIR/tables/mock_data"
-for table_script in mock_campaign.sql mock_client.sql mock_campaign_advisor.sql mock_campaign_contact_events.sql; do
-    if [[ -f "$mock_data_dir/$table_script" ]]; then
-        run_sql_file "$mock_data_dir/$table_script"
+mock_data_scripts=(
+    mock_user_account.sql
+    mock_contact.sql
+    mock_campaign.sql
+    mock_campaign_member.sql
+)
+for table_script in "${mock_data_scripts[@]}"; do
+    if [[ ! -f "$mock_data_dir/$table_script" ]]; then
+        printf 'Required mock-data script not found: %s\n' "$mock_data_dir/$table_script" >&2
+        exit 1
     fi
-done
-
-for table_script in "$mock_data_dir"/*.sql; do
-    [[ -f "$table_script" ]] || continue
-    case "${table_script##*/}" in
-        mock_campaign.sql|mock_client.sql|mock_campaign_advisor.sql|mock_campaign_contact_events.sql)
-            continue
-            ;;
-    esac
-    run_sql_file "$table_script"
+    run_sql_file "$mock_data_dir/$table_script"
 done
 
 if [[ "${DEPLOY_FAKECLOUD_ECS:-0}" != "1" ]]; then
