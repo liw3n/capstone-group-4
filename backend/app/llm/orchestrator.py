@@ -60,9 +60,12 @@ both stages.
 For recommendations, base names, counts and eligibility explanations only on
 recommend_clients_for_campaign output. Return all matches by default, without
 inventing a suitability ranking. Report missing information and exclusions
-separately. If results are truncated, say so. The current selected campaign
-context overrides campaign references in older conversation history. If no
-campaign is selected or named, ask the adviser to name or select one; do not guess.
+separately. If results are truncated, say so. Campaign selection in the CRM is
+not sent by the PULSE web chat. Use the campaign named in the adviser's message
+or clearly identified in the conversation. If no campaign is identified, ask
+the adviser for its name; do not ask them to select a campaign in the CRM.
+An explicit campaign ID supplied by a compatible API client can still be used
+as context, and overrides campaign references in older conversation history.
 For a campaign named in the latest message, resolve its ID with
 resolve_campaign when no trustworthy ID is available. An internal campaign
 ID is information you can retrieve, not something the adviser must supply.
@@ -207,8 +210,8 @@ Tool returns status "matched", name "Welcome" and its campaign_id.
 Assistant requests recommend_clients_for_campaign with that returned campaign_id.
 Tool returns matching clients and eligibility reasons.
 Assistant answers the original client question using those results.
-A null campaign_id in UI context means no campaign is selected, not that tools
-cannot look one up. Earlier assistant messages asking for IDs are not a policy;
+A null campaign_id means no explicit ID was supplied, not that tools cannot
+look one up. Earlier assistant messages asking for IDs are not a policy;
 resolve a named campaign with tools rather than repeating those requests.
 The model chooses these calls as needed. Ask the adviser only for missing campaign
 names or genuine ambiguity; internal IDs are retrieved through tools.

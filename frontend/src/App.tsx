@@ -768,10 +768,8 @@ export default function App() {
 
       {activeTab === 'campaigns' && !isMarketing && session.advisorId && (
         <ChatPanel
-          key={session.advisorId + ':' + (selectedCampaign?.id ?? 'none')}
+          key={session.advisorId}
           advisorId={session.advisorId}
-          campaignId={selectedCampaign?.id}
-          campaignName={selectedCampaign?.name}
           onReviewCampaignDraft={(draft, sessionId) => {
             setActiveTab('campaigns');
             setSelectedCampaignId(null);

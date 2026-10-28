@@ -15,8 +15,6 @@ import { getCampaignDraft } from '../services/campaignDraftApi';
 
 interface ChatPanelProps {
   advisorId: string;
-  campaignId?: string;
-  campaignName?: string;
   onReviewCampaignDraft?: (draft: CampaignDraftArtifact, sessionId: string) => void;
 }
 
@@ -52,8 +50,6 @@ function titleFromMessage(message: string): string {
 
 export default function ChatPanel({
   advisorId,
-  campaignId,
-  campaignName,
   onReviewCampaignDraft,
 }: ChatPanelProps) {
   const [open, setOpen] = useState(false);
@@ -254,7 +250,6 @@ export default function ChatPanel({
         sessionId,
         content,
         controller.signal,
-        campaignId,
       );
       if (controller.signal.aborted) return;
       setSessions((current) =>
@@ -350,23 +345,8 @@ export default function ChatPanel({
 
             <div className="border-b border-line-soft bg-link-soft px-3 py-2 text-[12px] text-body">
               <p className="font-medium">
-                {campaignName ? 'Selected campaign: ' + campaignName : 'Select a campaign to request client recommendations.'}
+                Name a campaign in chat to request client recommendations.
               </p>
-              {campaignId && (
-                <>
-                  <p className="mt-1 text-[11px] text-muted">
-                    Demo recommendations use a separate synthetic client list.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setDraft('Which clients are recommended for this campaign? Explain why each matches.')}
-                    disabled={sending || creatingSession}
-                    className="mt-1 text-link hover:underline disabled:opacity-50"
-                  >
-                    Ask for recommended clients
-                  </button>
-                </>
-              )}
             </div>
 
             <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2">

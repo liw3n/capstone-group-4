@@ -618,10 +618,13 @@ are shared with MCP, but raw records are not placed into model context by defaul
 
 ## PULSE campaign recommendations
 
-On an adviser campaign detail screen, open PULSE and use **Ask for recommended
-clients**. The selected campaign ID is included in chat requests; the backend
-retrieves the criteria and the MCP tool returns explained synthetic matches.
-Switching campaign remounts the panel and aborts pending requests.
+Open PULSE from the adviser Campaigns workspace and name the campaign in chat,
+for example, "Which clients match First Home Starter Bundle?" The model can
+request `resolve_campaign`, then `recommend_clients_for_campaign`, returning
+explained synthetic matches. Opening a campaign detail screen does not choose
+the campaign for PULSE: chat requests contain no page-selected campaign ID.
+Navigating between campaign details and the list keeps the same chat panel and
+conversation. Adviser changes/unmounts still reset or cancel requests.
 
 Campaign definitions and contacts come from the same scoped PostgreSQL rows used
 by the MCP tools. Newly created active campaigns are available to PULSE, and

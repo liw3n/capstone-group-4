@@ -35,7 +35,7 @@
   <text x="88" y="448" class="small">Modal send: simulation | PULSE send: backend confirmation</text>
   <rect x="84" y="474" width="302" height="54" rx="8" fill="#fff" stroke="#bfdbfe" stroke-width="1.5"/>
   <text x="100" y="497" class="label">PULSE chat connects to the backend</text>
-  <text x="100" y="517" class="small">Messages + structured draft review action</text>
+  <text x="100" y="517" class="small">Named-campaign chat + draft review action</text>
   <path d="M235 547 L235 583" class="arrow"/>
   <text x="248" y="570" class="small">HTTP /api: chat + CRM + draft review</text>
   <rect x="68" y="583" width="335" height="109" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>

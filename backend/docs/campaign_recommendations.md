@@ -2,6 +2,14 @@
 
 ## Current name-based workflow (28 October 2026)
 
+The web chat is independent of the campaign currently open in the CRM. Advisers
+name a campaign in their message; the selected-campaign banner and recommendation
+shortcut have been removed. Chat requests no longer include a page-selected ID,
+and navigating between campaign screens does not remount/reset the panel.
+If no campaign can be identified from the conversation, PULSE asks for its name.
+Existing backend clients may still supply an explicit campaign ID for compatibility;
+the web frontend does not use that path. Adviser changes still isolate chat state.
+
 The model receives the adviser message, history and MCP tool schemas with
 `tool_choice="auto"`. Guidance explains that `resolve_campaign` resolves
 a name to an internal ID, and that lookup is an intermediate step when the

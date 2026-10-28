@@ -317,8 +317,16 @@ curl -X POST http://localhost:4000/chat/query \
 
 ## Campaign context and synthetic recommendation tool
 
+The PULSE web frontend identifies campaigns through the adviser's chat message.
+It sends adviser/session/message fields only; opening a campaign in the CRM
+does not supply campaign context or reset the conversation. The LLM can request
+`resolve_campaign` and then recommendations, or ask for a campaign name when
+none is identified. The previous selected-campaign banner/shortcut is removed.
+
 `POST /chat/query` and `POST /api/chat/query` additionally accept an optional
-`campaign_id` (1-69 letters, digits, hyphens or underscores; starts with a letter or digit). Example:
+`campaign_id` for backwards-compatible API clients (1-69 letters, digits, hyphens
+or underscores; starts with a letter or digit). The web chat does not send this
+field. Explicit API-client example:
 
 ```json
 {
