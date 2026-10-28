@@ -117,8 +117,7 @@ def campaign_follow_up(
     
     campaign_query = None
     if selected_campaign_id is not None:
-        if (not isinstance(selected_campaign_id, str)
-                or re.fullmatch(CAMPAIGN_ID_PATTERN, selected_campaign_id) is None):
+        if not isinstance(selected_campaign_id, str):
             return {
                 "error": "Selected campaign context is invalid",
                 "error_code": "invalid_campaign_context",
@@ -134,15 +133,15 @@ def campaign_follow_up(
             "error_code": "missing_campaign",
         }
 
-    campaign_id = get_campaign_id(campaign_query)
-    campaign_info = get_campaign_info(campaign_id)
+    campaign_id = get_campaign_id(campaign_query, fa_id)
+    campaign_info = get_campaign_info(campaign_id, fa_id)
     client_info = get_client_follow_up_list(campaign_id, fa_id)
 
     # 2. Fetch profile and portfolio context for these clients
     client_profiles = []
     for client_id, last_engagement_date in client_info:
         portfolio = fetch_client_portfolio(client_id)
-        profile = fetch_client_profile(client_id)
+        profile = fetch_client_profile(client_id, fa_id)
         client_profiles.append({
             "client_id": client_id,
             "portfolio_data": portfolio,
