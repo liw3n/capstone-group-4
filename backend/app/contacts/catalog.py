@@ -38,13 +38,17 @@ def _number(value: Any) -> float | int | None:
     return int(number) if number.is_integer() else number
 
 
-def _record(row: dict[str, Any], gender: dict[str, str], cash: dict[str, float]) -> dict[str, Any]:
+def _record(
+    row: dict[str, Any],
+    gender: dict[str, str | None],
+    cash: dict[str, float | None],
+) -> dict[str, Any]:
     extra = dict()
     extra.update({
         "id": row["contact_id"],
         "name": row["full_name"],
-        "email": row["email"],
-        "phone": row["mobile"],
+        "email": row.get("email"),
+        "phone": f"{row.get("mobile_country_code", "+65")} {row["mobile"]}",
         "dob": row["date_of_birth"].isoformat() if row["date_of_birth"] else None,
         "gender": gender.get(row["contact_id"]),
         "cashAmount": _number(cash.get(row["contact_id"])),
@@ -55,7 +59,7 @@ def _record(row: dict[str, Any], gender: dict[str, str], cash: dict[str, float])
 
 
 SELECT_COLUMNS = """
-    contact_id, full_name, email, mobile, date_of_birth, contact_type, opt_in_email
+    contact_id, full_name, email, mobile, mobile_country_code, date_of_birth, contact_type, opt_in_email
 """
 
 
@@ -97,38 +101,33 @@ def _crm_data(payload: dict[str, Any]) -> dict[str, Any]:
 def create_contact(scope: RequestScope, payload: dict[str, Any]) -> dict[str, Any]:
     with _connection() as connection:
         if connection.execute(
-            "SELECT 1 FROM mock_client WHERE tenant_id = %s AND contact_id = %s",
-            (scope.tenant_id, payload["id"]),
+            "SELECT 1 FROM contact WHERE tenant_id = %s AND contact_id = %s",
+            (scope.fa_id, payload["id"]),
         ).fetchone():
             raise ValueError("Contact ID already exists")
-        connection.execute(
-            """
-            INSERT INTO mock_client (
-                tenant_id, contact_id, fa_id, name, email, country_code, phone,
-                date_of_birth, gender, available_cash, label, status,
-                bookmarked, needs_attention, opt_in_email, opt_in_sms, crm_data
+        row = connection.execute(
+            f"""
+            INSERT INTO contact (
+                tenant_id, contact_id, contact_type, full_name, email, mobile,
+                mobile_country_code, date_of_birth, nric_passport_no, created_by_user_id
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s
             )
+            RETURNING {SELECT_COLUMNS}
             """,
             (
-                scope.tenant_id, payload["id"], scope.fa_id, payload["name"],
-                payload["email"], payload["countryCode"], payload["phone"],
-                payload.get("dob"), payload.get("gender"), payload.get("cashAmount"),
-                payload.get("label"), payload.get("status", "contact"),
-                payload.get("bookmarked", False), payload.get("needsAttention", False),
-                payload.get("optInEmail", False), payload.get("optInSms", False),
-                Jsonb(_crm_data(payload)),
+                scope.fa_id, payload["id"], payload.get("label", "Prospect"),
+                payload["name"], payload["email"], payload["phone"], payload["countryCode"],
+                payload.get("dob"), payload.get("nric"), scope.fa_id,
             ),
-        )
-        row = connection.execute(
-            f"""SELECT {SELECT_COLUMNS} FROM mock_client
-                WHERE tenant_id = %s AND fa_id = %s AND contact_id = %s""",
-            (scope.tenant_id, scope.fa_id, payload["id"]),
         ).fetchone()
-    return _record(row)
+    if row is None:
+        raise ContactStorageUnavailable("Created contact could not be retrieved")
+    contact_id = str(row["contact_id"])
+    gender = {contact_id: payload.get("gender")}
+    cash = {contact_id: payload.get("cashAmount")}
+    return {**_record(row, gender, cash), **payload}
 
 
 def replace_contact(scope: RequestScope, contact_id: str,

@@ -4,7 +4,7 @@ import { Contact, ContactLabel, PipelineItem } from '../types';
 import { LabelChip, SourceChip, stageLabel } from '../ui/Chip';
 import Button from '../ui/Button';
 import SummaryCard from './SummaryCard';
-import { display, formatPhone } from '../lib/format';
+import { display } from '../lib/format';
 
 interface ContactsViewProps {
   contacts: Contact[];
@@ -220,7 +220,7 @@ export default function ContactsView({
                       </button>
                     </td>
                     <td className="cell text-body">{display(contact.email)}</td>
-                    <td className="cell text-body">{formatPhone(contact)}</td>
+                    <td className="cell text-body">{display(contact.phone)}</td>
                     <td className="cell">
                       <span className="inline-flex flex-wrap items-center gap-1.5">
                         <LabelChip label={contact.label} />

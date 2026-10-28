@@ -75,7 +75,7 @@ export function initials(name: string): string {
 }
 
 export function newId(): string {
-  return Math.random().toString(36).slice(2, 11);
+  return crypto.randomUUID();
 }
 
 /** "+65 92988104", collapsing to the code alone when no number is on file. */

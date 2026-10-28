@@ -319,7 +319,7 @@ def contact_replace(
     payload: ContactPayload,
     fa_id: str = Query(min_length=1),
 ) -> ContactPayload:
-    if payload.id != contact_id:
+    if str(payload.id) != contact_id:
         raise HTTPException(status_code=400, detail="contact ID does not match path")
     row = replace_contact(_contact_scope(fa_id), contact_id, payload.model_dump())
     if row is None:

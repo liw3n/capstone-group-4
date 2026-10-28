@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Contact } from '../types';
+import { Contact, ContactLabel } from '../types';
 import { isValidEmail } from '../lib/email';
 import Modal, { ModalRow } from '../ui/Modal';
 import Button from '../ui/Button';
@@ -19,6 +19,7 @@ export default function AddContactModal({ onClose, onSave }: AddContactModalProp
   const [email, setEmail] = useState('');
   const [countryCode, setCountryCode] = useState('+65');
   const [phone, setPhone] = useState('');
+  const [label, setLabel] = useState<ContactLabel>('Prospect');
   const [touched, setTouched] = useState(false);
 
   const errors = {
@@ -44,8 +45,7 @@ export default function AddContactModal({ onClose, onSave }: AddContactModalProp
       phone: phone.trim().replace(/[\s-]/g, ''),
       dob: dob || undefined,
       nric: nric.trim() || undefined,
-      // New contacts start as prospects until the advisor promotes them.
-      label: 'Prospect',
+      label,
       // Entered by hand, so this is the advisor's own contact by definition.
       source: 'own',
     });
@@ -100,6 +100,17 @@ export default function AddContactModal({ onClose, onSave }: AddContactModalProp
             placeholder="NRIC or passport number"
             className="input-field"
           />
+        </ModalRow>
+
+        <ModalRow label="Contact Type *">
+          <select
+            value={label}
+            onChange={(e) => setLabel(e.target.value as ContactLabel)}
+            className="input-field"
+          >
+            <option value="Prospect">Prospect</option>
+            <option value="Client">Client</option>
+          </select>
         </ModalRow>
 
         <ModalRow label="Email *">

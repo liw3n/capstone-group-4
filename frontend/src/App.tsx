@@ -164,6 +164,19 @@ export default function App() {
 
   /* ---------- contacts ---------- */
 
+  const refreshContactsFromDatabase = async (activeSession: Session) => {
+    const canonicalContacts = await listContacts(activeSession);
+    setContacts((prev) => {
+      const byId = new Map(canonicalContacts.map((contact) => [contact.id, contact]));
+      prev
+        .filter((contact) => contact.status === 'lead')
+        .forEach((contact) => {
+          if (!byId.has(contact.id)) byId.set(contact.id, contact);
+        });
+      return [...byId.values()];
+    });
+  };
+
   const openContact = (contactId: string) => {
     if (!contacts.some((c) => c.id === contactId)) return;
     setSelectedContactId(contactId);
@@ -237,12 +250,20 @@ export default function App() {
     if (!activeSession?.advisorId) return false;
     try {
       setContactError(null);
-      const created = await Promise.all(
+      await Promise.all(
         incoming.map((contact) =>
           createContact({ ...contact, id: newId(), status: 'contact' }, activeSession),
         ),
       );
-      setContacts((prev) => [...created, ...prev]);
+      try {
+        await refreshContactsFromDatabase(activeSession);
+      } catch (error) {
+        setContactError(
+          error instanceof Error
+            ? `Contact created, but the saved contact list could not be refreshed: ${error.message}`
+            : 'Contact created, but the saved contact list could not be refreshed.',
+        );
+      }
       return true;
     } catch (error) {
       setContactError(error instanceof Error ? error.message : 'Unable to create contacts.');
@@ -402,13 +423,15 @@ export default function App() {
       leadStats: { ...campaign.leadStats, added: campaign.leadStats.added + 1 },
     });
     if (!saved) return;
-    setContacts((prev) =>
-      prev.map((contact) =>
-        contact.id === contactId
-          ? { ...contact, status: 'contact' as const, label: contact.label ?? 'Prospect' }
-          : contact,
-      ),
-    );
+    try {
+      await refreshContactsFromDatabase(activeSession);
+    } catch (error) {
+      setContactError(
+        error instanceof Error
+          ? `Contact promoted, but the saved contact list could not be refreshed: ${error.message}`
+          : 'Contact promoted, but the saved contact list could not be refreshed.',
+      );
+    }
   };
 
   /**
