@@ -39,7 +39,7 @@ class Campaign:
     name: str
     criteria: Criteria
     fa_ids: tuple[str, ...] = (DEMO_FA,)
-    tenant_id: str = DEMO_TENANT
+    tenant_id: str = DEMO_TENANT 
     status: str = "active"
     start_date: date = date(2026, 8, 1)
     end_date: date = date(2026, 12, 31)
@@ -95,32 +95,29 @@ def _load_campaign(campaign_id: str, scope: RequestScope) -> Campaign | None:
     with _connection() as connection:
         row = connection.execute(
             """
-            SELECT c.campaign_id, c.tenant_id, c.name, c.status, c.start_date, c.end_date,
-                   c.age_groups, c.genders, c.cash_bands,
-                   c.age_min, c.age_max, c.cash_min, c.cash_max
-            FROM mock_campaign AS c
-            JOIN mock_campaign_advisor AS a
-              ON a.tenant_id = c.tenant_id AND a.campaign_id = c.campaign_id
-            WHERE c.campaign_id = %s AND c.tenant_id = %s AND a.fa_id = %s
+            SELECT c.name, c.start_date, c.end_date, c.audience_criteria
+            FROM campaign AS c
+            WHERE c.campaign_id = %s AND c.tenant_id = %s
             """,
-            (campaign_id, scope.tenant_id, scope.fa_id),
+            (campaign_id, scope.fa_id),
         ).fetchone()
     if row is None:
         return None
+
+    audience_criteria = row.get("audience_critera", {})
     criteria = Criteria(
-        age_groups=tuple(row["age_groups"]), genders=tuple(row["genders"]),
-        cash_bands=tuple(row["cash_bands"]), age_min=row["age_min"], age_max=row["age_max"],
-        cash_min=float(row["cash_min"]) if row["cash_min"] is not None else None,
-        cash_max=float(row["cash_max"]) if row["cash_max"] is not None else None,
+        age_groups=tuple(audience_criteria.get("ageGroups", [])), genders=tuple(audience_criteria.get("genders", [])),
+        cash_bands=tuple(audience_criteria.get("cashBands", [])), age_min=audience_criteria.get("ageCustomMin"), age_max=audience_criteria.get("ageCustomMax"),
+        cash_min=float(audience_criteria.get("cashCustomMin")) if audience_criteria.get("cashCustomMin") is not None else None,
+        cash_max=float(audience_criteria.get("cashCustomMax")) if audience_criteria.get("ageCustomMax") is not None else None,
     )
-    return Campaign(campaign_id=row["campaign_id"], name=row["name"], criteria=criteria,
-                    tenant_id=row["tenant_id"], fa_ids=(scope.fa_id,), status=row["status"],
-                    start_date=row["start_date"], end_date=row["end_date"])
+    return Campaign(campaign_id=campaign_id, name=row["name"], criteria=criteria,
+                    fa_ids=(scope.fa_id,), start_date=row["start_date"], end_date=row["end_date"])
 
 
 def get_campaign(campaign_id: str, scope: RequestScope) -> Campaign:
     """Inaccessible and unknown IDs look alike, without exposing other rows."""
-    if not isinstance(campaign_id, str) or not re.fullmatch(CAMPAIGN_ID_PATTERN, campaign_id):
+    if not isinstance(campaign_id, str):
         raise CampaignUnavailable("Campaign not found or unavailable to this adviser")
     campaign = _load_campaign(campaign_id, scope)
     if campaign is None:
@@ -243,7 +240,7 @@ def rank_campaigns_by_contacts(scope: RequestScope, period_start: datetime | Non
 
 
 def require_active(campaign: Campaign, as_of: date = DEMO_DATE) -> None:
-    if campaign.status != "active" or not campaign.start_date <= as_of <= campaign.end_date:
+    if not campaign.start_date <= as_of <= campaign.end_date:
         raise CampaignInactive("Campaign is not active on the demo date")
 
 
