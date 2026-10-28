@@ -188,10 +188,10 @@ class StatusUpdateResponse(BaseModel):
     status: Literal[0, 1, 2]  # 0: Contacted, 1: Engaged, 2: Rejected
 
 class EngagementStatusResponse(BaseModel):
-    campaign_id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=69)
-    contact_id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=64)
-    fa_id: str = Field(min_length=1, max_length=64)
-    status: Literal[0, 1, 2]  # 0: Contacted, 1: Engaged, 2: Rejected
+    campaign_id: UUID
+    contact_id: UUID
+    fa_id: UUID
+    status: Literal[0, 1, 2] | None  # 0: Contacted, 1: Engaged, 2: Rejected
 
 class CampaignPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")

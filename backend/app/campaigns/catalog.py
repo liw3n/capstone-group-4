@@ -116,26 +116,12 @@ def list_campaigns(role: CampaignRole, scope: RequestScope | None) -> list[dict[
 
 def _get_row(connection: Any, role: CampaignRole, scope: RequestScope | None,
              campaign_id: str) -> dict[str, Any] | None:
-    if role == "marketing":
-        return connection.execute(
-            f"""SELECT {SELECT_COLUMNS} FROM mock_campaign AS c
-                WHERE c.tenant_id = %s AND c.campaign_id = %s
-                  AND c.origin = 'marketing'""",
-            (DEMO_TENANT, campaign_id),
-        ).fetchone()
-    if scope is None:
-        raise ValueError("Adviser request context is required")
     return connection.execute(
-        f"""SELECT {SELECT_COLUMNS} FROM mock_campaign AS c
+        f"""SELECT {SELECT_COLUMNS} FROM campaign AS c
             WHERE c.tenant_id = %s AND c.campaign_id = %s
-              AND (c.created_by_advisor_id = %s OR EXISTS (
-                  SELECT 1 FROM mock_campaign_advisor AS a
-                  WHERE a.tenant_id = c.tenant_id
-                    AND a.campaign_id = c.campaign_id AND a.fa_id = %s
-              ))""",
-        (scope.tenant_id, campaign_id, scope.fa_id, scope.fa_id),
+        """,
+        (scope.fa_id, campaign_id),
     ).fetchone()
-
 
 def get_campaign_record(role: CampaignRole, scope: RequestScope | None,
                         campaign_id: str) -> dict[str, Any] | None:
@@ -327,22 +313,18 @@ def get_engagement_status(fa_id: str, campaign_id: str, contact_id: str) -> dict
     with _connection() as connection:
         row = connection.execute(
             """
-            SELECT engagement_status
-            FROM mock_campaign_contact_event
-            WHERE tenant_id = %s AND fa_id = %s AND campaign_id = %s
-              AND contact_id = %s
-            ORDER BY contacted_at DESC, contact_event_id DESC
-            LIMIT 1
+            SELECT MAX(engagement_status) AS status
+            FROM campaign_member
+            WHERE tenant_id = %s AND campaign_id = %s AND contact_id = %s
             """,
-            (DEMO_TENANT, fa_id, campaign_id, contact_id),
+            (fa_id, campaign_id, contact_id),
         ).fetchone()
 
-    if row is None:
-        return None
+    status = row.get("status")
 
     return {
         "campaign_id": campaign_id,
         "contact_id": contact_id,
         "fa_id": fa_id,
-        "status": row["engagement_status"],
+        "status": status
     }

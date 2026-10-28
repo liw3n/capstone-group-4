@@ -128,7 +128,7 @@ export default function CampaignDetailView({
     setStatusLoading(true);
     setStatusError(null);
 
-    Promise.all(
+    Promise.allSettled(
       matched.map(async (contact) => [
         contact.id,
         await getCampaignEngagementStatus(campaign.id, contact.id, session),
@@ -136,19 +136,28 @@ export default function CampaignDetailView({
     )
       .then((results) => {
         if (cancelled) return;
-        setClientStatuses(
-          Object.fromEntries(
-            results.filter(
-              (entry): entry is readonly [string, EngagementStatus] => entry[1] !== null,
-            ),
-          ),
-        );
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setStatusError(
-          error instanceof Error ? error.message : 'Could not load campaign statuses.',
-        );
+        const statuses: Record<string, EngagementStatus> = {};
+        let firstError: unknown;
+        let hasError = false;
+
+        for (const result of results) {
+          if (result.status === 'rejected') {
+            hasError = true;
+            firstError ??= result.reason;
+            continue;
+          }
+          const [contactId, status] = result.value;
+          if (status !== null) statuses[contactId] = status;
+        }
+
+        setClientStatuses(statuses);
+        if (hasError) {
+          setStatusError(
+            firstError instanceof Error
+              ? firstError.message
+              : 'Could not load one or more campaign statuses.',
+          );
+        }
       })
       .finally(() => {
         if (!cancelled) setStatusLoading(false);
@@ -344,7 +353,7 @@ export default function CampaignDetailView({
                   if (!contact) return null;
 
                   const taken = campaign.actions[contact.id];
-                  const engagementStatus = clientStatuses[contact.id] ?? '';
+                  const engagementStatus = clientStatuses[contact.id];
 
                   return (
                     <tr
@@ -373,7 +382,7 @@ export default function CampaignDetailView({
                         <select
                           aria-label={`Status for ${contact.name}`}
                           className="rounded-md border border-line bg-white px-2.5 py-1.5 text-[12px] text-ink focus:border-link focus:outline-none focus:ring-2 focus:ring-link/20 disabled:cursor-wait disabled:opacity-60"
-                          value={engagementStatus}
+                          value={engagementStatus === undefined ? '' : String(engagementStatus)}
                           disabled={statusLoading || statusSavingClientId !== null}
                           onChange={(event) => {
                             const nextStatus = Number(event.currentTarget.value);
@@ -385,9 +394,9 @@ export default function CampaignDetailView({
                           <option value="" disabled>
                             Select status
                           </option>
-                          <option value={0}>Contacted</option>
-                          <option value={1}>Engaged</option>
-                          <option value={2}>Rejected</option>
+                          <option value="0">Contacted</option>
+                          <option value="1">Engaged</option>
+                          <option value="2">Rejected</option>
                         </select>
                       </td>
                       <td className="cell text-right">

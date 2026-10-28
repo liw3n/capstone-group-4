@@ -59,6 +59,39 @@ const CASH_BAND_FLOOR: [CashBand, number][] = [
   ['under50k', 0],
 ];
 
+function targetingKey(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+const AGE_GROUP_ALIASES: Record<string, AgeGroup> = {
+  under35: 'under35',
+  '35to44': '35to44',
+  '3544': '35to44',
+  '45to54': '45to54',
+  '4554': '45to54',
+  '55to64': '55to64',
+  '5564': '55to64',
+  '65plus': '65plus',
+  '65andabove': '65plus',
+};
+
+const CASH_BAND_ALIASES: Record<string, CashBand> = {
+  under50k: 'under50k',
+  '50kto250k': '50kTo250k',
+  '50k250k': '50kTo250k',
+  '250kto1m': '250kTo1m',
+  '250k1m': '250kTo1m',
+  above1m: 'above1m',
+};
+
+function normalizeAgeGroup(value: string): AgeGroup | undefined {
+  return AGE_GROUP_ALIASES[targetingKey(value)];
+}
+
+function normalizeCashBand(value: string): CashBand | undefined {
+  return CASH_BAND_ALIASES[targetingKey(value)];
+}
+
 export function cashBandOf(contact: Contact): CashBand | undefined {
   if (contact.cashAmount === undefined || contact.cashAmount === null) return undefined;
   const hit = CASH_BAND_FLOOR.find(([, floor]) => contact.cashAmount! >= floor);
@@ -174,17 +207,21 @@ export function matchContacts(criteria: CampaignCriteria, contacts: Contact[]): 
     // Within a dimension a band hit and a custom-range hit are both a match.
     const ageOk =
       !filtersAge(criteria) ||
-      (group !== undefined && criteria.ageGroups.includes(group)) ||
+      (group !== undefined &&
+        criteria.ageGroups.some((value) => normalizeAgeGroup(value) === group)) ||
       inRange(age!, criteria.ageRange);
 
     const cashOk =
       !filtersCash(criteria) ||
-      (band !== undefined && criteria.cashBands.includes(band)) ||
+      (band !== undefined &&
+        criteria.cashBands.some((value) => normalizeCashBand(value) === band)) ||
       inRange(contact.cashAmount!, criteria.cashRange);
 
     const genderOk =
       criteria.genders.length === 0 ||
-      criteria.genders.some((gender) => gender.toLowerCase() === contact.gender);
+      criteria.genders.some(
+        (gender) => gender.trim().toLowerCase() === contact.gender?.trim().toLowerCase(),
+      );
 
     if (ageOk && genderOk && cashOk) matched.push(contact);
   }
