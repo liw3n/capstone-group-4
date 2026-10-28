@@ -98,3 +98,38 @@ test('matches title-case contact genders against lowercase campaign genders', ()
 
   assert.deepEqual(result.matched.map((contact) => contact.id), ['male']);
 });
+
+test('selected age groups exclude contacts admitted only by a stale custom range', () => {
+  const result = resolveAudience(
+    {
+      ...campaign,
+      criteria: {
+        ageGroups: ['under35'],
+        ageRange: { min: 35, max: 44 },
+        genders: [],
+        cashBands: [],
+      },
+    },
+    [
+      {
+        id: 'under-35',
+        name: 'Under 35',
+        email: 'under35@example.test',
+        countryCode: '+65',
+        phone: '',
+        dob: '1991-08-27',
+      },
+      {
+        id: 'age-35',
+        name: 'Age 35',
+        email: 'age35@example.test',
+        countryCode: '+65',
+        phone: '',
+        dob: '1991-08-26',
+      },
+    ],
+  );
+
+  assert.deepEqual(result.matched.map((contact) => contact.id), ['under-35']);
+  assert.deepEqual(result.incomplete, []);
+});

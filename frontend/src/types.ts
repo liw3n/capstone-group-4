@@ -217,16 +217,20 @@ export interface NumericRange {
  * An empty array means "no filter on this dimension". A populated one matches
  * any of its values, so criteria are OR within a dimension, AND across them.
  *
- * The custom ranges follow the same rule: a contact matches the age dimension
- * if they fall in a selected band OR inside the custom range. Setting neither
- * leaves the dimension unfiltered.
+ * A selected age band takes precedence over the custom age range. The custom
+ * age range applies only when no age bands are selected. Cash bands and ranges
+ * remain additive alternatives. Setting neither leaves the dimension unfiltered.
  */
 export interface CampaignCriteria {
   ageGroups: AgeGroup[];
   ageRange?: NumericRange;
+  ageCustomMin?: number;
+  ageCustomMax?: number;
   genders: CampaignGender[];
   cashBands: CashBand[];
   cashRange?: NumericRange;
+  cashCustomMin?: number;
+  cashCustomMax?: number;
 }
 
 /* -------------------------------------------------------------------------- */

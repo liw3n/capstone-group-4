@@ -134,9 +134,8 @@ function RangeInputs({
 }
 
 /**
- * Three dimensions. Age and cash each accept a custom range alongside their
- * bands, and a contact matches the dimension on either — same OR rule that
- * already applies between bands, so nothing new has to be explained.
+ * Age bands and custom age ranges are alternative filters. Selecting one clears
+ * the other so the displayed age criteria match the audience filter.
  */
 export function CriteriaPicker({
   criteria,
@@ -148,13 +147,21 @@ export function CriteriaPicker({
     const next = current.includes(value)
       ? current.filter((v) => v !== value)
       : [...current, value];
-    onChange({ ...criteria, [key]: next } as CampaignCriteria);
+    onChange({
+      ...criteria,
+      [key]: next,
+      ...(key === 'ageGroups' ? { ageRange: undefined } : {}),
+    } as CampaignCriteria);
   };
 
   const setRange = (key: 'ageRange' | 'cashRange', bound: 'min' | 'max', raw: string) => {
     const next: NumericRange = { ...(criteria[key] ?? {}), [bound]: toBound(raw) };
     const cleared = next.min === undefined && next.max === undefined;
-    onChange({ ...criteria, [key]: cleared ? undefined : next });
+    onChange({
+      ...criteria,
+      [key]: cleared ? undefined : next,
+      ...(key === 'ageRange' ? { ageGroups: [] } : {}),
+    });
   };
 
   const noteFor = (count: number, range?: NumericRange) => {
@@ -169,7 +176,11 @@ export function CriteriaPicker({
     <div className="flex flex-col gap-5">
       <Dimension
         title="Target age group"
-        note={noteFor(criteria.ageGroups.length, criteria.ageRange)}
+        note={
+          criteria.ageGroups.length > 0 && hasRange(criteria.ageRange)
+            ? `${criteria.ageGroups.length} selected · custom range ignored`
+            : noteFor(criteria.ageGroups.length, criteria.ageRange)
+        }
       >
         <div className="flex flex-wrap gap-2">
           {AGE_GROUPS.map((value) => (
@@ -263,7 +274,9 @@ export function CriteriaSummary({ criteria }: { criteria: CampaignCriteria }) {
 
   const ageValues = [
     ...criteria.ageGroups.map((v) => AGE_GROUP_LABELS[v]),
-    ...(hasRange(criteria.ageRange) ? [describeRange(criteria.ageRange!)] : []),
+    ...(criteria.ageGroups.length === 0 && hasRange(criteria.ageRange)
+      ? [describeRange(criteria.ageRange!)]
+      : []),
   ];
   if (ageValues.length > 0) rows.push({ title: 'Target age group', values: ageValues });
 

@@ -109,6 +109,20 @@ export function hasRange(range: NumericRange | undefined): boolean {
   return Boolean(range && (range.min !== undefined || range.max !== undefined));
 }
 
+function ageRangeOf(criteria: CampaignCriteria): NumericRange | undefined {
+  if (criteria.ageCustomMin !== undefined || criteria.ageCustomMax !== undefined) {
+    return { min: criteria.ageCustomMin, max: criteria.ageCustomMax };
+  }
+  return criteria.ageRange;
+}
+
+function cashRangeOf(criteria: CampaignCriteria): NumericRange | undefined {
+  if (criteria.cashCustomMin !== undefined || criteria.cashCustomMax !== undefined) {
+    return { min: criteria.cashCustomMin, max: criteria.cashCustomMax };
+  }
+  return criteria.cashRange;
+}
+
 function inRange(value: number, range: NumericRange | undefined): boolean {
   if (!hasRange(range)) return false;
   if (range!.min !== undefined && value < range!.min) return false;
@@ -151,18 +165,18 @@ export function criteriaCount(criteria: CampaignCriteria): number {
     criteria.ageGroups.length +
     criteria.genders.length +
     criteria.cashBands.length +
-    (hasRange(criteria.ageRange) ? 1 : 0) +
-    (hasRange(criteria.cashRange) ? 1 : 0)
+    (criteria.ageGroups.length === 0 && hasRange(ageRangeOf(criteria)) ? 1 : 0) +
+    (hasRange(cashRangeOf(criteria)) ? 1 : 0)
   );
 }
 
-/** Whether a dimension filters at all — bands selected, or a custom range set. */
+/** Whether an age band or a custom range filters the age dimension. */
 function filtersAge(criteria: CampaignCriteria): boolean {
-  return criteria.ageGroups.length > 0 || hasRange(criteria.ageRange);
+  return criteria.ageGroups.length > 0 || hasRange(ageRangeOf(criteria));
 }
 
 function filtersCash(criteria: CampaignCriteria): boolean {
-  return criteria.cashBands.length > 0 || hasRange(criteria.cashRange);
+  return criteria.cashBands.length > 0 || hasRange(cashRangeOf(criteria));
 }
 
 export interface MatchResult {
@@ -186,6 +200,13 @@ export interface MatchResult {
 export function matchContacts(criteria: CampaignCriteria, contacts: Contact[]): MatchResult {
   const matched: Contact[] = [];
   const incomplete: Contact[] = [];
+  const selectedAgeGroups = criteria.ageGroups
+    .map(normalizeAgeGroup)
+    .filter((group): group is AgeGroup => group !== undefined);
+  const ageRange = ageRangeOf(criteria);
+  const cashRange = cashRangeOf(criteria);
+  const usesAgeRange = selectedAgeGroups.length === 0 && hasRange(ageRange);
+  const filtersAgeDimension = selectedAgeGroups.length > 0 || usesAgeRange;
 
   for (const contact of contacts) {
     const age = ageFromDob(contact.dob);
@@ -193,7 +214,7 @@ export function matchContacts(criteria: CampaignCriteria, contacts: Contact[]): 
     const band = cashBandOf(contact);
 
     const missing =
-      (filtersAge(criteria) && age === undefined) ||
+      (filtersAgeDimension && age === undefined) ||
       (criteria.genders.length > 0 &&
         (contact.gender === undefined || contact.gender === null)) ||
       (filtersCash(criteria) &&
@@ -204,18 +225,18 @@ export function matchContacts(criteria: CampaignCriteria, contacts: Contact[]): 
       continue;
     }
 
-    // Within a dimension a band hit and a custom-range hit are both a match.
+    // Explicit age bands take precedence over a stale or legacy custom range.
     const ageOk =
-      !filtersAge(criteria) ||
-      (group !== undefined &&
-        criteria.ageGroups.some((value) => normalizeAgeGroup(value) === group)) ||
-      inRange(age!, criteria.ageRange);
+      !filtersAgeDimension ||
+      (selectedAgeGroups.length > 0
+        ? group !== undefined && selectedAgeGroups.includes(group)
+        : inRange(age!, ageRange));
 
     const cashOk =
       !filtersCash(criteria) ||
       (band !== undefined &&
         criteria.cashBands.some((value) => normalizeCashBand(value) === band)) ||
-      inRange(contact.cashAmount!, criteria.cashRange);
+      inRange(contact.cashAmount!, cashRange);
 
     const genderOk =
       criteria.genders.length === 0 ||

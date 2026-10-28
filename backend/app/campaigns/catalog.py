@@ -258,48 +258,49 @@ def update_engagement_status(
     fa_id: str,
     campaign_id: str,
     contact_id: str,
-    status: Literal[0, 1, 2],
+    status: Literal[0, 1, 2] | None,
 ) -> dict[str, Any] | None:
     with _connection() as connection:
         latest_event = connection.execute(
             """
-            SELECT contact_event_id
-            FROM mock_campaign_contact_event
-            WHERE tenant_id = %s AND fa_id = %s AND campaign_id = %s
-              AND contact_id = %s
-            ORDER BY contacted_at DESC, contact_event_id DESC
+            SELECT campaign_member_id
+            FROM campaign_member
+            WHERE tenant_id = %s AND campaign_id = %s AND contact_id = %s
+                AND is_deleted = FALSE
+            ORDER BY added_at DESC
             LIMIT 1
-            FOR UPDATE
             """,
-            (DEMO_TENANT, fa_id, campaign_id, contact_id),
+            (fa_id, campaign_id, contact_id),
         ).fetchone()
 
         if latest_event is None:
             connection.execute(
                 """
-                INSERT INTO mock_campaign_contact_event (
-                    tenant_id, contact_event_id, campaign_id, fa_id,
-                    contact_id, contacted_at, engagement_status
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO campaign_member (
+                    tenant_id, campaign_id, contact_id, added_at,
+                    added_by_user_id, engagement_status, email_send_count
+                ) VALUES (
+                    %s, %s, %s, %s, 
+                    %s, %s, 1
+                )
                 """,
                 (
-                    DEMO_TENANT,
-                    f'contact-event-{uuid4()}',
-                    campaign_id,
                     fa_id,
+                    campaign_id,
                     contact_id,
                     datetime.now(timezone.utc),
-                    status,
+                    fa_id,
+                    status
                 ),
             )
         else:
             connection.execute(
                 """
-                UPDATE mock_campaign_contact_event
-                SET engagement_status = %s
-                WHERE tenant_id = %s AND contact_event_id = %s
+                UPDATE campaign_member
+                SET engagement_status = %s, email_send_count = email_send_count + 1
+                WHERE tenant_id = %s AND campaign_member_id = %s
                 """,
-                (status, DEMO_TENANT, latest_event["contact_event_id"]),
+                (status, fa_id, latest_event["campaign_member_id"]),
             )
 
     return {
