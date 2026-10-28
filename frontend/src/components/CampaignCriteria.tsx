@@ -8,6 +8,7 @@ import {
   GENDERS,
   GENDER_LABELS,
   hasRange,
+  normalizeCampaignCriteria,
 } from '../lib/targeting';
 
 interface PickerProps {
@@ -138,10 +139,11 @@ function RangeInputs({
  * the other so the displayed age criteria match the audience filter.
  */
 export function CriteriaPicker({
-  criteria,
+  criteria: storedCriteria,
   onChange,
   allowCustomRanges = true,
 }: PickerProps) {
+  const criteria = normalizeCampaignCriteria(storedCriteria);
   const toggle = (key: 'ageGroups' | 'genders' | 'cashBands', value: string) => {
     const current = criteria[key] as string[];
     const next = current.includes(value)
@@ -269,11 +271,12 @@ function describeRange(range: NumericRange, prefix = ''): string {
 }
 
 /** Read-only rendering of the same criteria, for list rows and detail headers. */
-export function CriteriaSummary({ criteria }: { criteria: CampaignCriteria }) {
+export function CriteriaSummary({ criteria: storedCriteria }: { criteria: CampaignCriteria }) {
+  const criteria = normalizeCampaignCriteria(storedCriteria);
   const rows: { title: string; values: string[] }[] = [];
 
   const ageValues = [
-    ...criteria.ageGroups.map((v) => AGE_GROUP_LABELS[v]),
+    ...criteria.ageGroups.map((v) => AGE_GROUP_LABELS[v] ?? v),
     ...(criteria.ageGroups.length === 0 && hasRange(criteria.ageRange)
       ? [describeRange(criteria.ageRange!)]
       : []),
@@ -288,7 +291,7 @@ export function CriteriaSummary({ criteria }: { criteria: CampaignCriteria }) {
   }
 
   const cashValues = [
-    ...criteria.cashBands.map((v) => CASH_BAND_LABELS[v]),
+    ...criteria.cashBands.map((v) => CASH_BAND_LABELS[v] ?? v),
     ...(hasRange(criteria.cashRange) ? [describeRange(criteria.cashRange!, 'S$')] : []),
   ];
   if (cashValues.length > 0) rows.push({ title: 'Target cash availability', values: cashValues });

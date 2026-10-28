@@ -1,13 +1,58 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { createServer } from 'vite';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 let server;
 let resolveAudience;
+let CriteriaSummary;
+let CriteriaPicker;
 
 before(async () => {
   server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' });
   ({ resolveAudience } = await server.ssrLoadModule('/src/lib/targeting.ts'));
+  ({ CriteriaSummary, CriteriaPicker } = await server.ssrLoadModule('/src/components/CampaignCriteria.tsx'));
+});
+
+for (const { name, criteria, labels } of [
+  {
+    name: 'Legacy Protection Refresh',
+    criteria: { ageGroups: ['55-64', '65plus'], genders: [], cashBands: ['250k-1m', 'above1m'] },
+    labels: ['55 - 64', '65 and above', 'S$250k - S$1M', 'Above S$1M'],
+  },
+  {
+    name: 'First Home Starter Bundle',
+    criteria: { ageGroups: ['under35', '35-44'], genders: ['Male', 'Female'], cashBands: ['under50k', '50k-250k'] },
+    labels: ['Under 35', '35 - 44', 'Male', 'Female', 'Under S$50k', 'S$50k - S$250k'],
+  },
+]) {
+  test(`${name} displays every stored age and cash band without changing criteria`, () => {
+    const before = structuredClone(criteria);
+    const html = renderToStaticMarkup(createElement(CriteriaSummary, { criteria }));
+    for (const label of labels) assert.ok(html.includes(label), `Missing label: ${label}`);
+    assert.ok(!/<span\b[^>]*>\s*<\/span>/.test(html), 'Criteria must not render blank badges');
+    assert.deepEqual(criteria, before);
+  });
+
+  test(`${name} editor selects the stored age and cash bands`, () => {
+    const html = renderToStaticMarkup(createElement(CriteriaPicker, { criteria, onChange() {} }));
+    const selected = [...html.matchAll(/<button\b[^>]*aria-pressed="true"[^>]*>(.*?)<\/button>/gs)]
+      .map((match) => match[1]);
+    assert.deepEqual(selected, labels);
+  });
+}
+
+test('canonical frontend criteria retain their existing labels and custom ranges', () => {
+  const html = renderToStaticMarkup(createElement(CriteriaSummary, {
+    criteria: {
+      ageGroups: ['35to44'], genders: [], cashBands: ['50kTo250k'],
+      cashRange: { min: 500000, max: 1000000 },
+    },
+  }));
+  for (const label of ['35 - 44', 'S$50k - S$250k', 'S$500,000 - S$1,000,000']) {
+    assert.ok(html.includes(label), `Missing label: ${label}`);
+  }
 });
 
 after(async () => {

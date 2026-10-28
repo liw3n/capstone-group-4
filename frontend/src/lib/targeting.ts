@@ -92,6 +92,15 @@ function normalizeCashBand(value: string): CashBand | undefined {
   return CASH_BAND_ALIASES[targetingKey(value)];
 }
 
+/** Use the matcher's band aliases for display and editing, without mutating data. */
+export function normalizeCampaignCriteria(criteria: CampaignCriteria): CampaignCriteria {
+  return {
+    ...criteria,
+    ageGroups: [...new Set(criteria.ageGroups.map((value) => normalizeAgeGroup(value) ?? value))],
+    cashBands: [...new Set(criteria.cashBands.map((value) => normalizeCashBand(value) ?? value))],
+  };
+}
+
 export function cashBandOf(contact: Contact): CashBand | undefined {
   if (contact.cashAmount === undefined || contact.cashAmount === null) return undefined;
   const hit = CASH_BAND_FLOOR.find(([, floor]) => contact.cashAmount! >= floor);
