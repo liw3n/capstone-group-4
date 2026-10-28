@@ -198,6 +198,8 @@ export type AgeGroup = 'under35' | '35to44' | '45to54' | '55to64' | '65plus';
 
 export type Gender = 'male' | 'female';
 
+export type CampaignGender = 'Male' | 'Female';
+
 /**
  * Bands over investable cash. The contact stores an actual amount and the band
  * is derived from it, so band filters and custom-amount filters read the same
@@ -222,7 +224,7 @@ export interface NumericRange {
 export interface CampaignCriteria {
   ageGroups: AgeGroup[];
   ageRange?: NumericRange;
-  genders: Gender[];
+  genders: CampaignGender[];
   cashBands: CashBand[];
   cashRange?: NumericRange;
 }

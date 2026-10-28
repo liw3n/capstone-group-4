@@ -1,6 +1,7 @@
 import {
   AgeGroup,
   Campaign,
+  CampaignGender,
   CampaignCriteria,
   CashBand,
   Contact,
@@ -32,11 +33,13 @@ export const AGE_GROUP_LABELS: Record<AgeGroup, string> = {
   '65plus': '65 and above',
 };
 
-export const GENDERS: Gender[] = ['male', 'female'];
+export const GENDERS: CampaignGender[] = ['Male', 'Female'];
 
-export const GENDER_LABELS: Record<Gender, string> = {
+export const GENDER_LABELS: Record<Gender | CampaignGender, string> = {
   male: 'Male',
   female: 'Female',
+  Male: 'Male',
+  Female: 'Female',
 };
 
 export const CASH_BANDS: CashBand[] = ['under50k', '50kTo250k', '250kTo1m', 'above1m'];
@@ -180,7 +183,8 @@ export function matchContacts(criteria: CampaignCriteria, contacts: Contact[]): 
       inRange(contact.cashAmount!, criteria.cashRange);
 
     const genderOk =
-      criteria.genders.length === 0 || criteria.genders.includes(contact.gender!);
+      criteria.genders.length === 0 ||
+      criteria.genders.some((gender) => gender.toLowerCase() === contact.gender);
 
     if (ageOk && genderOk && cashOk) matched.push(contact);
   }

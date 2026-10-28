@@ -12,6 +12,7 @@ import Button from '../ui/Button';
 import { CriteriaPicker } from './CampaignCriteria';
 import { CampaignCriteria } from '../types';
 import {
+  CampaignGender as DraftCampaignGender,
   CampaignDraftArtifact,
   CampaignDraftField,
 } from '../services/chatApi';
@@ -22,6 +23,14 @@ import {
   regenerateCampaignDraft,
   updateCampaignDraft,
 } from '../services/campaignDraftApi';
+import { CampaignGender } from '../types';
+
+const TO_DRAFT_GENDER: Record<CampaignGender | DraftCampaignGender, DraftCampaignGender> = {
+  male: 'male',
+  female: 'female',
+  Male: 'male',
+  Female: 'female',
+};
 
 interface CampaignDraftReviewProps {
   advisorId: string;
@@ -58,7 +67,9 @@ function formFromDraft(artifact: CampaignDraftArtifact): ReviewForm {
     clientMessage: artifact.draft.clientMessage,
     criteria: {
       ageGroups: [...artifact.draft.criteria.ageGroups],
-      genders: [...artifact.draft.criteria.genders],
+      genders: artifact.draft.criteria.genders.map((gender) =>
+        gender === 'male' ? 'Male' : 'Female',
+      ),
       cashBands: [...artifact.draft.criteria.cashBands],
     },
     targetDemographicSummary: artifact.draft.targetDemographicSummary,
@@ -84,8 +95,9 @@ export function campaignDraftChanges(
   if (!sameValues(form.criteria.ageGroups, artifact.draft.criteria.ageGroups)) {
     changes.ageGroups = form.criteria.ageGroups;
   }
-  if (!sameValues(form.criteria.genders, artifact.draft.criteria.genders)) {
-    changes.genders = form.criteria.genders;
+  const draftGenders = form.criteria.genders.map((gender) => TO_DRAFT_GENDER[gender]);
+  if (!sameValues(draftGenders, artifact.draft.criteria.genders)) {
+    changes.genders = draftGenders;
   }
   if (!sameValues(form.criteria.cashBands, artifact.draft.criteria.cashBands)) {
     changes.cashBands = form.criteria.cashBands;
