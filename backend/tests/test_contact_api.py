@@ -146,8 +146,58 @@ def test_contact_catalog_create_returns_payload_after_insert(monkeypatch):
     assert insert_params[:4] == (
         "adv-demo", payload["id"], "Prospect", payload["name"]
     )
-    assert insert_params[5:8] == ("+65 81234567", None, None)
-    assert "mobile_country_code" not in insert_query
+    assert insert_params[5:8] == ("81234567", "+65", None)
+    assert "mobile_country_code" in insert_query
+
+
+def test_contact_catalog_replace_updates_existing_contact(monkeypatch):
+    executed = []
+    saved_row = {
+        "contact_id": "00000000-0000-0000-0000-000000000001",
+        "full_name": "Updated Contact",
+        "email": "updated.contact@example.test",
+        "mobile": "91234567",
+        "mobile_country_code": "+65",
+        "date_of_birth": None,
+        "contact_type": "Client",
+        "opt_in_email": True,
+    }
+
+    class Cursor:
+        rowcount = 1
+
+        def fetchone(self):
+            return saved_row
+
+    class Connection:
+        def execute(self, query, params):
+            executed.append((query, params))
+            return Cursor()
+
+    @contextmanager
+    def connection():
+        yield Connection()
+
+    monkeypatch.setattr(catalog, "_connection", connection)
+    payload = contact_payload(
+        name="Updated Contact",
+        email="updated.contact@example.test",
+        phone="91234567",
+        label="Client",
+        optInEmail=True,
+    )
+
+    result = catalog.replace_contact(
+        RequestScope("adv-demo"), payload["id"], payload
+    )
+
+    assert result is not None
+    assert result["name"] == "Updated Contact"
+    assert result["label"] == "Client"
+    update_query, update_params = executed[0]
+    assert "UPDATE contact" in update_query
+    assert "opt_in_email = %s\n            WHERE" in update_query
+    assert update_params[-2:] == ("adv-demo", payload["id"])
 
 
 def test_contact_replace_checks_body_and_path_ids(monkeypatch):

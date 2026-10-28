@@ -135,29 +135,24 @@ def replace_contact(scope: RequestScope, contact_id: str,
     with _connection() as connection:
         updated = connection.execute(
             """
-            UPDATE mock_client
-            SET name = %s, email = %s, country_code = %s, phone = %s,
-                date_of_birth = %s, gender = %s, available_cash = %s,
-                label = %s, status = %s, bookmarked = %s,
-                needs_attention = %s, opt_in_email = %s, opt_in_sms = %s,
-                crm_data = %s
-            WHERE tenant_id = %s AND fa_id = %s AND contact_id = %s
+            UPDATE contact
+            SET full_name = %s, email = %s, mobile_country_code = %s, mobile = %s,
+                date_of_birth = %s, contact_type = COALESCE(%s, contact_type), opt_in_email = %s
+            WHERE tenant_id = %s AND contact_id = %s
             """,
             (
                 payload["name"], payload["email"], payload["countryCode"],
-                payload["phone"], payload.get("dob"), payload.get("gender"),
-                payload.get("cashAmount"), payload.get("label"),
-                payload.get("status", "contact"), payload.get("bookmarked", False),
-                payload.get("needsAttention", False), payload.get("optInEmail", False),
-                payload.get("optInSms", False), Jsonb(_crm_data(payload)),
-                scope.tenant_id, scope.fa_id, contact_id,
+                payload["phone"], payload.get("dob"), payload.get("label"),
+                payload.get("optInEmail", False), scope.fa_id, contact_id,
             ),
         )
         if updated.rowcount == 0:
             return None
         row = connection.execute(
-            f"""SELECT {SELECT_COLUMNS} FROM mock_client
-                WHERE tenant_id = %s AND fa_id = %s AND contact_id = %s""",
-            (scope.tenant_id, scope.fa_id, contact_id),
+            f"""SELECT {SELECT_COLUMNS} FROM contact
+                WHERE tenant_id = %s AND contact_id = %s""",
+            (scope.fa_id, contact_id),
         ).fetchone()
-    return _record(row)
+    if row is None:
+        raise ContactStorageUnavailable("Updated contact could not be retrieved")
+    return _record(row, {}, {})
