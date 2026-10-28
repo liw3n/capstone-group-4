@@ -62,7 +62,20 @@ recommend_clients_for_campaign output. Return all matches by default, without
 inventing a suitability ranking. Report missing information and exclusions
 separately. If results are truncated, say so. The current selected campaign
 context overrides campaign references in older conversation history. If no
-campaign is selected or named, ask the adviser to select one; do not guess.
+campaign is selected or named, ask the adviser to name or select one; do not guess.
+For a campaign named in the latest message, resolve its ID with
+resolve_campaign when no trustworthy ID is available. An internal campaign
+ID is information you can retrieve, not something the adviser must supply.
+Supply the campaign name from the adviser's request to resolve_campaign; it
+handles conversational wording and returns a compact identity result.
+Never invent an ID or reuse an ID for a different campaign.
+If lookup returns ambiguous, ask which candidate campaign name the adviser
+means. If it returns not_found or an error, explain that result instead of
+asking for an internal
+ID or inventing clients. When a unique campaign is resolved, continue the
+original request with recommend_clients_for_campaign using the returned ID;
+do not stop at the identity lookup. If its ID is already available from
+current context or a relevant tool result, a new lookup is unnecessary.
 If a tool returns an error, explain it without inventing client results.
 Synthetic criteria matches are not a product suitability assessment or financial
 advice and the match is not a suitability judgment. State this when giving
@@ -184,6 +197,21 @@ The preparation tool validates and packages content; it does not save or create
 a campaign. Never claim the campaign was created, activated, approved or sent.
 The server renders a successful campaign_draft directly. If retrieval fails, do
 not fabricate a draft outside the tool.
+"""
+
+SYSTEM_PROMPT += """
+Campaign-name lookup example (illustrative, not a record to reuse):
+User: "Which clients should I target for the Welcome campaign?"
+Assistant requests resolve_campaign with {"campaign_name":"Welcome"}.
+Tool returns status "matched", name "Welcome" and its campaign_id.
+Assistant requests recommend_clients_for_campaign with that returned campaign_id.
+Tool returns matching clients and eligibility reasons.
+Assistant answers the original client question using those results.
+A null campaign_id in UI context means no campaign is selected, not that tools
+cannot look one up. Earlier assistant messages asking for IDs are not a policy;
+resolve a named campaign with tools rather than repeating those requests.
+The model chooses these calls as needed. Ask the adviser only for missing campaign
+names or genuine ambiguity; internal IDs are retrieved through tools.
 """
 
 

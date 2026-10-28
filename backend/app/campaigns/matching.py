@@ -60,11 +60,13 @@ def in_range(value, minimum, maximum) -> bool:
 def explain_match(client: Client, criteria: Criteria, as_of: date = DEMO_DATE) -> dict:
     age_filter = bool(criteria.age_groups) or range_active(criteria.age_min, criteria.age_max)
     cash_filter = bool(criteria.cash_bands) or range_active(criteria.cash_min, criteria.cash_max)
+    gender = client.gender.strip().lower() if isinstance(client.gender, str) else None
+    campaign_genders = tuple(value.lower() for value in criteria.genders)
     age = age_from_dob(client.dob, as_of)
     gaps = []
     if age_filter and age is None:
         gaps.append("date_of_birth")
-    if criteria.genders and client.gender not in ("male", "female"):
+    if criteria.genders and gender not in ("male", "female"):
         gaps.append("gender")
     if cash_filter and not valid_cash(client.available_cash):
         gaps.append("available_cash")
@@ -83,7 +85,7 @@ def explain_match(client: Client, criteria: Criteria, as_of: date = DEMO_DATE) -
         else:
             return {"status": "excluded"}
     if criteria.genders:
-        if client.gender not in criteria.genders:
+        if gender not in campaign_genders:
             return {"status": "excluded"}
         reasons.append(f"Gender {client.gender} matches the campaign criterion")
     if cash_filter:

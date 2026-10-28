@@ -63,7 +63,7 @@
   <text x="867" y="525" class="heading">FastMCP :8001 /mcp</text>
   <text x="867" y="550" class="label">Tools + shared domain logic</text>
   <text x="867" y="575" class="label">Scoped PostgreSQL data access</text>
-  <text x="867" y="602" class="small">Matching / draft prepare + revise / email confirmation</text>
+  <text x="867" y="602" class="small">Identity lookup / matching / drafts / email</text>
   <path d="M806 563 L848 563" class="arrow"/>
   <text x="526" y="657" class="small">API calls tools over MCP HTTP; tools return structured results + tables.</text>
   <text x="526" y="678" class="small">FA + tenant metadata is supplied separately from model arguments.</text>
@@ -81,9 +81,9 @@
   <path d="M825 838 L825 904" stroke="#c7d2fe" stroke-width="1.5"/>
   <text x="521" y="854" class="label">Chat + draft revisions + option sets</text>
   <text x="521" y="879" class="small">Active draft, optimistic state + email batches</text>
-  <text x="847" y="854" class="label">Canonical campaigns + mock_client CRM</text>
-  <text x="847" y="879" class="small">Shared frontend/MCP contact IDs + assignments</text>
-  <text x="847" y="902" class="small">Contact events; tenant / FA + consent filters</text>
+  <text x="847" y="854" class="label">campaign / contact / campaign_member</text>
+  <text x="847" y="879" class="small">UUIDs + synthetic portfolio enrichment</text>
+  <text x="847" y="902" class="small">Legacy email/performance adapters remain</text>
   <path d="M526 408 L475 408 L475 850 L500 850" class="arrow"/>
   <text x="500" y="745" class="small">SQL: chat, clarification, draft/options + campaign REST persistence</text>
   <path d="M986 631 L986 766" class="arrow"/>

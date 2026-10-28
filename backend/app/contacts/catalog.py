@@ -48,7 +48,7 @@ def _record(
         "id": row["contact_id"],
         "name": row["full_name"],
         "email": row.get("email"),
-        "phone": f"{row.get("mobile_country_code", "+65")} {row["mobile"]}",
+        "phone": f"{row.get('mobile_country_code', '+65')} {row['mobile']}",
         "dob": row["date_of_birth"].isoformat() if row["date_of_birth"] else None,
         "gender": gender.get(row["contact_id"]),
         "cashAmount": _number(cash.get(row["contact_id"])),

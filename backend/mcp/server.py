@@ -48,6 +48,7 @@ from app.tools.discovery import (
     execute_get_active_campaigns,
 )
 from app.tools.performance import execute_contact_performance, execute_contact_ranking
+from app.tools.campaign_lookup import execute_resolve_campaign
 
 # Initialize the FastMCP server instance
 mcp = FastMCP(name="FastMCP Server")
@@ -66,6 +67,9 @@ def recommend_clients_for_campaign(
     clients already contacted or track replies; use campaign_follow_up for that.
     Read-only; no ranking or product suitability assessment. Adviser and tenant
     scope come from API request metadata, never from model arguments.
+    campaign_id must identify the requested campaign: use a known ID from current
+    context or resolve the adviser's campaign name with resolve_campaign.
+    Do not ask the adviser for an internal ID that the lookup tool can retrieve.
     """
     logger.info("MCP tool called: recommend_clients_for_campaign")
     request = ctx.request_context
@@ -346,6 +350,27 @@ def get_active_campaigns(
         },
         _request_metadata(ctx),
     )
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
+def resolve_campaign(
+    campaign_name: Annotated[str, Field(min_length=1, max_length=255)],
+    ctx: Context,
+) -> dict:
+    """Resolve a campaign name to its ID for another campaign tool.
+
+    Use when the adviser names a campaign and you need its campaign_id, for
+    example before recommend_clients_for_campaign. Accepts case/punctuation
+    variations, a conversational "campaign" suffix and whole-word partial names.
+    Returns matched with an ID/name, ambiguous with a small candidate list, or
+    not_found. On matched, continue the original request using the returned ID.
+    On ambiguous, ask which campaign name the adviser means; never guess an ID.
+    Read-only; searches only accessible active campaigns, with adviser/tenant
+    scope from request metadata. Does not retrieve or recommend clients.
+    For a campaign catalogue/table, use get_active_campaigns instead.
+    """
+    logger.info("MCP tool called: resolve_campaign")
+    return execute_resolve_campaign({"campaign_name": campaign_name}, _request_metadata(ctx))
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})

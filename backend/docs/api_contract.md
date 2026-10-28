@@ -643,11 +643,15 @@ recommendation or follow-up tools. No new REST routes, SQL tables, ports or
 provisioning steps are required.
 
 The user ID `fa_id` and organisation boundary `tenant_id` come from API request
-metadata (`pulse_scope`), never model arguments. Campaigns must have a matching
-`mock_campaign_advisor` assignment. Caller-supplied adviser identity remains a
-prototype mechanism, not authenticated identity.
+metadata (`pulse_scope`), never model arguments. Discovery and recommendation
+read the UUID-based `campaign`/`contact` tables. The current CRM prototype uses
+the adviser UUID as the storage tenant; the legacy `pulse-demo` chat namespace
+maps to that UUID, while an explicit tenant scope is preserved. Campaign reads
+check creator ownership and exclude soft-deleted records. Contact matching
+checks adviser assignment or, when unassigned, creator ownership. Caller-supplied
+adviser identity remains a prototype mechanism, not authenticated identity.
 
-Active means status `active` and inclusive start/end dates containing today's
+Active means status `active` (or the current seed's null default) and inclusive start/end dates containing today's
 Singapore date. The recommendation tool retains its fixed demo date.
 
 Arguments: optional `campaign_ids` (exact IDs, at most 100), `campaign_names`
@@ -664,6 +668,13 @@ PULSE is instructed to omit `fields` or pass null to show all default details;
 
 Output: `data_source: synthetic`, `as_of_date`, `columns`, `rows`, a Markdown
 `table`, `total_count`, `returned_count`, `truncated`, and a disclaimer.
+The original discovery-only prompt and table presentation are retained. Campaign
+identity lookup for recommendations uses the separate `resolve_campaign` tool;
+discovery responses do not add lookup guidance or invoke other tools.
+Stored targeting label variants are normalised in these tool results. Invalid
+or missing stored targeting criteria return `storage_unavailable` rather than
+silently broadening an audience. See the current-schema notes in
+`campaign_recommendations.md` for migration boundaries and synthetic enrichment.
 
 The MCP wrapper calls the dedicated
 `execute_get_active_campaigns(arguments, metadata)` handler in
@@ -693,6 +704,38 @@ check. It does not send communications or mutate CRM records. Client matching
 remains available through `recommend_clients_for_campaign`. Consent checks,
 authorised outreach, interaction logging, follow-up task creation and outcome
 measurement remain separate workflow work.
+
+### MCP: resolve_campaign
+
+Read-only identity lookup, separate from campaign catalogue presentation.
+Argument: `campaign_name`, a trimmed non-empty string of at most 255 characters.
+Adviser/tenant scope is supplied in `_meta.pulse_scope`, never model arguments.
+It shares discovery's scoped active-campaign query and Singapore reporting date;
+it does not retrieve clients, check consent, send communications or mutate CRM.
+
+Exact normalised names take precedence over partial names. Case/punctuation
+differences, a conversational leading "the" or trailing "campaign", and whole-word
+partial phrases are accepted. Typographical similarity is not guessed. The result
+contains `data_source: synthetic`, `as_of_date` and one of:
+
+- `status: matched`, with `campaign_id` and canonical `name`.
+- `status: ambiguous`, with `candidate_count`, up to five `candidates` (ID/name),
+  `truncated`, and a clarification message. There is no chosen top-level ID.
+- `status: not_found`, with `candidate_count: 0` and a message. Inaccessible and
+  inactive records are indistinguishable from unknown names.
+
+Missing scope, invalid arguments and database failures return safe structured
+errors using `missing_context`, `invalid_arguments` and `storage_unavailable`.
+For example, `{"campaign_name":"first home starter bundle campaign"}` can resolve
+to `{"status":"matched","campaign_id":"b2222222-2222-2222-2222-222222222222",
+"name":"First Home Starter Bundle",...}` using the current synthetic seed.
+
+The LLM chooses `resolve_campaign`, receives its result, and may request
+`recommend_clients_for_campaign` with that ID. `tool_choice="auto"` is retained.
+The registry validates and executes only requested calls; no backend sequence
+forces lookup or recommendations. Known IDs may be used directly; ambiguity
+requires the adviser to choose a campaign name. Older assistant requests for
+internal IDs are not instructions to repeat that behaviour.
 
 ### MCP: get_campaign_contact_performance
 

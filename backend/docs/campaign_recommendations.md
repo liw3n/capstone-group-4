@@ -1,5 +1,68 @@
 # Synthetic campaign recommendation prototype
 
+## Current name-based workflow (28 October 2026)
+
+The model receives the adviser message, history and MCP tool schemas with
+`tool_choice="auto"`. Guidance explains that `resolve_campaign` resolves
+a name to an internal ID, and that lookup is an intermediate step when the
+adviser asked for clients. The model may request lookup, then matching using
+the returned ID, or request matching directly when a trustworthy ID is already
+available. No recommendation-specific backend router or forced tool choice
+selects that sequence. An ambiguous name requires clarification; an unknown
+name or storage failure must not produce invented IDs or client results.
+
+`get_active_campaigns` retains its original discovery prompt, table presentation
+and exact-filter behaviour. `resolve_campaign` is a separate read-only MCP tool
+with only `campaign_name` as its model-supplied argument. It returns a compact
+`matched` result with the ID/name, `ambiguous` with up to five candidate IDs/names,
+or `not_found`. Exact normalised names take precedence; punctuation/case,
+conversational "the"/"campaign" words and whole-word partial names are supported.
+The tool does not choose between ambiguous campaigns and never invokes matching.
+Both tools share the same scoped, active-campaign repository query. No lookup
+guidance or intermediate lookup behaviour is added to the discovery response.
+
+Discovery and recommendation now read `campaign` and `contact` with UUID IDs.
+Campaign criteria come from `audience_criteria` JSON, including custom bounds;
+stored age/cash label variants and gender case are normalised for matching.
+Missing or invalid criteria fail closed instead of silently removing filters.
+Nullable campaign status means active for the current synthetic seed, while
+explicit inactive states and deleted records are excluded. Discovery uses the
+current Singapore date; recommendations retain the fixed 2026-08-26 demo date.
+
+The CRM prototype stores the adviser UUID as `tenant_id`; legacy chat metadata
+still calls its namespace `pulse-demo`. The adapter maps that namespace to the
+adviser UUID, preserves any explicitly supplied tenant, checks campaign creator
+ownership and limits contacts to those assigned to the adviser (or created by
+that adviser when unassigned). This remains a prototype identity mapping, not
+authentication or a production tenancy design.
+
+Gender and available cash are not columns of the new contact table. Matching
+uses the existing, explicitly synthetic portfolio mock used by the contact API.
+Its current cash values are much lower than the old fixtures: the current seed
+matches F/G/H for First Home Starter Bundle and no clients for Legacy Protection
+Refresh. Counts and IDs in the historical description below are not current
+seed expectations. No email/SMS consent is implied by a criteria match.
+
+Verification: `test_campaign_lookup.py` covers lookup input validation, matching,
+ambiguity, bounded candidates, scope and safe failures through MCP.
+`test_campaign_current_schema.py` covers JSON criteria, custom
+bounds, scope, model-requested lookup/matching through MCP, direct use of a known
+ID and absence of forced calls. `test_campaign_current_postgres.py` uses isolated
+temporary schemas when `PULSE_CURRENT_TEST_DATABASE_URL` is supplied; it never
+updates public demo records. Fake-provider tests verify plumbing, not actual
+model decision quality; live model checks are needed for prompt evaluation.
+
+This change does not migrate the remaining legacy performance, campaign write
+or email persistence adapters. Email confirmation and consent checks remain
+required, but those paths still need their own schema migration. Follow-up uses
+the existing `campaign_member` implementation. Saved audiences, pagination and
+Excel export are future work.
+
+## Historical implementation notes (before the UUID schema migration)
+
+The remainder of this document describes the former mock-table setup and seed
+expectations. It is retained as migration context, not current setup guidance.
+
 The adviser opens a seeded campaign, opens PULSE, and clicks **Ask for recommended
 clients** (or asks "Which clients are recommended for this campaign?"). The
 frontend submits the selected campaign ID; FastAPI verifies access and active

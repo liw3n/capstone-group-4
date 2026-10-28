@@ -43,7 +43,7 @@ def test_schema_exposes_only_campaign_and_bounded_limit():
                      "find_campaign_references", "prepare_campaign_draft",
                      "get_active_campaigns", "get_campaign_contact_performance",
                      "get_campaign_contact_ranking", "prepare_campaign_email",
-                     "confirm_campaign_email"}
+                     "confirm_campaign_email", "resolve_campaign"}
     assert set(schema["properties"]) == {"campaign_id", "limit"}
     assert schema["properties"]["limit"]["minimum"] == 1
     assert schema["properties"]["limit"]["maximum"] == 100

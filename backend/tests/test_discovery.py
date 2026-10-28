@@ -97,6 +97,13 @@ def test_expired_campaigns_and_empty_results(monkeypatch):
     assert call('get_active_campaigns')['rows'] == []
 
 
+def test_empty_exact_name_filter_keeps_discovery_response_unchanged():
+    result = call('get_active_campaigns', {'campaign_names': ['First Home Starter Bundle campaign']})
+    assert result['rows'] == []  # Preserve exact filter semantics for other callers.
+    assert 'lookup_guidance' not in result
+    assert 'lookup_guidance' not in call('get_active_campaigns')
+
+
 def test_table_escapes_cells():
     table = discovery.markdown_table(['campaign_name'], [{'campaign_name': '<b>A|B\nC</b>'}])
     assert '&lt;b&gt;A&#124;B C&lt;/b&gt;' in table
@@ -120,10 +127,20 @@ def test_repository_query_enforces_scope_and_parameterizes_filters(monkeypatch):
     def connection():
         yield Connection()
     monkeypatch.setattr(repository, '_connection', connection)
-    result = LIST_ACTIVE(repository.RequestScope(DEMO_FA), date(2026, 8, 26), ['camp-1'], ["O'Reilly"])
+    # The current schema stores UUID identities and JSON targeting criteria.
+    adviser = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+    original_fetchall = Connection.fetchall
+    def current_rows(self):
+        row = original_fetchall(self)[0]
+        row['audience_criteria'] = {'ageGroups': ['55-64'], 'cashCustomMin': 100}
+        return [row]
+    monkeypatch.setattr(Connection, 'fetchall', current_rows)
+    result = LIST_ACTIVE(repository.RequestScope(adviser), date(2026, 8, 26), ['camp-1'], ["O'Reilly"])
     sql, params = captured[0]
-    assert 'c.tenant_id = %s AND a.fa_id = %s' in sql
-    assert "c.status = 'active'" in sql and 'c.start_date <= %s AND c.end_date >= %s' in sql
+    assert 'FROM campaign AS c' in sql
+    assert 'c.tenant_id = %s AND c.created_by_user_id = %s' in sql
+    assert params[:2] == (adviser, adviser)
+    assert "COALESCE(c.status, 'active') = 'active'" in sql and 'c.start_date <= %s AND c.end_date >= %s' in sql
     assert "O'Reilly" not in sql and params[-1] == ["o'reilly"]
     assert result[0].criteria.cash_min == 100.0 and result[0].criteria.age_groups == ('55to64',)
 
