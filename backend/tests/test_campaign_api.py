@@ -1,7 +1,12 @@
+from datetime import date, datetime, timezone
+from uuid import UUID
+
+import pytest
 from fastapi.testclient import TestClient
 
 from app import main
-from app.campaigns.repository import RequestScope
+from app.campaigns import catalog
+from app.campaigns.repository import CampaignStorageUnavailable, RequestScope
 
 
 client = TestClient(main.app)
@@ -9,7 +14,7 @@ client = TestClient(main.app)
 
 def campaign_payload(**updates):
     payload = {
-        "id": "campaign-api-test",
+        "id": "b3333333-3333-3333-3333-333333333333",
         "name": "Synthetic campaign",
         "status": "active",
         "startDate": "2026-10-12",
@@ -37,10 +42,31 @@ def campaign_payload(**updates):
 
 def test_list_alias_passes_adviser_scope_to_storage(monkeypatch):
     calls = []
+    row = catalog._record({
+        "campaign_id": UUID("b3333333-3333-3333-3333-333333333333"),
+        "name": "Synthetic campaign",
+        "status": "active",
+        "origin": "advisor",
+        "start_date": date(2026, 10, 12),
+        "end_date": date(2026, 12, 31),
+        "description": "Synthetic internal brief",
+        "client_messaging": "Synthetic educational outreach message.",
+        "audience_source": "contacts",
+        "audience_criteria": {
+            "ageGroups": [],
+            "genders": ["Male", "Female"],
+            "cashBands": [],
+        },
+        "lead_count_uploaded": 0,
+        "lead_count_promoted": 0,
+        "lead_count_removed": 0,
+        "created_by_user_id": UUID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"),
+        "created_at": datetime(2026, 10, 12, tzinfo=timezone.utc),
+    })
     monkeypatch.setattr(
         main,
         "list_campaign_records",
-        lambda role, scope: calls.append((role, scope)) or [campaign_payload()],
+        lambda role, scope: calls.append((role, scope)) or [row],
     )
 
     response = client.get(
@@ -48,8 +74,34 @@ def test_list_alias_passes_adviser_scope_to_storage(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json()[0]["id"] == "campaign-api-test"
+    assert response.json()[0]["id"] == "b3333333-3333-3333-3333-333333333333"
+    assert response.json()[0]["criteria"]["genders"] == ["male", "female"]
+    assert response.json()[0]["origin"] == "advisor"
     assert calls == [("advisor", RequestScope("adv-demo"))]
+
+
+def test_list_campaigns_does_not_swallow_storage_failure(monkeypatch):
+    def fail():
+        raise CampaignStorageUnavailable("Campaign database is temporarily unavailable")
+
+    monkeypatch.setattr(catalog, "_connection", fail)
+    with pytest.raises(CampaignStorageUnavailable):
+        catalog.list_campaigns("advisor", RequestScope("adv-demo"))
+
+
+def test_campaign_list_routes_map_storage_failure_to_503(monkeypatch):
+    def fail(_role, _scope):
+        raise CampaignStorageUnavailable("Campaign database is temporarily unavailable")
+
+    monkeypatch.setattr(main, "list_campaign_records", fail)
+    for path in ("/campaigns", "/api/campaigns"):
+        response = client.get(
+            path, params={"role": "advisor", "fa_id": "adv-demo"}
+        )
+        assert response.status_code == 503
+        assert response.json() == {
+            "detail": "Campaign database is temporarily unavailable"
+        }
 
 
 def test_adviser_list_requires_scope():

@@ -9,9 +9,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-AgeGroup = Literal["under35", "35to44", "45to54", "55to64", "65plus"]
-Gender = Literal["male", "female"]
-CashBand = Literal["under50k", "50kTo250k", "250kTo1m", "above1m"]
+AgeGroup = Literal["under35", "35-44", "45-54", "55-64", "65plus"]
+Gender = Literal["Male", "Female"]
+CashBand = Literal["under50k", "50k-250k", "250k-1m", "above1m"]
 CampaignCategory = Literal[
     "retirement", "protection", "education", "legacy", "property", "other"
 ]

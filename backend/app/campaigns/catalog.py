@@ -24,15 +24,10 @@ from app.campaigns.repository import (
 CampaignRole = Literal["advisor", "marketing"]
 
 SELECT_COLUMNS = """
-    c.campaign_id, c.name, c.status, c.start_date, c.end_date,
-    c.age_groups, c.genders, c.cash_bands,
-    c.age_min, c.age_max, c.cash_min, c.cash_max,
-    c.description, c.client_message, c.banner_data_url,
-    c.origin, c.audience_source, c.channel, c.team_ids, c.advisor_ids,
-    c.created_by_advisor_id, c.created_by, c.created_at,
-    c.include_ids, c.exclude_ids, c.lead_ids,
-    c.lead_stats_uploaded, c.lead_stats_added, c.lead_stats_removed,
-    c.actions, c.email_log, c.lead_contacts
+    c.campaign_id, c.name, c.status, c.origin, c.description, c.start_date, c.end_date,
+    c.client_messaging, c.audience_criteria, c.audience_source,
+    c.lead_count_uploaded, c.lead_count_promoted, c.lead_count_removed,
+    c.created_by_user_id, c.created_at
 """
 
 
@@ -67,73 +62,57 @@ def _number(value: Any) -> float | int | None:
 
 
 def _record(row: dict[str, Any]) -> dict[str, Any]:
-    age_range = {"min": row["age_min"], "max": row["age_max"]}
-    cash_range = {"min": _number(row["cash_min"]), "max": _number(row["cash_max"])}
+    audience_criteria = row.get("audience_criteria") or {}
+    age_range = {"min": audience_criteria.get("ageCustomMin"), "max": audience_criteria.get("ageCustomMax")}
+    cash_range = {"min": _number(audience_criteria.get("cashCustomMin")), "max": _number(audience_criteria.get("cashCustomMax"))}
+    creator_id = str(row["created_by_user_id"])
     return {
-        "id": row["campaign_id"],
+        "id": str(row["campaign_id"]),
         "name": row["name"],
-        "status": row["status"],
+        "status": row["status"] or "active",
         "startDate": row["start_date"].isoformat(),
         "endDate": row["end_date"].isoformat(),
         "description": row["description"],
-        "clientMessage": row["client_message"],
-        "bannerDataUrl": row["banner_data_url"],
+        "clientMessage": row["client_messaging"],
         "origin": row["origin"],
         "audienceSource": row["audience_source"],
-        "channel": row["channel"],
-        "teamIds": list(row["team_ids"]),
-        "advisorIds": list(row["advisor_ids"]),
-        "createdByAdvisorId": row["created_by_advisor_id"],
+        "createdByAdvisorId": creator_id,
+        "channel": None,
+        "teamIds": [],
+        "advisorIds": [],
         "criteria": {
-            "ageGroups": list(row["age_groups"]),
-            "genders": list(row["genders"]),
-            "cashBands": list(row["cash_bands"]),
+            "ageGroups": audience_criteria.get("ageGroups", []),
+            "genders": audience_criteria.get("genders", []),
+            "cashBands": audience_criteria.get("cashBands", []),
             "ageRange": age_range if any(value is not None for value in age_range.values()) else None,
             "cashRange": cash_range if any(value is not None for value in cash_range.values()) else None,
         },
-        "includeIds": list(row["include_ids"]),
-        "excludeIds": list(row["exclude_ids"]),
-        "leadIds": list(row["lead_ids"]),
+        "includeIds": [],
+        "excludeIds": [],
+        "leadIds": [],
         "leadStats": {
-            "uploaded": row["lead_stats_uploaded"],
-            "added": row["lead_stats_added"],
-            "removed": row["lead_stats_removed"],
+            "uploaded": row["lead_count_uploaded"],
+            "added": row["lead_count_promoted"],
+            "removed": row["lead_count_removed"],
         },
-        "createdBy": row["created_by"],
+        "createdBy": creator_id,
         "createdAt": _timestamp(row["created_at"]),
-        "actions": dict(row["actions"]),
-        "emailLog": list(row["email_log"]),
-        "leadContacts": list(row["lead_contacts"]),
+        "actions": {},
+        "emailLog": [],
+        "leadContacts": [],
     }
 
 
 def list_campaigns(role: CampaignRole, scope: RequestScope | None) -> list[dict[str, Any]]:
     with _connection() as connection:
-        if role == "marketing":
-            rows = connection.execute(
-                f"""SELECT {SELECT_COLUMNS}
-                    FROM mock_campaign AS c
-                    WHERE c.tenant_id = %s AND c.origin = 'marketing'
-                    ORDER BY c.created_at DESC, c.campaign_id""",
-                (DEMO_TENANT,),
-            ).fetchall()
-        else:
-            if scope is None:
-                raise ValueError("Adviser request context is required")
-            rows = connection.execute(
-                f"""SELECT {SELECT_COLUMNS}
-                    FROM mock_campaign AS c
-                    WHERE c.tenant_id = %s
-                      AND (c.created_by_advisor_id = %s OR EXISTS (
-                          SELECT 1 FROM mock_campaign_advisor AS a
-                          WHERE a.tenant_id = c.tenant_id
-                            AND a.campaign_id = c.campaign_id AND a.fa_id = %s
-                      ))
-                    ORDER BY c.created_at DESC, c.campaign_id""",
-                (scope.tenant_id, scope.fa_id, scope.fa_id),
-            ).fetchall()
+        rows = connection.execute(
+            f"""SELECT {SELECT_COLUMNS}
+                FROM campaign c
+                WHERE c.tenant_id = %s
+                ORDER BY c.start_date DESC, c.campaign_id""",
+            (scope.fa_id,),
+        ).fetchall()
     return [_record(row) for row in rows]
-
 
 def _get_row(connection: Any, role: CampaignRole, scope: RequestScope | None,
              campaign_id: str) -> dict[str, Any] | None:

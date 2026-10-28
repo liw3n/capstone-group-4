@@ -38,31 +38,24 @@ def _number(value: Any) -> float | int | None:
     return int(number) if number.is_integer() else number
 
 
-def _record(row: dict[str, Any]) -> dict[str, Any]:
-    extra = dict(row["crm_data"])
+def _record(row: dict[str, Any], gender: dict[str, str], cash: dict[str, float]) -> dict[str, Any]:
+    extra = dict()
     extra.update({
         "id": row["contact_id"],
-        "name": row["name"],
+        "name": row["full_name"],
         "email": row["email"],
-        "countryCode": row["country_code"],
-        "phone": row["phone"],
+        "phone": row["mobile"],
         "dob": row["date_of_birth"].isoformat() if row["date_of_birth"] else None,
-        "gender": row["gender"],
-        "cashAmount": _number(row["available_cash"]),
-        "label": row["label"],
-        "status": row["status"],
-        "bookmarked": row["bookmarked"],
-        "needsAttention": row["needs_attention"],
+        "gender": gender.get(row["contact_id"]),
+        "cashAmount": _number(cash.get(row["contact_id"])),
+        "label": row["contact_type"],
         "optInEmail": row["opt_in_email"],
-        "optInSms": row["opt_in_sms"],
     })
     return extra
 
 
 SELECT_COLUMNS = """
-    contact_id, name, email, country_code, phone, date_of_birth, gender,
-    available_cash, label, status, bookmarked, needs_attention,
-    opt_in_email, opt_in_sms, crm_data
+    contact_id, full_name, email, mobile, date_of_birth, contact_type, opt_in_email
 """
 
 
@@ -70,12 +63,25 @@ def list_contacts(scope: RequestScope) -> list[dict[str, Any]]:
     with _connection() as connection:
         rows = connection.execute(
             f"""SELECT {SELECT_COLUMNS}
-                FROM mock_client
-                WHERE tenant_id = %s AND fa_id = %s
+                FROM contact
+                WHERE tenant_id = %s
                 ORDER BY contact_id""",
-            (scope.tenant_id, scope.fa_id),
+            (scope.fa_id,),
         ).fetchall()
-    return [_record(row) for row in rows]
+    gender, cash = _call_mock_portfolio_api([row["contact_id"] for row in rows])
+    return [_record(row, gender, cash) for row in rows]
+
+def _call_mock_portfolio_api(contact_ids: list[str]) -> tuple[dict[str, str], dict[str, float]]:
+    """
+    Mock function to simulate calling an internal GWM API.
+    Returns a tuple of two dictionaries:
+    - gender_map: mapping contact_id to gender
+    - cash_map: mapping contact_id to available_cash
+    """
+    # For demonstration purposes, we will return dummy data.
+    gender_map = {contact_id: "Male" if i % 2 == 0 else "Female" for i, contact_id in enumerate(contact_ids)}
+    cash_map = {contact_id: 10000.0 + i * 5000.0 for i, contact_id in enumerate(contact_ids)}
+    return gender_map, cash_map
 
 
 def _crm_data(payload: dict[str, Any]) -> dict[str, Any]:

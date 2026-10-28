@@ -78,6 +78,8 @@ from app.store import (
 )
 from app.tools.mcp_registry import MCPToolRegistry
 
+from uuid import UUID
+
 app = FastAPI(title="PULSE Chat API")
 
 app.add_middleware(
@@ -193,7 +195,7 @@ class EngagementStatusResponse(BaseModel):
 
 class CampaignPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=69)
+    id: UUID
     name: str = Field(min_length=1, max_length=255)
     status: Literal["draft", "active", "paused", "completed"] = "active"
     startDate: date | None = None
@@ -238,13 +240,13 @@ class CampaignStatePayload(BaseModel):
 
 class ContactPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: str = Field(pattern=CAMPAIGN_ID_PATTERN, max_length=64)
+    id: UUID
     name: str = Field(min_length=1, max_length=255)
     email: str = Field(max_length=320)
     countryCode: str = Field(default="+65", max_length=8)
     phone: str = Field(default="", max_length=32)
     dob: date | None = None
-    gender: Literal["male", "female"] | None = None
+    gender: Literal["Male", "Female"] | None = None
     cashAmount: float | None = Field(default=None, ge=0)
     label: Literal["Prospect", "Client"] | None = None
     status: Literal["lead", "contact"] = "contact"

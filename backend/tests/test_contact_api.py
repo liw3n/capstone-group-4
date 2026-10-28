@@ -1,6 +1,11 @@
+from contextlib import contextmanager
+
+import pytest
 from fastapi.testclient import TestClient
 
 from app import main
+from app.contacts import catalog
+from app.contacts.catalog import ContactStorageUnavailable
 from app.campaigns.repository import RequestScope
 
 
@@ -37,6 +42,49 @@ def test_contact_list_passes_adviser_scope(monkeypatch):
     assert response.status_code == 200
     assert response.json()[0]["id"] == "client-api-test"
     assert calls == [RequestScope("adv-demo")]
+
+
+def test_contact_list_maps_storage_failure_to_503(monkeypatch):
+    def fail(_scope):
+        raise ContactStorageUnavailable("Contact database is temporarily unavailable")
+
+    monkeypatch.setattr(main, "list_contacts", fail)
+    for path in ("/contacts", "/api/contacts"):
+        response = client.get(path, params={"fa_id": "adv-demo"})
+        assert response.status_code == 503
+        assert response.json() == {
+            "detail": "Contact database is temporarily unavailable"
+        }
+
+
+def test_contact_catalog_does_not_swallow_storage_failure(monkeypatch):
+    def fail():
+        raise ContactStorageUnavailable("Contact database is temporarily unavailable")
+
+    monkeypatch.setattr(catalog, "_connection", fail)
+    with pytest.raises(ContactStorageUnavailable):
+        catalog.list_contacts(RequestScope("adv-demo"))
+
+
+def test_contact_catalog_lists_by_request_fa_id(monkeypatch):
+    executed = []
+
+    class Cursor:
+        def fetchall(self):
+            return []
+
+    class Connection:
+        def execute(self, query, params):
+            executed.append((query, params))
+            return Cursor()
+
+    @contextmanager
+    def connection():
+        yield Connection()
+
+    monkeypatch.setattr(catalog, "_connection", connection)
+    assert catalog.list_contacts(RequestScope("adv-demo")) == []
+    assert executed[0][1] == ("adv-demo",)
 
 
 def test_contact_create_is_scoped(monkeypatch):
