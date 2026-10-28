@@ -664,6 +664,14 @@ PULSE is instructed to omit `fields` or pass null to show all default details;
 
 Output: `data_source: synthetic`, `as_of_date`, `columns`, `rows`, a Markdown
 `table`, `total_count`, `returned_count`, `truncated`, and a disclaimer.
+
+The MCP wrapper calls the dedicated
+`execute_get_active_campaigns(arguments, metadata)` handler in
+`app/tools/discovery.py`, matching the reference and performance tools' pattern.
+The handler validates scope and `ActiveCampaignArguments` before repository
+access. Its structured errors use `missing_context`, `invalid_arguments`, or
+`storage_unavailable`. The tool schema and successful result fields are unchanged.
+
 Structured keys use snake_case; display headers have spaces (Campaign ID,
 Start Date, Cash Bands). Empty array criteria display as Any; absent optional
 values display as Unknown. Results above the limit are marked truncated;

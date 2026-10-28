@@ -66,7 +66,7 @@ def test_projection_and_exact_filters():
 def test_scope_validation_and_safe_failure(monkeypatch):
     tool = 'get_active_campaigns'
     for metadata in [None, {}, {'pulse_scope': 'bad'}, {'pulse_scope': {'fa_id': '', 'tenant_id': 'pulse-demo'}}]:
-        assert discovery.execute_discovery(tool, {}, metadata)['error_code'] == 'missing_context'
+        assert discovery.execute_get_active_campaigns({}, metadata)['error_code'] == 'missing_context'
     for scope in [repository.RequestScope('other'), repository.RequestScope(DEMO_FA, 'other')]:
         assert call(tool, scope=scope)['rows'] == []
     for args in [{'tenant_id': 'other'}, {'fa_id': 'other'}, {'limit': True}, {'limit': 0},
@@ -141,14 +141,44 @@ def test_schema_and_invalid_fields():
         assert schema['properties']['limit']['maximum'] == 1000
 
 
-def test_removed_client_tool_cannot_execute_discovery():
-    metadata = {'pulse_scope': {'fa_id': DEMO_FA, 'tenant_id': 'pulse-demo'}}
-    result = discovery.execute_discovery('get_fa_clients', {}, metadata)
-    assert result['error'] == 'Unknown discovery tool'
-    assert 'rows' not in result
+@pytest.mark.parametrize("arguments", [
+    {"tool": "get_fa_clients"},
+    {"tenant_id": "other"},
+    {"fa_id": "other"},
+    {"fields": ["unknown"]},
+    {"limit": True},
+])
+def test_handler_rejects_invalid_arguments_before_repository_access(arguments, monkeypatch):
+    def unexpected_read(*args):
+        pytest.fail("Invalid arguments must not reach the repository")
+
+    monkeypatch.setattr(repository, "list_active_campaigns", unexpected_read)
+    metadata = {"pulse_scope": {"fa_id": DEMO_FA, "tenant_id": "pulse-demo"}}
+    assert discovery.execute_get_active_campaigns(arguments, metadata) == {
+        "data_source": "synthetic",
+        "error_code": "invalid_arguments",
+        "error": "Invalid tool arguments",
+    }
+
+
+def test_handler_matches_mcp_response():
+    arguments = {"campaign_ids": ["camp-1"], "fields": ["name", "start_date"]}
+    metadata = {"pulse_scope": {"fa_id": DEMO_FA, "tenant_id": "pulse-demo"}}
+    assert discovery.execute_get_active_campaigns(arguments, metadata) == call(
+        "get_active_campaigns", arguments
+    )
 
 
 def test_campaign_limits_still_report_truncation():
     result = call('get_active_campaigns', {'limit': 1})
     assert result['total_count'] == 2 and result['returned_count'] == 1
     assert result['truncated']
+
+
+def test_display_notice_omits_demo_wording_and_preserves_source_metadata():
+    result = call("get_active_campaigns")
+    assert result["data_source"] == "synthetic"
+    assert "synthetic" not in result["disclaimer"].lower()
+    assert "demo" not in result["disclaimer"].lower()
+    assert "not a product suitability assessment or financial advice" in result["disclaimer"]
+    assert "consent checks and confirmation" in result["disclaimer"]

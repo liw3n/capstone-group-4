@@ -41,7 +41,12 @@ from app.tools.campaign_draft import (
     execute_revise_campaign_draft,
 )
 from app.tools.campaign_references import execute_find_campaign_references
-from app.tools.discovery import CampaignField, CampaignId, CampaignName, execute_discovery
+from app.tools.discovery import (
+    CampaignField,
+    CampaignId,
+    CampaignName,
+    execute_get_active_campaigns,
+)
 from app.tools.performance import execute_contact_performance, execute_contact_ranking
 
 # Initialize the FastMCP server instance
@@ -323,7 +328,8 @@ def get_active_campaigns(
     fields: Annotated[list[CampaignField] | None, Field(min_length=1, max_length=12)] = None,
     limit: Annotated[int, Field(ge=1, le=1000, strict=True)] = 1000,
 ) -> dict:
-    """List accessible synthetic campaigns active today in Singapore as a table.
+    """List accessible campaigns active today in Singapore as a table.
+
     Optional exact IDs/names restrict campaigns (both filters intersect).
     Omit fields unless the user explicitly requests particular details. Defaults:
     campaign_id, name, start_date, end_date, age_groups, genders, cash_bands.
@@ -332,8 +338,15 @@ def get_active_campaigns(
     comes only from API metadata. Report empty results and truncation.
     """
     logger.info("MCP tool called: get_active_campaigns")
-    return execute_discovery('get_active_campaigns', dict(campaign_ids=campaign_ids,
-        campaign_names=campaign_names, fields=fields, limit=limit), _request_metadata(ctx))
+    return execute_get_active_campaigns(
+        {
+            "campaign_ids": campaign_ids,
+            "campaign_names": campaign_names,
+            "fields": fields,
+            "limit": limit,
+        },
+        _request_metadata(ctx),
+    )
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})

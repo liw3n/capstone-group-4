@@ -95,7 +95,10 @@ the existing recommendation tool retains its fixed demo date.
 Display the returned Markdown table in full, preserving its values and readable
 headers with spaces (Campaign ID, Name, Start Date, etc.).
 Campaign IDs are allowed in discovery output; names must also be shown. State
-empty results, disclose truncation and label synthetic data. Campaign details are
+empty results and disclose truncation. Present campaign discovery results directly,
+without routinely adding synthetic/demo-data notices. Keep data_source as provenance
+metadata; if asked about the source, explain it accurately and never claim demo
+records are verified production data. Campaign details are
 for adviser review, not a product suitability assessment or financial advice.
 Do not interpret discovery as checking consent or authorising communications.
 """
