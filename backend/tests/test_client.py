@@ -1,9 +1,17 @@
 import pytest
+import httpx
+from openai import BadRequestError
 
 from app.llm import client as client_module
 from app.config import Settings
 from app.llm.client import LLMClient
 from app.llm.errors import LLMConfigurationError
+
+
+def _bad_request(error: dict) -> BadRequestError:
+    request = httpx.Request("POST", "https://provider.example/chat/completions")
+    response = httpx.Response(400, json={"error": error}, request=request)
+    return BadRequestError("Bad request", response=response, body={"error": error})
 
 
 def test_client_requires_api_key():
@@ -73,3 +81,54 @@ def test_client_uses_configured_openai_compatible_endpoint(monkeypatch):
         captured["request"]["response_format"]["json_schema"]["name"]
         == "campaign_intent_extraction"
     )
+
+
+def test_client_retries_malformed_tool_generation_once(monkeypatch):
+    requests = []
+
+    class Completions:
+        def create(self, **kwargs):
+            requests.append(kwargs)
+            if len(requests) == 1:
+                raise _bad_request({
+                    "message": "Invalid tool call generated",
+                    "failed_generation": {"reason": "Invalid tool arguments"},
+                })
+            return "completion"
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = type("Chat", (), {"completions": Completions()})()
+
+    monkeypatch.setattr(client_module, "OpenAI", FakeOpenAI)
+    client = LLMClient(Settings(_env_file=None, groq_api_key="test-key"))
+
+    assert client.create_chat_completion(
+        [{"role": "user", "content": "Synthetic question"}],
+        [{"type": "function", "function": {"name": "example"}}],
+    ) == "completion"
+    assert len(requests) == 2
+    assert requests[1]["temperature"] == 0.2
+
+
+def test_client_does_not_retry_other_bad_requests(monkeypatch):
+    requests = []
+
+    class Completions:
+        def create(self, **kwargs):
+            requests.append(kwargs)
+            raise _bad_request({"message": "Invalid request schema"})
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = type("Chat", (), {"completions": Completions()})()
+
+    monkeypatch.setattr(client_module, "OpenAI", FakeOpenAI)
+    client = LLMClient(Settings(_env_file=None, groq_api_key="test-key"))
+
+    with pytest.raises(client_module.LLMProviderError, match="HTTP 400"):
+        client.create_chat_completion(
+            [{"role": "user", "content": "Synthetic question"}],
+            [{"type": "function", "function": {"name": "example"}}],
+        )
+    assert len(requests) == 1

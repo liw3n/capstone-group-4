@@ -383,7 +383,7 @@ def get_campaign_contact_performance(
     ] = None,
     period: Annotated[
         Literal["this_week", "last_week", "specific_week"],
-        Field(description="Use specific_week with week_of for the Monday through Sunday containing a named date in Singapore time; defaults to this_week."),
+        Field(description="Choose which week's member additions to show. specific_week needs week_of; this is not a weekly contact count."),
     ] = "this_week",
     week_of: Annotated[
         str | None,
@@ -391,11 +391,12 @@ def get_campaign_contact_performance(
               min_length=10, max_length=10, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     ] = None,
 ) -> dict:
-    """Count distinct clients contacted for one accessible synthetic campaign.
+    """Review one accessible campaign using membership and recorded email totals.
 
-    Returns campaign-to-date, current-week, previous-week, and optional named-week
-    counts from recorded outreach events. Weeks run Monday through Sunday in
-    Singapore time; week_of can be any date in the named week.
+    Returns cumulative member/email figures and members added this, last, or a
+    named Monday-Sunday week in Singapore time. Exact weekly contact or email
+    counts are unavailable without an event history. Never describe members
+    added as clients contacted.
     Adviser and tenant scope come from API metadata, never model arguments.
     """
     logger.info("MCP tool called: get_campaign_contact_performance")
@@ -409,16 +410,21 @@ def get_campaign_contact_ranking(
     ctx: Context,
     period: Annotated[
         Literal["campaign_to_date", "this_week", "last_week"],
-        Field(description="Comparison period. Defaults to each campaign's start through now; last_week is the previous Monday through Sunday in Singapore time."),
+        Field(description="Period for members_added. clients_emailed supports campaign_to_date only."),
     ] = "campaign_to_date",
+    metric: Annotated[
+        Literal["clients_emailed", "members_added"],
+        Field(description="Rank cumulative clients with a recorded email, or members added in the chosen period. Never treat either as all clients contacted."),
+    ] = "clients_emailed",
 ) -> dict:
-    """Find which accessible synthetic campaigns contacted the most distinct clients.
+    """Rank accessible campaigns by recorded email reach or member additions.
 
     Compare all campaigns available to this adviser, regardless of the selected
-    campaign. Counts come only from recorded campaign contact events.
+    campaign. Weekly email reach and general contact counts are unavailable.
     """
     logger.info("MCP tool called: get_campaign_contact_ranking")
-    return execute_contact_ranking({"period": period}, _request_metadata(ctx))
+    return execute_contact_ranking({"period": period, "metric": metric},
+                                   _request_metadata(ctx))
 
 
 # 3. Run the Server

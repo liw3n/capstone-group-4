@@ -1,6 +1,7 @@
-"""Read-only campaign contact performance through the real MCP tool."""
+"""Campaign performance reports only facts available from campaign_member."""
 import asyncio
-from datetime import datetime, timedelta
+from contextlib import nullcontext
+from datetime import datetime
 import json
 from zoneinfo import ZoneInfo
 
@@ -26,123 +27,82 @@ def call(args=None, scope=None, selected_id=None):
     return json.loads(registry.execute("get_campaign_contact_performance", json.dumps(args or {})))
 
 
-def test_model_schema_exposes_campaign_period_and_week_but_no_adviser_identity():
+def metrics(*_):
+    return {
+        "campaign_members_total": 10,
+        "clients_emailed_total": 6,
+        "email_sends_total": 9,
+        "members_added_this_week": 2,
+        "members_added_last_week": 3,
+        "members_added_requested_week": 4,
+    }
+
+
+def test_model_schema_does_not_accept_adviser_identity():
     schemas = MCPToolRegistry(server).schemas()
     schema = next(item["function"]["parameters"] for item in schemas
                   if item["function"]["name"] == "get_campaign_contact_performance")
     assert set(schema["properties"]) == {"campaign", "period", "week_of"}
 
 
-def test_selected_campaign_returns_grounded_distinct_counts(monkeypatch):
-    def counts(scope, campaign_id, start, end, week_start, last_week_start):
-        assert scope.fa_id == DEMO_FA and scope.tenant_id == "pulse-demo"
+def test_selected_campaign_reports_members_and_cumulative_email_only(monkeypatch):
+    def read(scope, campaign_id, as_of, week_start, last_start, requested_start, requested_end):
+        assert scope.fa_id == DEMO_FA
         assert campaign_id == "camp-1"
-        assert start.isoformat() == "2026-08-01T00:00:00+08:00"
-        assert end == NOW
+        assert as_of == NOW
         assert week_start.isoformat() == "2026-10-12T00:00:00+08:00"
-        assert last_week_start.isoformat() == "2026-10-05T00:00:00+08:00"
-        return 12, 5, 3, 4, 2
-    monkeypatch.setattr(repository, "count_campaign_contacts", counts)
+        assert last_start.isoformat() == "2026-10-05T00:00:00+08:00"
+        assert requested_start is requested_end is None
+        return metrics()
+    monkeypatch.setattr(repository, "get_campaign_member_metrics", read)
     result = call({"campaign": "First Home Starter Bundle"}, selected_id="camp-1")
-    assert result["campaign_id"] == "camp-1"  # Server selection takes precedence.
-    assert result["reporting_state"] == "ongoing"
-    assert result["contacted_clients_total"] == 12
-    assert result["contacted_clients_this_week"] == 5
-    assert result["first_contacted_clients_this_week"] == 3
-    assert result["contacted_clients_last_week"] == 4
-    assert result["last_week_end_date"] == "2026-10-11"
-    assert result["summary"] == ("Legacy Protection Refresh is ongoing. "
-                                 "As of 12 October 2026, 12 clients have been contacted. "
-                                 "5 were contacted this week.")
-    assert result["data_source"] == "synthetic"
+    assert result["campaign_name"] == "Legacy Protection Refresh"
+    assert result["campaign_members_total"] == 10
+    assert result["clients_emailed_total"] == 6
+    assert result["email_sends_total"] == 9
+    assert result["email_coverage_percent"] == 60.0
+    assert result["members_added_this_week"] == 2
+    assert result["contact_history_available"] is False
+    assert "contacted_clients_this_week" not in result
+    assert "unavailable" in result["summary"]
 
 
-def test_last_week_answer_uses_previous_complete_week(monkeypatch):
-    monkeypatch.setattr(repository, "count_campaign_contacts",
-                        lambda *_: (12, 5, 3, 4, 2))
-    result = call({"period": "last_week"}, selected_id="camp-1")
-    assert result["requested_period"] == "last_week"
-    assert result["contacted_clients_last_week"] == 4
-    assert result["first_contacted_clients_last_week"] == 2
-    assert result["summary"] == ("Legacy Protection Refresh is ongoing. "
-                                 "4 clients were contacted last week "
-                                 "(5 October 2026 to 11 October 2026).")
+def test_last_and_specific_week_report_additions_not_contacts(monkeypatch):
+    monkeypatch.setattr(repository, "get_campaign_member_metrics", lambda *_: metrics())
+    last = call({"period": "last_week"}, selected_id="camp-1")
+    assert last["members_added_last_week"] == 3
+    assert "3 members were added last week" in last["summary"]
+    assert "contacted_clients_last_week" not in last
+
+    def named(scope, campaign_id, as_of, week_start, last_start, requested_start, requested_end):
+        assert requested_start.isoformat() == "2026-09-28T00:00:00+08:00"
+        assert requested_end.isoformat() == "2026-10-05T00:00:00+08:00"
+        return metrics()
+    monkeypatch.setattr(repository, "get_campaign_member_metrics", named)
+    named_result = call({"period": "specific_week", "week_of": "2026-10-04"},
+                        selected_id="camp-1")
+    assert named_result["members_added_requested_week"] == 4
+    assert named_result["requested_week_start_date"] == "2026-09-28"
+    assert named_result["requested_week_end_date"] == "2026-10-04"
+    assert "contacted_clients_requested_week" not in named_result
 
 
-def test_specific_week_uses_monday_to_sunday_containing_named_date(monkeypatch):
-    monkeypatch.setattr(repository, "count_campaign_contacts",
-                        lambda *_: (12, 5, 3, 4, 2))
-
-    def named_week_count(scope, campaign_id, start, end):
-        assert scope.fa_id == DEMO_FA and scope.tenant_id == "pulse-demo"
-        assert campaign_id == "camp-1"
-        assert start.isoformat() == "2026-09-28T00:00:00+08:00"
-        assert end.isoformat() == "2026-10-05T00:00:00+08:00"
-        return 3
-
-    monkeypatch.setattr(repository, "count_campaign_contacts_in_period", named_week_count)
-    result = call({"period": "specific_week", "week_of": "2026-10-04"},
-                  selected_id="camp-1")
-    assert result["requested_period"] == "specific_week"
-    assert result["requested_week_start_date"] == "2026-09-28"
-    assert result["requested_week_end_date"] == "2026-10-04"
-    assert result["contacted_clients_requested_week"] == 3
-    assert result["summary"] == ("Legacy Protection Refresh is ongoing. "
-                                 "3 clients were contacted during the week of "
-                                 "28 September 2026 to 4 October 2026.")
-
-
-def test_specific_week_requires_valid_nonfuture_date(monkeypatch):
-    monkeypatch.setattr(repository, "count_campaign_contacts",
-                        lambda *_: (_ for _ in ()).throw(AssertionError("count must not run")))
+def test_invalid_week_and_scope_fail_closed(monkeypatch):
+    monkeypatch.setattr(repository, "get_campaign_member_metrics",
+                        lambda *_: (_ for _ in ()).throw(AssertionError("must not read")))
     assert call({"period": "specific_week"}, selected_id="camp-1")["error_code"] == "invalid_arguments"
     assert call({"period": "specific_week", "week_of": "2026-02-30"},
                 selected_id="camp-1")["error_code"] == "invalid_arguments"
-    assert call({"period": "this_week", "week_of": "2026-10-04"},
-                selected_id="camp-1")["error_code"] == "invalid_arguments"
     assert call({"period": "specific_week", "week_of": "2026-10-20"},
                 selected_id="camp-1")["error_code"] == "future_period"
-
-
-def test_specific_week_date_later_in_current_week_counts_only_to_now(monkeypatch):
-    monkeypatch.setattr(repository, "count_campaign_contacts",
-                        lambda *_: (12, 5, 3, 4, 2))
-
-    def current_week_count(scope, campaign_id, start, end):
-        assert start.isoformat() == "2026-10-12T00:00:00+08:00"
-        assert end == NOW
-        return 5
-
-    monkeypatch.setattr(repository, "count_campaign_contacts_in_period", current_week_count)
-    result = call({"period": "specific_week", "week_of": "2026-10-18"},
-                  selected_id="camp-1")
-    assert result["requested_week_start_date"] == "2026-10-12"
-    assert result["requested_week_end_date"] == "2026-10-18"
-    assert result["contacted_clients_requested_week"] == 5
-
-
-def test_exact_name_resolution_and_missing_campaign(monkeypatch):
-    from campaign_fixtures import CAMPAIGNS
-    monkeypatch.setattr(repository, "get_campaign_by_name", lambda name, scope: CAMPAIGNS[1]
-                        if name.lower() == CAMPAIGNS[1].name.lower() and scope.fa_id == DEMO_FA
-                        else (_ for _ in ()).throw(repository.CampaignUnavailable("Unavailable")))
-    monkeypatch.setattr(repository, "count_campaign_contacts", lambda *_: (4, 2, 2, 1, 1))
-    assert call({"campaign": "first home starter bundle"})["campaign_id"] == "camp-2"
-    assert call()["error_code"] == "missing_campaign"
-
-
-def test_scope_and_argument_failures_do_not_read_counts(monkeypatch):
-    monkeypatch.setattr(repository, "count_campaign_contacts",
-                        lambda *_: (_ for _ in ()).throw(AssertionError("count must not run")))
-    monkeypatch.setattr(repository, "get_campaign_by_name", lambda *_: (_ for _ in ()).throw(
-        repository.CampaignUnavailable("Campaign not found or unavailable to this adviser")))
+    assert call({"period": "this_week", "week_of": "2026-10-04"},
+                selected_id="camp-1")["error_code"] == "invalid_arguments"
     assert call(selected_id="camp-1", scope=RequestScope("adv-other-demo"))["error_code"] == "campaign_unavailable"
-    assert call({"campaign": "bad campaign"})["error_code"] == "campaign_unavailable"
+    assert call()["error_code"] == "missing_campaign"
     for args in ({"fa_id": DEMO_FA}, {"tenant_id": "pulse-demo"},
-                 {"campaign": "camp-1", "ctx": {}},
-                 {"campaign": "camp-1", "period": "yesterday"}):
+                 {"period": "yesterday"}):
         assert call(args)["error"] == "Invalid tool arguments"
-    assert call({"campaign": " "})["error_code"] == "missing_campaign"
+
     async def unscoped():
         async with Client(server) as client:
             return await client.call_tool("get_campaign_contact_performance",
@@ -150,20 +110,30 @@ def test_scope_and_argument_failures_do_not_read_counts(monkeypatch):
     assert asyncio.run(unscoped()).data["error_code"] == "missing_context"
 
 
-def test_storage_failure_and_completed_period(monkeypatch):
+def test_storage_failure_has_no_counts(monkeypatch):
     def fail(*_):
         raise repository.CampaignStorageUnavailable("Campaign database is temporarily unavailable")
-    monkeypatch.setattr(repository, "count_campaign_contacts", fail)
+    monkeypatch.setattr(repository, "get_campaign_member_metrics", fail)
     result = call(selected_id="camp-1")
     assert result["error_code"] == "storage_unavailable"
-    assert "contacted_clients_total" not in result
+    assert "campaign_members_total" not in result
 
-    from dataclasses import replace
-    from campaign_fixtures import CAMPAIGNS
-    monkeypatch.setattr(repository, "get_campaign", lambda *_: replace(
-        CAMPAIGNS[0], status="completed", end_date=NOW.date() - timedelta(days=1)))
-    monkeypatch.setattr(repository, "count_campaign_contacts", lambda scope, campaign_id,
-                        start, end, week_start, last_week_start: (6, 0, 0, 2, 1))
-    completed = call(selected_id="camp-1")
-    assert completed["reporting_state"] == "completed"
-    assert completed["summary"].startswith("Legacy Protection Refresh has ended.")
+
+def test_changing_engagement_status_does_not_increase_email_count(monkeypatch):
+    from app.campaigns import catalog
+
+    queries = []
+
+    class Connection:
+        def execute(self, query, params):
+            queries.append(query)
+            return self
+
+        def fetchone(self):
+            return {"campaign_member_id": "member-1"}
+
+    monkeypatch.setattr(catalog, "_connection", lambda: nullcontext(Connection()))
+    catalog.update_engagement_status(DEMO_FA, "camp-1", "client-1", 1)
+    assert len(queries) == 2
+    assert "SET engagement_status = %s" in queries[1]
+    assert "email_send_count" not in queries[1]

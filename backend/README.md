@@ -231,27 +231,29 @@ it independently, without a separate demo script.
 
 See [prototype assumptions, SQL and frontend verification](docs/campaign_recommendations.md).
 
-## Synthetic campaign contact history
+## Synthetic campaign member and email performance
 
-`make provision` also creates `mock_campaign_contact_event` and loads fixed-date,
-synthetic outreach records for the two seeded campaigns. Each event references
-the existing campaign by `tenant_id` and `campaign_id`, and uses the same
-`contact_id` and `fa_id` fields as `mock_client`. A campaign's name is read from
-`mock_campaign`; it is not copied into every event. The earliest `contacted_at`
-for an adviser, campaign, and client is that client's first recorded campaign
-contact. Subsequent events represent later contacts with the same client.
+`make provision` creates and seeds `campaign` and `campaign_member`. The old
+`mock_campaign_contact_event` history is no longer part of a fresh setup. The
+read-only performance tools keep their existing MCP names for chat compatibility,
+but their metrics now use only the remaining tables:
 
-Foreign keys require the event's adviser to be assigned to the campaign and to
-own the client in the synthetic data. Both performance tools filter reads by the
-request-scoped adviser's tenant and ID. This prototype history is not the
-company's `interaction` table. The read-only
-`get_campaign_contact_performance` tool reports one campaign's distinct
-contacted-client counts to date, this week, last week, or for a specific
-Monday–Sunday week containing a date supplied by the adviser. Weeks use
-Singapore time. `get_campaign_contact_ranking` compares all accessible
-campaigns by that same measure, including zero-contact campaigns and ties. The
-API still accepts a caller-supplied FA ID, so this local prototype does not
-provide production authentication.
+- `get_campaign_contact_performance` reports current member count, the number of
+  members with `email_send_count > 0`, total recorded email sends, and the
+  percentage of members with a recorded email. It also reports members **added**
+  this week, last week, or in a named Monday–Sunday week in Singapore time.
+- `get_campaign_contact_ranking` ranks adviser-owned campaigns by cumulative
+  clients with a recorded email (default), or by members added in the chosen
+  period. Weekly email ranking is unavailable. Ties and zero-count campaigns
+  are included.
+
+Member additions are not contacts. `campaign_member` has no event history for
+repeat contacts, first contact, email delivery, or the week when each email was
+sent. The tools therefore mark weekly contacted-client counts as unavailable
+instead of returning a misleading zero or treating `added_at` as `contacted_at`.
+Both tools restrict campaigns to the request-scoped adviser and tenant and count
+only member rows added by that adviser. The API's adviser ID remains caller
+supplied, so this prototype does not provide production authentication.
 
 ## PULSE campaign email
 
@@ -266,11 +268,12 @@ Only the exact phrase in the latest user message can invoke
 `confirm_campaign_email`. The server rechecks campaign access, matching and
 consent, then sends once per recipient through the configured transport. Local
 development defaults to `EMAIL_DELIVERY_MODE=mock`, which simulates accepted
-delivery without network access. Successful recipients each create a new
-`mock_campaign_contact_event` row with `channel=email` and the batch ID, so
-repeat outreach is retained while distinct-client performance counts remain
-unchanged. Repeating the same confirmation returns the saved batch result and
-does not send or log again.
+delivery without network access. The legacy confirmation implementation still
+depends on `campaign_email_send` and writes `mock_campaign_contact_event`; it
+needs a separate migration before it can run against a fresh setup using the
+new campaign tables. The performance tools read stored
+`campaign_member.email_send_count` values and do not claim that they prove
+delivery.
 
 `EMAIL_DELIVERY_MODE=gwm` selects the server-side GWM Core Email API adapter.
 Its base URL, sender and any API key must remain in backend environment settings.

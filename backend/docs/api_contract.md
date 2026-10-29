@@ -747,96 +747,63 @@ internal IDs are not instructions to repeat that behaviour.
 
 ### MCP: get_campaign_contact_performance
 
-This read-only tool reports recorded outreach for one accessible synthetic
-campaign. Model-facing arguments: optional `campaign` (exact name or ID, at most
-255 characters), optional `period` (`this_week`, the default, `last_week`, or
-`specific_week`), and optional `week_of` (a `YYYY-MM-DD` date, required only for
-`specific_week`). For a question about a specific week, set `period` to
-`specific_week` and `week_of` to any date within that week. The tool uses the
-Monday–Sunday week containing that date in Singapore time.
+This read-only tool retains its legacy name for chat compatibility. It now reads
+only `campaign` and `campaign_member`. Model-facing arguments are optional
+`campaign` (exact name or ID), optional `period` (`this_week`, `last_week`,
+or `specific_week`), and `week_of` (a `YYYY-MM-DD` date required only for
+`specific_week`). Weeks are Monday-Sunday in Singapore time. A selected
+`campaign_id` from server metadata takes precedence over a model-provided name.
 
-Tool arguments for a specific week (`YYYY-MM-DD` stands for the adviser's
-requested date):
+The API supplies adviser and tenant scope through `_meta.pulse_scope`. The
+database checks that the campaign belongs to that adviser and tenant, and
+counts only active member rows added by that adviser. Result fields include
+`campaign_members_total`, `clients_emailed_total` (members with
+`email_send_count > 0`), `email_sends_total` (sum of that stored count),
+`email_coverage_percent`, `members_added_this_week`, and
+`members_added_last_week`. A named week also returns
+`members_added_requested_week` and its start/end dates. The result includes
+`contact_history_available: false` and `weekly_email_history_available: false`.
+
+Example tool arguments:
 
 ```json
-{"campaign":"camp-1","period":"specific_week","week_of":"YYYY-MM-DD"}
+{"campaign":"First Home Starter Bundle","period":"specific_week","week_of":"YYYY-MM-DD"}
 ```
 
-`last_week` means the previous complete Monday–Sunday in Singapore time.
-When `/chat/query` or `/api/chat/query` includes a selected
-`campaign_id`, that server-bound selection takes precedence. Otherwise the tool
-uses the campaign named in the current message. A missing or inaccessible
-campaign returns the same `campaign_unavailable` error without revealing another
-adviser's relationship. Duplicate accessible names return `campaign_ambiguous`.
-
-The API supplies `fa_id` and `tenant_id` through `_meta.pulse_scope`, not tool
-arguments. The tool reads `mock_campaign_contact_event` with both scope fields,
-campaign ID, and the inclusive campaign period. It counts distinct clients who
-have at least one event from the campaign start through the current Singapore
-time or campaign end, whichever comes first. `contacted_clients_this_week`
-counts distinct clients with any event since Monday 00:00 Singapore time; repeat
-contacts do not double count. `first_contacted_clients_this_week` counts clients
-whose earliest event during the campaign period falls this week. A future-dated
-event is never counted. `contacted_clients_last_week` and
-`first_contacted_clients_last_week` use the preceding Monday 00:00 up to, but
-excluding, this Monday 00:00. The campaign-period bounds still apply. No client
-details are returned.
-
-For `specific_week`, the tool counts distinct clients with an event in the
-requested Monday–Sunday window, intersected with the campaign period and capped
-at the current Singapore time. A client contacted repeatedly in that week
-counts once. A missing, malformed, or inconsistent `week_of` returns
-`invalid_arguments`. A date later in the current week is allowed; the count
-stops at the current time. Only a week that
-has not started returns `future_period`.
-
-Result keys: `data_source: synthetic`, `campaign_id`, `campaign_name`,
-`campaign_status`, `reporting_state`, `campaign_start_date`, `campaign_end_date`,
-`reporting_period_start`, `reporting_period_end`, `as_of_date`, `as_of_time`,
-`requested_period`, `week_start_date`, `last_week_start_date`,
-`last_week_end_date`, the five counts, `summary`, and
-`metric_definition`. For the supplied sample data, the exact counts vary with
-the reporting date. The `summary` is generated from the counts, so the assistant
-can answer without estimating.
-For `specific_week`, the result also contains `week_of`,
-`requested_week_start_date`, `requested_week_end_date`, and
-`contacted_clients_requested_week`.
-
-Missing context or campaign and database outages return structured errors
-(`missing_context`, `missing_campaign`, `campaign_unavailable`,
-`campaign_ambiguous`, `invalid_campaign_context`, `invalid_arguments`,
-`future_period`, or `storage_unavailable`) without counts or raw database details. The existing
-`fa_id` in the chat request is caller-supplied; this is a local prototype, not
-authenticated adviser identity. No service sales or acquisitions are counted.
+`added_at` measures when a client joined a campaign. It is not a contact date.
+The remaining schema cannot determine clients contacted in a given week,
+first-contact dates, repeat contacts, or the week in which each email was sent.
+The tool therefore does not return the old `contacted_clients_*` fields.
+Stored email counts are cumulative snapshot values and do not prove delivery.
+The tool returns structured errors for invalid periods, missing or inaccessible
+campaigns, missing context, and unavailable storage. The request adviser ID is
+caller supplied in this prototype, so it is not production authentication.
 
 ### MCP: get_campaign_contact_ranking
 
-This read-only tool compares **distinct clients contacted** across every
-synthetic campaign accessible to the requesting adviser and tenant. It answers
-questions such as “Which campaign has the highest number of clients?” in the
-contact-performance context. It does not rank target audience size, acquisitions,
-or sales. A selected campaign in chat does not narrow this comparison.
+This read-only tool also retains its legacy name. It compares all campaigns
+owned by the scoped adviser in the tenant, including zero-count campaigns and
+ties. Its optional `metric` is `clients_emailed` (default, cumulative members
+with `email_send_count > 0`) or `members_added` (member rows added in the
+chosen period). Its optional `period` is `campaign_to_date` (default),
+`this_week`, or `last_week`. Weekly `clients_emailed` ranking returns
+`period_unavailable` because the table lacks a per-send timestamp.
 
-The only model-facing argument is optional `period`: `campaign_to_date`
-(default), `this_week`, or `last_week`. Week boundaries use Singapore time;
-`last_week` is the previous complete Monday–Sunday. A contact is counted only
-inside its campaign's dates and the requested period, before the reporting time.
-Repeat contacts with the same client count once per campaign. Campaigns with no
-recorded contacts appear with zero. The database applies adviser and tenant
-scope before aggregation and returns no client details.
-
-Result keys: `data_source: synthetic`, `metric: distinct_clients_contacted`,
-`requested_period`, `period_start_date`, `period_end_date`, `as_of_time`,
-`campaign_count`, `ranking_truncated`, `leaders_truncated`,
-`ranked_campaigns` (up to 20 entries with campaign ID, name, status, and count),
-`leaders` (all visible campaigns tied for the highest count),
-`highest_contacted_clients`, `summary`, and `metric_definition`. More than 20
-accessible campaigns sets `ranking_truncated`; if the highest-place tie extends
-beyond the returned entries, `leaders_truncated` is also true. No accessible
-campaigns produce an empty ranking and a clear summary. Missing adviser context,
-invalid arguments, and database outages return structured errors without counts.
+Results contain `metric`, `requested_period`, `ranked_campaigns` (up to 20
+rows), `leaders`, `highest_count`, tie/truncation flags, a concise `summary`,
+and `contact_history_available: false`. Each row includes its selected
+`metric_count`, total member count, cumulative emailed-client count, and
+members added in the requested period. These are synthetic prototype metrics;
+none represents all-channel contact, acquisition, service sales, or proven
+email delivery.
 
 ### MCP: prepare_campaign_email
+
+The email preview/confirmation implementation below is a legacy contract. Its
+storage still depends on `campaign_email_send` and
+`mock_campaign_contact_event`, which a fresh setup no longer creates. It must be
+migrated separately before this flow can run with only `campaign` and
+`campaign_member`; its former event writes do not feed the performance tools.
 
 This tool prepares and persists an email preview; it does not send. Model-facing
 arguments are `subject` (1-200 characters), `body` (1-10,000 characters),

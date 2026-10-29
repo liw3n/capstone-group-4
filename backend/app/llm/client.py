@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from openai import (
@@ -17,6 +18,23 @@ from app.llm.errors import (
     LLMRateLimitError,
     LLMTimeoutError,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def _failed_tool_generation(exc: APIStatusError) -> bool:
+    """Distinguish a model's malformed tool call from other bad requests."""
+    if exc.status_code != 400:
+        return False
+    try:
+        payload = exc.response.json()
+    except ValueError:
+        return False
+    error = payload.get("error") if isinstance(payload, dict) else None
+    return isinstance(error, dict) and (
+        "failed_generation" in error or error.get("code") == "tool_use_failed"
+    )
 
 
 class LLMClient:
@@ -69,10 +87,22 @@ class LLMClient:
 
     def _create_completion(self, **kwargs: Any) -> Any:
         try:
-            return self._client.chat.completions.create(
-                model=self.settings.llm_model,
-                **kwargs,
-            )
+            for attempt in range(2):
+                try:
+                    return self._client.chat.completions.create(
+                        model=self.settings.llm_model,
+                        **kwargs,
+                    )
+                except APIStatusError as exc:
+                    if (
+                        attempt == 0
+                        and kwargs.get("tools")
+                        and _failed_tool_generation(exc)
+                    ):
+                        logger.warning("LLM tool-call generation failed; retrying once")
+                        kwargs = {**kwargs, "temperature": 0.2}
+                        continue
+                    raise
         except AuthenticationError as exc:
             raise LLMAuthenticationError("LLM provider rejected its credentials") from exc
         except RateLimitError as exc:

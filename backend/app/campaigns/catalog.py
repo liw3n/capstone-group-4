@@ -278,10 +278,10 @@ def update_engagement_status(
                 """
                 INSERT INTO campaign_member (
                     tenant_id, campaign_id, contact_id, added_at,
-                    added_by_user_id, engagement_status, email_send_count
+                    added_by_user_id, engagement_status
                 ) VALUES (
                     %s, %s, %s, %s, 
-                    %s, %s, 1
+                    %s, %s
                 )
                 """,
                 (
@@ -297,7 +297,7 @@ def update_engagement_status(
             connection.execute(
                 """
                 UPDATE campaign_member
-                SET engagement_status = %s, email_send_count = email_send_count + 1
+                SET engagement_status = %s
                 WHERE tenant_id = %s AND campaign_member_id = %s
                 """,
                 (status, fa_id, latest_event["campaign_member_id"]),

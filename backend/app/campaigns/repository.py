@@ -221,93 +221,90 @@ def get_campaign_by_name(name: str, scope: RequestScope) -> Campaign:
     return _campaign_from_row(rows[0], scope)
 
 
-def count_campaign_contacts(scope: RequestScope, campaign_id: str,
-                            period_start: datetime, period_end: datetime,
-                            week_start: datetime,
-                            last_week_start: datetime) -> tuple[int, int, int, int, int]:
-    """Count distinct in-scope clients and weekly contacts from recorded events."""
+def get_campaign_member_metrics(
+    scope: RequestScope, campaign_id: str, as_of: datetime,
+    this_week_start: datetime, last_week_start: datetime,
+    requested_week_start: datetime | None = None,
+    requested_week_end: datetime | None = None,
+) -> dict:
+    """Read member growth and stored email totals without inventing contact history."""
     with _connection() as connection:
         row = connection.execute(
             """
-            WITH contacted_clients AS (
-                SELECT contact_id, MIN(contacted_at) AS first_contacted_at,
-                       BOOL_OR(contacted_at >= %s) AS contacted_this_week,
-                       BOOL_OR(contacted_at >= %s AND contacted_at < %s)
-                           AS contacted_last_week
-                FROM mock_campaign_contact_event
-                WHERE tenant_id = %s AND fa_id = %s AND campaign_id = %s
-                  AND contacted_at >= %s AND contacted_at < %s
-                GROUP BY contact_id
-            )
-            SELECT COUNT(*) AS contacted_clients_total,
-                   COUNT(*) FILTER (WHERE contacted_this_week) AS contacted_clients_this_week,
-                   COUNT(*) FILTER (WHERE first_contacted_at >= %s)
-                       AS first_contacted_clients_this_week,
-                   COUNT(*) FILTER (WHERE contacted_last_week)
-                       AS contacted_clients_last_week,
-                   COUNT(*) FILTER (WHERE first_contacted_at >= %s
-                                   AND first_contacted_at < %s)
-                       AS first_contacted_clients_last_week
-            FROM contacted_clients
+            SELECT COUNT(m.contact_id) AS campaign_members_total,
+                   COUNT(m.contact_id) FILTER (WHERE m.email_send_count > 0)
+                       AS clients_emailed_total,
+                   COALESCE(SUM(m.email_send_count), 0) AS email_sends_total,
+                   COUNT(m.contact_id) FILTER
+                       (WHERE m.added_at >= %s) AS members_added_this_week,
+                   COUNT(m.contact_id) FILTER
+                       (WHERE m.added_at >= %s AND m.added_at < %s)
+                       AS members_added_last_week,
+                   COUNT(m.contact_id) FILTER
+                       (WHERE %s::timestamptz IS NOT NULL
+                          AND m.added_at >= %s::timestamptz
+                          AND m.added_at < %s::timestamptz)
+                       AS members_added_requested_week
+            FROM campaign AS c
+            LEFT JOIN campaign_member AS m
+              ON m.tenant_id = c.tenant_id AND m.campaign_id = c.campaign_id
+             AND m.added_by_user_id = %s AND m.is_deleted = FALSE
+             AND m.added_at <= %s
+            WHERE c.tenant_id = %s AND c.campaign_id = %s
+              AND c.created_by_user_id = %s AND c.is_deleted = FALSE
+            GROUP BY c.campaign_id
             """,
-            (week_start, last_week_start, week_start,
-             scope.tenant_id, scope.fa_id, campaign_id,
-             period_start, period_end, week_start, last_week_start, week_start),
+            (this_week_start, last_week_start, this_week_start,
+             requested_week_start, requested_week_start, requested_week_end,
+             scope.fa_id, as_of, _storage_tenant_id(scope), campaign_id,
+             scope.fa_id),
         ).fetchone()
-    return (row["contacted_clients_total"], row["contacted_clients_this_week"],
-            row["first_contacted_clients_this_week"],
-            row["contacted_clients_last_week"],
-            row["first_contacted_clients_last_week"])
+    if row is None:
+        raise CampaignUnavailable("Campaign not found or unavailable to this adviser")
+    return dict(row)
 
 
-def count_campaign_contacts_in_period(scope: RequestScope, campaign_id: str,
-                                      period_start: datetime, period_end: datetime) -> int:
-    """Count distinct clients contacted in one bounded campaign period."""
-    with _connection() as connection:
-        row = connection.execute(
-            """
-            SELECT COUNT(DISTINCT contact_id) AS contacted_clients
-            FROM mock_campaign_contact_event
-            WHERE tenant_id = %s AND fa_id = %s AND campaign_id = %s
-              AND contacted_at >= %s AND contacted_at < %s
-            """,
-            (scope.tenant_id, scope.fa_id, campaign_id, period_start, period_end),
-        ).fetchone()
-    return row["contacted_clients"]
-
-
-def rank_campaigns_by_contacts(scope: RequestScope, period_start: datetime | None,
-                               period_end: datetime) -> tuple[dict, ...]:
-    """Rank accessible campaigns by distinct contacted clients, including zeroes."""
+def rank_campaigns_by_member_metric(
+    scope: RequestScope, metric: str, period_start: datetime | None,
+    period_end: datetime, as_of: datetime,
+) -> tuple[dict, ...]:
+    """Rank only adviser-owned campaigns and adviser-added members."""
+    if metric not in {"clients_emailed", "members_added"}:
+        raise ValueError("Unsupported campaign ranking metric")
+    if not all(_is_uuid(value) for value in (_storage_tenant_id(scope), scope.fa_id)):
+        return ()
+    count_column = "clients_emailed" if metric == "clients_emailed" else "members_added"
     with _connection() as connection:
         rows = connection.execute(
-            """
+            f"""
             WITH campaign_counts AS (
                 SELECT c.campaign_id, c.name, c.status,
-                       COUNT(DISTINCT e.contact_id) AS contacted_clients
-                FROM mock_campaign AS c
-                JOIN mock_campaign_advisor AS a
-                  ON a.tenant_id = c.tenant_id AND a.campaign_id = c.campaign_id
-                LEFT JOIN mock_campaign_contact_event AS e
-                  ON e.tenant_id = c.tenant_id
-                 AND e.campaign_id = c.campaign_id AND e.fa_id = a.fa_id
-                 AND e.contacted_at >=
-                     (c.start_date::timestamp AT TIME ZONE 'Asia/Singapore')
-                 AND e.contacted_at <
-                     ((c.end_date + 1)::timestamp AT TIME ZONE 'Asia/Singapore')
-                 AND (%s::timestamptz IS NULL OR e.contacted_at >= %s::timestamptz)
-                 AND e.contacted_at < %s
-                WHERE c.tenant_id = %s AND a.fa_id = %s
+                       COUNT(m.contact_id) AS campaign_members_total,
+                       COUNT(m.contact_id) FILTER
+                           (WHERE m.email_send_count > 0) AS clients_emailed,
+                       COUNT(m.contact_id) FILTER
+                           (WHERE (%s::timestamptz IS NULL
+                                   OR m.added_at >= %s::timestamptz)
+                              AND m.added_at < %s) AS members_added
+                FROM campaign AS c
+                LEFT JOIN campaign_member AS m
+                  ON m.tenant_id = c.tenant_id AND m.campaign_id = c.campaign_id
+                 AND m.added_by_user_id = %s AND m.is_deleted = FALSE
+                 AND m.added_at <= %s
+                WHERE c.tenant_id = %s AND c.created_by_user_id = %s
+                  AND c.is_deleted = FALSE
                 GROUP BY c.campaign_id, c.name, c.status
             )
-            SELECT campaign_id, name, status, contacted_clients,
+            SELECT campaign_id, name, status, campaign_members_total,
+                   clients_emailed, members_added, {count_column} AS count_value,
                    COUNT(*) OVER () AS campaign_count,
-                   COUNT(*) OVER (PARTITION BY contacted_clients) AS tie_count
+                   COUNT(*) OVER (PARTITION BY {count_column}) AS tie_count
             FROM campaign_counts
-            ORDER BY contacted_clients DESC, name, campaign_id
+            ORDER BY count_value DESC, name, campaign_id
             LIMIT 21
             """,
-            (period_start, period_start, period_end, scope.tenant_id, scope.fa_id),
+            (period_start, period_start, period_end, scope.fa_id, as_of,
+             _storage_tenant_id(scope), scope.fa_id),
         ).fetchall()
     return tuple(rows)
 
