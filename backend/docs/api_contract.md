@@ -199,8 +199,20 @@ The option response does not change `campaignDraft` or its revision.
 
 Provider or MCP tool-server failures are returned as `429`, `502`, `503`, or
 `504` depending on the failure category. Groq receives schemas discovered from
-the FastMCP server at `MCP_SERVER_URL`; tool calls are executed by that server.
-Tool execution is bounded by `LLM_MAX_TOOL_ROUNDS`.
+the FastMCP server at `MCP_SERVER_URL`, filtered through an explicit list of
+model-discoverable tools. The model cannot invoke a tool absent from that turn's
+offered list. A response asking for such a tool is rejected before any tool in
+that response is run. Email confirmation, campaign-draft preparation and draft
+revision are server-routed paths, not ordinary model-callable tools. A separate
+system instruction treats chat history, CRM text, retrieved references and tool
+results as untrusted data; it does not grant those sources authority to change
+scope or confirmation rules. Tool execution is bounded by
+`LLM_MAX_TOOL_ROUNDS`.
+
+These are prototype guardrails, not authentication. The API still accepts a
+caller-supplied `fa_id`; a real deployment must derive adviser and tenant
+identity from a verified login before relying on the storage scope checks.
+
 After a successful provider response, the user and assistant messages are stored
 in one PostgreSQL transaction. When the response carries a draft artifact, its
 insert or optimistic revision update occurs in that same transaction. A failed

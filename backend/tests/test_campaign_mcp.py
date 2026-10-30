@@ -43,7 +43,8 @@ def test_schema_exposes_only_campaign_and_bounded_limit():
                      "find_campaign_references", "prepare_campaign_draft",
                      "get_active_campaigns", "get_campaign_contact_performance",
                      "get_campaign_contact_ranking", "prepare_campaign_email",
-                     "confirm_campaign_email", "resolve_campaign"}
+                     "resolve_campaign"}
+    assert "confirm_campaign_email" not in names
     assert set(schema["properties"]) == {"campaign_id", "limit"}
     assert schema["properties"]["limit"]["minimum"] == 1
     assert schema["properties"]["limit"]["maximum"] == 100
@@ -55,11 +56,6 @@ def test_schema_exposes_only_campaign_and_bounded_limit():
     assert set(email_schema["properties"]) == {
         "subject", "body", "campaign_id", "recipient_ids"
     }
-    confirm_schema = next(
-        item["function"]["parameters"] for item in schemas
-        if item["function"]["name"] == "confirm_campaign_email"
-    )
-    assert set(confirm_schema.get("properties", {})) == set()
     assert "fa_id" not in follow_up_schema.get("required", [])
     assert "before outreach" in tool_descriptions["recommend_clients_for_campaign"]
     assert "does not identify" in tool_descriptions["recommend_clients_for_campaign"]

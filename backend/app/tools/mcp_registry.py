@@ -24,6 +24,21 @@ from app.tools.campaign_lookup import ResolveCampaignArguments
 from app.tools.performance import ContactPerformanceArguments, ContactRankingArguments
 
 
+# New MCP tools must be reviewed before the LLM can discover them. Server-only
+# draft preparation and email confirmation still use execute() directly.
+MODEL_DISCOVERABLE_TOOLS = frozenset({
+    "recommend_clients_for_campaign",
+    "campaign_follow_up",
+    "prepare_campaign_email",
+    "find_campaign_references",
+    "prepare_campaign_draft",
+    "get_active_campaigns",
+    "resolve_campaign",
+    "get_campaign_contact_performance",
+    "get_campaign_contact_ranking",
+})
+
+
 class MCPToolRegistry:
     def __init__(self, transport: Any, timeout_seconds: float = 30.0,
                  scope: RequestScope | None = None,
@@ -75,10 +90,9 @@ class MCPToolRegistry:
 
         schemas = []
         for tool in tools:
-            if tool.name == "revise_campaign_draft":
-                # Stage 6 exposes the read-only boundary over MCP. PULSE chat
-                # must not ask the model to reconstruct an authoritative prior
-                # draft from prose; Stage 7 will inject a persisted artifact.
+            if tool.name not in MODEL_DISCOVERABLE_TOOLS:
+                # Confirmation and draft revision are server-routed. An MCP
+                # tool added later is not automatically made callable by the LLM.
                 continue
             parameters = deepcopy(tool.input_schema)
             description = tool.description or ""
