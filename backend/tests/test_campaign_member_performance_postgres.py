@@ -12,7 +12,7 @@ from psycopg.conninfo import make_conninfo
 import pytest
 
 from app import config
-from app.campaigns import repository
+from app.campaigns import catalog, repository
 from app.campaigns.repository import RequestScope
 
 TABLES = Path(__file__).parents[1] / "tables"
@@ -99,6 +99,25 @@ def test_ranking_includes_zero_campaigns_and_excludes_other_adviser(database):
         scope, CAMPAIGN, NOW, NOW, NOW
     )
     assert scoped["campaign_members_total"] == 4
+    database.execute(
+        """UPDATE contact SET assigned_to_user_id = %s
+           WHERE tenant_id = %s AND contact_id = %s""",
+        (OTHER_FA, FA, "d0000000-0000-0000-0000-000000000002"),
+    )
+    assert repository.get_campaign_member_metrics(
+        scope, CAMPAIGN, NOW, NOW, NOW
+    )["campaign_members_total"] == 3
+    assert catalog.get_engagement_status(
+        FA, CAMPAIGN, "d0000000-0000-0000-0000-000000000002"
+    ) is None
+    assert catalog.update_engagement_status(
+        FA, CAMPAIGN, "d0000000-0000-0000-0000-000000000002", 2
+    ) is None
+    assert database.execute(
+        """SELECT engagement_status FROM campaign_member
+           WHERE tenant_id = %s AND campaign_id = %s AND contact_id = %s""",
+        (FA, CAMPAIGN, "d0000000-0000-0000-0000-000000000002"),
+    ).fetchone()[0] == 0
     assert repository.rank_campaigns_by_member_metric(
         RequestScope(fa_id=OTHER_FA, tenant_id=FA), "clients_emailed", None, NOW, NOW
     ) == ()

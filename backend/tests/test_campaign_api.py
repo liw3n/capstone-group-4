@@ -75,7 +75,7 @@ def test_list_alias_passes_adviser_scope_to_storage(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()[0]["id"] == "b3333333-3333-3333-3333-333333333333"
-    assert response.json()[0]["criteria"]["genders"] == ["male", "female"]
+    assert response.json()[0]["criteria"]["genders"] == ["Male", "Female"]
     assert response.json()[0]["origin"] == "advisor"
     assert calls == [("advisor", RequestScope("adv-demo"))]
 
@@ -87,6 +87,67 @@ def test_list_campaigns_does_not_swallow_storage_failure(monkeypatch):
     monkeypatch.setattr(catalog, "_connection", fail)
     with pytest.raises(CampaignStorageUnavailable):
         catalog.list_campaigns("advisor", RequestScope("adv-demo"))
+
+
+def test_catalogue_checks_campaign_creator_within_tenant(monkeypatch):
+    executed = []
+
+    class Cursor:
+        def fetchall(self):
+            return []
+
+        def fetchone(self):
+            return None
+
+    class Connection:
+        def execute(self, query, params):
+            executed.append((query, params))
+            return Cursor()
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def connection():
+        yield Connection()
+
+    monkeypatch.setattr(catalog, "_connection", connection)
+    scope = RequestScope("adv-demo", "shared-tenant")
+    assert catalog.list_campaigns("advisor", scope) == []
+    assert catalog.get_campaign_record("advisor", scope, "campaign-1") is None
+    assert executed[0][1] == ("shared-tenant", "adv-demo")
+    assert executed[1][1] == ("shared-tenant", "campaign-1", "adv-demo")
+    assert all("created_by_user_id = %s" in query for query, _ in executed)
+
+
+def test_engagement_update_does_not_write_without_campaign_and_contact_ownership(monkeypatch):
+    executed = []
+
+    class Cursor:
+        def fetchone(self):
+            return None
+
+    class Connection:
+        def execute(self, query, params):
+            executed.append((query, params))
+            return Cursor()
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def connection():
+        yield Connection()
+
+    monkeypatch.setattr(catalog, "_connection", connection)
+    assert catalog.update_engagement_status(
+        "adv-demo", "campaign-1", "contact-1", 2
+    ) is None
+    assert len(executed) == 1
+    query, params = executed[0]
+    assert "c.created_by_user_id = %s" in query
+    assert "client.assigned_to_user_id = %s" in query
+    assert params == (
+        "adv-demo", "campaign-1", "adv-demo", "contact-1", "adv-demo", "adv-demo"
+    )
 
 
 def test_campaign_list_routes_map_storage_failure_to_503(monkeypatch):
@@ -232,6 +293,9 @@ def test_engagement_status_update_requires_adviser_id(monkeypatch):
 
 def test_engagement_status_get_returns_status(monkeypatch):
     calls = []
+    adviser_id = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+    campaign_id = "b1111111-1111-1111-1111-111111111111"
+    contact_id = "d0000000-0000-0000-0000-000000000001"
 
     def get_status(fa_id, campaign_id, contact_id):
         calls.append((fa_id, campaign_id, contact_id))
@@ -246,15 +310,15 @@ def test_engagement_status_get_returns_status(monkeypatch):
     response = client.get(
         "/api/campaigns/engagement-status",
         params={
-            "campaign_id": "camp-1",
-            "fa_id": "adv-demo",
-            "contact_id": "client-001",
+            "campaign_id": campaign_id,
+            "fa_id": adviser_id,
+            "contact_id": contact_id,
         },
     )
 
     assert response.status_code == 200
     assert response.json()["status"] == 1
-    assert calls == [("adv-demo", "camp-1", "client-001")]
+    assert calls == [(adviser_id, campaign_id, contact_id)]
 
 
 def test_engagement_status_get_returns_null_when_unset(monkeypatch):

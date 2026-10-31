@@ -10,7 +10,7 @@ from psycopg.conninfo import make_conninfo
 import pytest
 
 from app import config
-from app.campaigns import repository
+from app.campaigns import catalog, repository
 from app.campaigns.matching import recommend_clients_for_campaign
 from app.campaigns.repository import CampaignInactive, RequestScope
 from app.contacts.catalog import list_contacts
@@ -97,3 +97,35 @@ def test_other_adviser_assignment_and_explicit_tenant_are_excluded(current_datab
     resolved = execute_resolve_campaign({'campaign_name': 'First Home Starter Bundle'},
                                        {'pulse_scope': {'fa_id': ADVISER, 'tenant_id': other}})
     assert resolved['status'] == 'not_found' and 'campaign_id' not in resolved
+
+
+def test_contact_and_campaign_catalogues_isolate_advisers_in_one_tenant(current_database):
+    other_adviser = str(uuid4())
+    other_contact = str(uuid4())
+    other_campaign = str(uuid4())
+    current_database.execute(
+        'INSERT INTO user_account (tenant_id, user_id) VALUES (%s, %s)',
+        (ADVISER, other_adviser),
+    )
+    current_database.execute(
+        """INSERT INTO contact
+           (tenant_id, contact_id, contact_type, full_name, mobile, created_by_user_id)
+           VALUES (%s, %s, 'Client', 'Other adviser synthetic client', '90000000', %s)""",
+        (ADVISER, other_contact, other_adviser),
+    )
+    current_database.execute(
+        """INSERT INTO campaign
+           (tenant_id, campaign_id, campaign_code, name, start_date, end_date,
+            created_by_user_id)
+           VALUES (%s, %s, %s, 'Other adviser synthetic campaign',
+                   '2026-10-01', '2026-12-31', %s)""",
+        (ADVISER, other_campaign, f'OTHER-{uuid4().hex[:12]}', other_adviser),
+    )
+
+    owner_scope = RequestScope(ADVISER, ADVISER)
+    other_scope = RequestScope(other_adviser, ADVISER)
+    assert other_contact not in {str(row['id']) for row in list_contacts(owner_scope)}
+    assert other_contact in {str(row['id']) for row in list_contacts(other_scope)}
+    assert other_campaign not in {row['id'] for row in catalog.list_campaigns('advisor', owner_scope)}
+    assert catalog.get_campaign_record('advisor', owner_scope, other_campaign) is None
+    assert catalog.get_campaign_record('advisor', other_scope, other_campaign)['id'] == other_campaign

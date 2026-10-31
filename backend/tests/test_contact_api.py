@@ -66,7 +66,7 @@ def test_contact_catalog_does_not_swallow_storage_failure(monkeypatch):
         catalog.list_contacts(RequestScope("adv-demo"))
 
 
-def test_contact_catalog_lists_by_request_fa_id(monkeypatch):
+def test_contact_catalog_lists_only_records_assigned_to_or_created_by_adviser(monkeypatch):
     executed = []
 
     class Cursor:
@@ -84,7 +84,9 @@ def test_contact_catalog_lists_by_request_fa_id(monkeypatch):
 
     monkeypatch.setattr(catalog, "_connection", connection)
     assert catalog.list_contacts(RequestScope("adv-demo")) == []
-    assert executed[0][1] == ("adv-demo",)
+    assert executed[0][1] == ("adv-demo", "adv-demo", "adv-demo")
+    assert "assigned_to_user_id = %s" in executed[0][0]
+    assert "created_by_user_id = %s" in executed[0][0]
 
 
 def test_contact_create_is_scoped(monkeypatch):
@@ -197,7 +199,10 @@ def test_contact_catalog_replace_updates_existing_contact(monkeypatch):
     update_query, update_params = executed[0]
     assert "UPDATE contact" in update_query
     assert "opt_in_email = %s\n            WHERE" in update_query
-    assert update_params[-2:] == ("adv-demo", payload["id"])
+    assert update_params[-4:] == (
+        "adv-demo", payload["id"], "adv-demo", "adv-demo"
+    )
+    assert "assigned_to_user_id = %s" in update_query
 
 
 def test_contact_replace_checks_body_and_path_ids(monkeypatch):

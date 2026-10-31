@@ -7,7 +7,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from app import config
-from app.campaigns.repository import RequestScope
+from app.campaigns.repository import RequestScope, _storage_tenant_id
 
 
 class ContactStorageUnavailable(RuntimeError):
@@ -68,9 +68,11 @@ def list_contacts(scope: RequestScope) -> list[dict[str, Any]]:
         rows = connection.execute(
             f"""SELECT {SELECT_COLUMNS}
                 FROM contact
-                WHERE tenant_id = %s
+                WHERE tenant_id = %s AND is_deleted = FALSE
+                  AND (assigned_to_user_id = %s OR
+                       (assigned_to_user_id IS NULL AND created_by_user_id = %s))
                 ORDER BY contact_id""",
-            (scope.fa_id,),
+            (_storage_tenant_id(scope), scope.fa_id, scope.fa_id),
         ).fetchall()
     gender, cash = _call_mock_portfolio_api([row["contact_id"] for row in rows])
     return [_record(row, gender, cash) for row in rows]
@@ -102,7 +104,7 @@ def create_contact(scope: RequestScope, payload: dict[str, Any]) -> dict[str, An
     with _connection() as connection:
         if connection.execute(
             "SELECT 1 FROM contact WHERE tenant_id = %s AND contact_id = %s",
-            (scope.fa_id, payload["id"]),
+            (_storage_tenant_id(scope), payload["id"]),
         ).fetchone():
             raise ValueError("Contact ID already exists")
         row = connection.execute(
@@ -117,7 +119,7 @@ def create_contact(scope: RequestScope, payload: dict[str, Any]) -> dict[str, An
             RETURNING {SELECT_COLUMNS}
             """,
             (
-                scope.fa_id, payload["id"], payload.get("label", "Prospect"),
+                _storage_tenant_id(scope), payload["id"], payload.get("label", "Prospect"),
                 payload["name"], payload["email"], payload["phone"], payload["countryCode"],
                 payload.get("dob"), payload.get("nric"), scope.fa_id,
             ),
@@ -138,20 +140,25 @@ def replace_contact(scope: RequestScope, contact_id: str,
             UPDATE contact
             SET full_name = %s, email = %s, mobile_country_code = %s, mobile = %s,
                 date_of_birth = %s, contact_type = COALESCE(%s, contact_type), opt_in_email = %s
-            WHERE tenant_id = %s AND contact_id = %s
+            WHERE tenant_id = %s AND contact_id = %s AND is_deleted = FALSE
+              AND (assigned_to_user_id = %s OR
+                   (assigned_to_user_id IS NULL AND created_by_user_id = %s))
             """,
             (
                 payload["name"], payload["email"], payload["countryCode"],
                 payload["phone"], payload.get("dob"), payload.get("label"),
-                payload.get("optInEmail", False), scope.fa_id, contact_id,
+                payload.get("optInEmail", False), _storage_tenant_id(scope),
+                contact_id, scope.fa_id, scope.fa_id,
             ),
         )
         if updated.rowcount == 0:
             return None
         row = connection.execute(
             f"""SELECT {SELECT_COLUMNS} FROM contact
-                WHERE tenant_id = %s AND contact_id = %s""",
-            (scope.fa_id, contact_id),
+                WHERE tenant_id = %s AND contact_id = %s AND is_deleted = FALSE
+                  AND (assigned_to_user_id = %s OR
+                       (assigned_to_user_id IS NULL AND created_by_user_id = %s))""",
+            (_storage_tenant_id(scope), contact_id, scope.fa_id, scope.fa_id),
         ).fetchone()
     if row is None:
         raise ContactStorageUnavailable("Updated contact could not be retrieved")

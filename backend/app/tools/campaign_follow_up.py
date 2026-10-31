@@ -3,7 +3,7 @@ from datetime import datetime
 from ..store import _connection
 
 
-def get_campaign_id(campaign: str, fa_id: str) -> str:
+def get_campaign_id(campaign: str, fa_id: str, tenant_id: str | None = None) -> str:
     """
     Query the campaign ID based on the campaign name or ID.
     """
@@ -16,8 +16,9 @@ def get_campaign_id(campaign: str, fa_id: str) -> str:
             SELECT campaign_id
             FROM campaign
             WHERE LOWER(name) LIKE LOWER(%s) AND tenant_id = %s
+              AND created_by_user_id = %s AND is_deleted = FALSE
             """,
-            (f"%{campaign}%", fa_id),
+            (f"%{campaign}%", tenant_id or fa_id, fa_id),
         ).fetchall()
 
     if not rows:
@@ -26,7 +27,7 @@ def get_campaign_id(campaign: str, fa_id: str) -> str:
         raise ValueError(f"Multiple campaigns found with name: {campaign}")
     return rows[0]["campaign_id"]
 
-def get_campaign_info(campaign_id: str, fa_id: str) -> dict:
+def get_campaign_info(campaign_id: str, fa_id: str, tenant_id: str | None = None) -> dict:
     """
     Query the campaign information based on the campaign ID.
     """
@@ -36,8 +37,9 @@ def get_campaign_info(campaign_id: str, fa_id: str) -> dict:
             SELECT campaign_id, name, start_date, end_date, audience_criteria
             FROM campaign
             WHERE campaign_id = %s AND tenant_id = %s
+              AND created_by_user_id = %s AND is_deleted = FALSE
             """,
-            (campaign_id, fa_id),
+            (campaign_id, tenant_id or fa_id, fa_id),
         ).fetchone()
 
     if not row:
@@ -52,9 +54,9 @@ def get_campaign_info(campaign_id: str, fa_id: str) -> dict:
     }
 
 
-from datetime import datetime
-
-def get_client_follow_up_list(campaign_id: str, fa_id: str) -> list[tuple[str, datetime]]:
+def get_client_follow_up_list(
+    campaign_id: str, fa_id: str, tenant_id: str | None = None
+) -> list[tuple[str, datetime]]:
     """
     Query the client follow-up list for a given campaign ID and FA ID.
     Returns clients whose max engagement status is 0 (contacted but not engaged/rejected),
@@ -64,13 +66,28 @@ def get_client_follow_up_list(campaign_id: str, fa_id: str) -> list[tuple[str, d
         # Get clients that have been contacted (max status = 0) and their last contacted date
         contacts = connection.execute(
             """
-            SELECT contact_id AS client_id, MAX(coalesce(emailed_at, added_at)) AS last_engagement_date
-            FROM campaign_member
-            WHERE campaign_id = %s AND tenant_id = %s AND is_deleted = FALSE
-            GROUP BY contact_id
-            HAVING MAX(engagement_status) = 0;
+            SELECT m.contact_id AS client_id,
+                   MAX(coalesce(m.emailed_at, m.added_at)) AS last_engagement_date
+            FROM campaign_member AS m
+            JOIN campaign AS campaign
+              ON campaign.tenant_id = m.tenant_id
+             AND campaign.campaign_id = m.campaign_id
+            JOIN contact AS client
+              ON client.tenant_id = m.tenant_id
+             AND client.contact_id = m.contact_id
+            WHERE m.campaign_id = %s AND m.tenant_id = %s
+              AND m.is_deleted = FALSE
+              AND campaign.created_by_user_id = %s
+              AND campaign.is_deleted = FALSE
+              AND m.added_by_user_id = %s
+              AND client.is_deleted = FALSE
+              AND (client.assigned_to_user_id = %s OR
+                   (client.assigned_to_user_id IS NULL
+                    AND client.created_by_user_id = %s))
+            GROUP BY m.contact_id
+            HAVING MAX(m.engagement_status) = 0;
             """,
-            (campaign_id, fa_id),
+            (campaign_id, tenant_id or fa_id, fa_id, fa_id, fa_id, fa_id),
         ).fetchall()
 
     if not contacts:
@@ -95,7 +112,7 @@ def fetch_client_portfolio(client_id: str) -> dict:
         ],
     }
 
-def fetch_client_profile(client_id: str, fa_id: str) -> dict:
+def fetch_client_profile(client_id: str, fa_id: str, tenant_id: str | None = None) -> dict:
     """
     Mock function to simulate fetching profile data for a client.
     In a real implementation, this would query the internal GWM API.
@@ -105,9 +122,11 @@ def fetch_client_profile(client_id: str, fa_id: str) -> dict:
             """
             SELECT full_name, date_of_birth, email
             FROM contact
-            WHERE contact_id = %s AND tenant_id = %s
+            WHERE contact_id = %s AND tenant_id = %s AND is_deleted = FALSE
+              AND (assigned_to_user_id = %s OR
+                   (assigned_to_user_id IS NULL AND created_by_user_id = %s))
             """,
-            (client_id, fa_id),
+            (client_id, tenant_id or fa_id, fa_id, fa_id),
         ).fetchone()
 
     if row:

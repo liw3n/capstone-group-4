@@ -21,7 +21,7 @@ from app.tools.campaign_follow_up import (
     get_campaign_info
 )
 
-from app.campaigns.repository import CAMPAIGN_ID_PATTERN
+from app.campaigns.repository import CAMPAIGN_ID_PATTERN, DEMO_TENANT, RequestScope, _storage_tenant_id
 from app.campaigns.email import (
     ConfirmCampaignEmailArguments,
     PrepareCampaignEmailArguments,
@@ -115,6 +115,10 @@ def campaign_follow_up(
             "error": "Adviser request context is required",
             "error_code": "missing_context",
         }
+    raw_tenant_id = pulse_scope.get("tenant_id", DEMO_TENANT)
+    if not isinstance(raw_tenant_id, str) or not raw_tenant_id.strip():
+        return {"error": "Tenant request context is invalid", "error_code": "missing_context"}
+    tenant_id = _storage_tenant_id(RequestScope(fa_id, raw_tenant_id))
 
     # 1. Resolve campaign source: prioritize metadata if present, otherwise use the parsed tool argument
     selected_campaign_id = metadata.get("campaign_id") if isinstance(metadata, dict) else None
@@ -137,15 +141,15 @@ def campaign_follow_up(
             "error_code": "missing_campaign",
         }
 
-    campaign_id = get_campaign_id(campaign_query, fa_id)
-    campaign_info = get_campaign_info(campaign_id, fa_id)
-    client_info = get_client_follow_up_list(campaign_id, fa_id)
+    campaign_id = get_campaign_id(campaign_query, fa_id, tenant_id)
+    campaign_info = get_campaign_info(campaign_id, fa_id, tenant_id)
+    client_info = get_client_follow_up_list(campaign_id, fa_id, tenant_id)
 
     # 2. Fetch profile and portfolio context for these clients
     client_profiles = []
-    for client_id, last_engagement_date in client_info:
+    for client_id, last_engagement_date in client_info[:limit]:
         portfolio = fetch_client_portfolio(client_id)
-        profile = fetch_client_profile(client_id, fa_id)
+        profile = fetch_client_profile(client_id, fa_id, tenant_id)
         client_profiles.append({
             "client_id": client_id,
             "portfolio_data": portfolio,

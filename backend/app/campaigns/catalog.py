@@ -19,6 +19,7 @@ from app.campaigns.repository import (
     DEMO_TENANT,
     CampaignStorageUnavailable,
     RequestScope,
+    _storage_tenant_id,
 )
 
 CampaignRole = Literal["advisor", "marketing"]
@@ -108,9 +109,10 @@ def list_campaigns(role: CampaignRole, scope: RequestScope | None) -> list[dict[
         rows = connection.execute(
             f"""SELECT {SELECT_COLUMNS}
                 FROM campaign c
-                WHERE c.tenant_id = %s
+                WHERE c.tenant_id = %s AND c.created_by_user_id = %s
+                  AND c.is_deleted = FALSE
                 ORDER BY c.start_date DESC, c.campaign_id""",
-            (scope.fa_id,),
+            (_storage_tenant_id(scope), scope.fa_id),
         ).fetchall()
     return [_record(row) for row in rows]
 
@@ -119,8 +121,9 @@ def _get_row(connection: Any, role: CampaignRole, scope: RequestScope | None,
     return connection.execute(
         f"""SELECT {SELECT_COLUMNS} FROM campaign AS c
             WHERE c.tenant_id = %s AND c.campaign_id = %s
+              AND c.created_by_user_id = %s AND c.is_deleted = FALSE
         """,
-        (scope.fa_id, campaign_id),
+        (_storage_tenant_id(scope), campaign_id, scope.fa_id),
     ).fetchone()
 
 def get_campaign_record(role: CampaignRole, scope: RequestScope | None,
@@ -261,16 +264,33 @@ def update_engagement_status(
     status: Literal[0, 1, 2] | None,
 ) -> dict[str, Any] | None:
     with _connection() as connection:
+        owned_pair = connection.execute(
+            """
+            SELECT 1
+            FROM campaign AS c
+            JOIN contact AS client ON client.tenant_id = c.tenant_id
+            WHERE c.tenant_id = %s AND c.campaign_id = %s
+              AND c.created_by_user_id = %s AND c.is_deleted = FALSE
+              AND client.contact_id = %s AND client.is_deleted = FALSE
+              AND (client.assigned_to_user_id = %s OR
+                   (client.assigned_to_user_id IS NULL
+                    AND client.created_by_user_id = %s))
+            FOR UPDATE OF c, client
+            """,
+            (fa_id, campaign_id, fa_id, contact_id, fa_id, fa_id),
+        ).fetchone()
+        if owned_pair is None:
+            return None
         latest_event = connection.execute(
             """
             SELECT campaign_member_id
             FROM campaign_member
             WHERE tenant_id = %s AND campaign_id = %s AND contact_id = %s
-                AND is_deleted = FALSE
+                AND added_by_user_id = %s AND is_deleted = FALSE
             ORDER BY added_at DESC
             LIMIT 1
             """,
-            (fa_id, campaign_id, contact_id),
+            (fa_id, campaign_id, contact_id, fa_id),
         ).fetchone()
 
         if latest_event is None:
@@ -299,8 +319,9 @@ def update_engagement_status(
                 UPDATE campaign_member
                 SET engagement_status = %s
                 WHERE tenant_id = %s AND campaign_member_id = %s
+                  AND added_by_user_id = %s AND is_deleted = FALSE
                 """,
-                (status, fa_id, latest_event["campaign_member_id"]),
+                (status, fa_id, latest_event["campaign_member_id"], fa_id),
             )
 
     return {
@@ -314,14 +335,26 @@ def get_engagement_status(fa_id: str, campaign_id: str, contact_id: str) -> dict
     with _connection() as connection:
         row = connection.execute(
             """
-            SELECT MAX(engagement_status) AS status
-            FROM campaign_member
-            WHERE tenant_id = %s AND campaign_id = %s AND contact_id = %s
+            SELECT MAX(m.engagement_status) AS status
+            FROM campaign_member AS m
+            JOIN campaign AS c
+              ON c.tenant_id = m.tenant_id AND c.campaign_id = m.campaign_id
+            JOIN contact AS client
+              ON client.tenant_id = m.tenant_id AND client.contact_id = m.contact_id
+            WHERE m.tenant_id = %s AND m.campaign_id = %s AND m.contact_id = %s
+              AND m.added_by_user_id = %s AND m.is_deleted = FALSE
+              AND c.created_by_user_id = %s AND c.is_deleted = FALSE
+              AND client.is_deleted = FALSE
+              AND (client.assigned_to_user_id = %s OR
+                   (client.assigned_to_user_id IS NULL
+                    AND client.created_by_user_id = %s))
             """,
-            (fa_id, campaign_id, contact_id),
+            (fa_id, campaign_id, contact_id, fa_id, fa_id, fa_id, fa_id),
         ).fetchone()
 
-    status = row.get("status")
+    status = row.get("status") if row else None
+    if status is None:
+        return None
 
     return {
         "campaign_id": campaign_id,

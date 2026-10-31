@@ -134,6 +134,7 @@ def test_changing_engagement_status_does_not_increase_email_count(monkeypatch):
 
     monkeypatch.setattr(catalog, "_connection", lambda: nullcontext(Connection()))
     catalog.update_engagement_status(DEMO_FA, "camp-1", "client-1", 1)
-    assert len(queries) == 2
-    assert "SET engagement_status = %s" in queries[1]
-    assert "email_send_count" not in queries[1]
+    assert len(queries) == 3
+    assert "c.created_by_user_id = %s" in queries[0]
+    assert "SET engagement_status = %s" in queries[2]
+    assert "email_send_count" not in queries[2]

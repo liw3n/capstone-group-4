@@ -86,9 +86,12 @@ def test_campaign_implementations_read_dict_rows(monkeypatch):
     class FakeConnection:
         def execute(self, query, parameters):
             if "SELECT campaign_id" in query:
-                assert parameters == ("%Legacy Protection Refresh%",)
+                assert parameters == ("%Legacy Protection Refresh%", DEMO_FA, DEMO_FA)
+                assert "created_by_user_id = %s" in query
                 return FakeResult(rows=[{"campaign_id": "camp-1"}])
-            assert parameters == ("camp-1", DEMO_FA)
+            assert parameters == ("camp-1",) + (DEMO_FA,) * 5
+            assert "campaign.created_by_user_id = %s" in query
+            assert "client.assigned_to_user_id = %s" in query
             return FakeResult(rows=[{
                 "client_id": "client-002",
                 "last_engagement_date": engagement_date,
@@ -98,7 +101,7 @@ def test_campaign_implementations_read_dict_rows(monkeypatch):
         implementations, "_connection", lambda: nullcontext(FakeConnection())
     )
 
-    assert implementations.get_campaign_id("Legacy Protection Refresh") == "camp-1"
+    assert implementations.get_campaign_id("Legacy Protection Refresh", DEMO_FA) == "camp-1"
     assert implementations.get_client_follow_up_list("camp-1", DEMO_FA) == [
         ("client-002", engagement_date)
     ]
@@ -109,12 +112,14 @@ def test_campaign_follow_up_returns_profiles_with_grounded_reasons(monkeypatch):
     portfolio_requests = []
     profile_requests = []
 
-    def get_campaign(campaign):
+    def get_campaign(campaign, fa_id, tenant_id):
         assert campaign == "camp-1"
+        assert fa_id == DEMO_FA and tenant_id == DEMO_FA
         return campaign
 
-    def get_clients(campaign_id, fa_id):
+    def get_clients(campaign_id, fa_id, tenant_id):
         assert campaign_id == "camp-1"
+        assert fa_id == DEMO_FA and tenant_id == DEMO_FA
         return [
             ("client-002", engagement_date),
             ("client-003", engagement_date),
@@ -124,12 +129,13 @@ def test_campaign_follow_up_returns_profiles_with_grounded_reasons(monkeypatch):
         portfolio_requests.append(client_id)
         return {"client_id": client_id, "portfolio_value": 125000}
 
-    def get_profile(client_id):
+    def get_profile(client_id, fa_id, tenant_id):
         profile_requests.append(client_id)
+        assert fa_id == DEMO_FA and tenant_id == DEMO_FA
         return {"client_id": client_id, "name": "Demo Client B", "age": 70}
 
     monkeypatch.setattr(server_module, "get_campaign_id", get_campaign)
-    monkeypatch.setattr(server_module, "get_campaign_info", lambda campaign_id: {
+    monkeypatch.setattr(server_module, "get_campaign_info", lambda campaign_id, *_scope: {
         "campaign_id": campaign_id, "campaign_name": "Legacy Protection Refresh",
     })
     monkeypatch.setattr(server_module, "get_client_follow_up_list", get_clients)
@@ -153,34 +159,22 @@ def test_campaign_follow_up_returns_profiles_with_grounded_reasons(monkeypatch):
         "portfolio_data": {"client_id": "client-002", "portfolio_value": 125000},
         "profile_data": {"client_id": "client-002", "name": "Demo Client B", "age": 70},
         "last_engagement_date": engagement_date.isoformat(),
-        "follow_up_reason": (
-            "No response is recorded after contact on "
-            f"{engagement_date.isoformat()}."
-        ),
-    }, {
-        "client_id": "client-003",
-        "portfolio_data": {"client_id": "client-003", "portfolio_value": 125000},
-        "profile_data": {"client_id": "client-003", "name": "Demo Client B", "age": 70},
-        "last_engagement_date": engagement_date.isoformat(),
-        "follow_up_reason": (
-            "No response is recorded after contact on "
-            f"{engagement_date.isoformat()}."
-        ),
     }]
-    assert "Give each candidate's follow_up_reason" in result["additional_instructions"]
-    assert portfolio_requests == ["client-002", "client-003"]
-    assert profile_requests == ["client-002", "client-003"]
+    assert "Dynamically formulate and explain" in result["additional_instructions"]
+    assert portfolio_requests == ["client-002"]
+    assert profile_requests == ["client-002"]
 
 
 def test_campaign_follow_up_prefers_selected_campaign_context(monkeypatch):
     resolved_campaigns = []
 
-    def get_campaign(campaign):
+    def get_campaign(campaign, fa_id, tenant_id):
         resolved_campaigns.append(campaign)
+        assert fa_id == DEMO_FA and tenant_id == DEMO_FA
         return campaign
 
     monkeypatch.setattr(server_module, "get_campaign_id", get_campaign)
-    monkeypatch.setattr(server_module, "get_campaign_info", lambda _campaign_id: {})
+    monkeypatch.setattr(server_module, "get_campaign_info", lambda *_args: {})
     monkeypatch.setattr(server_module, "get_client_follow_up_list", lambda *_args: [])
 
     registry = MCPToolRegistry(server).bind_scope(

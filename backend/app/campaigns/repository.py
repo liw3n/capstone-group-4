@@ -250,13 +250,23 @@ def get_campaign_member_metrics(
               ON m.tenant_id = c.tenant_id AND m.campaign_id = c.campaign_id
              AND m.added_by_user_id = %s AND m.is_deleted = FALSE
              AND m.added_at <= %s
+             AND EXISTS (
+                 SELECT 1 FROM contact AS member_contact
+                 WHERE member_contact.tenant_id = m.tenant_id
+                   AND member_contact.contact_id = m.contact_id
+                   AND member_contact.is_deleted = FALSE
+                   AND (member_contact.assigned_to_user_id = %s OR
+                        (member_contact.assigned_to_user_id IS NULL
+                         AND member_contact.created_by_user_id = %s))
+             )
             WHERE c.tenant_id = %s AND c.campaign_id = %s
               AND c.created_by_user_id = %s AND c.is_deleted = FALSE
             GROUP BY c.campaign_id
             """,
             (this_week_start, last_week_start, this_week_start,
              requested_week_start, requested_week_start, requested_week_end,
-             scope.fa_id, as_of, _storage_tenant_id(scope), campaign_id,
+             scope.fa_id, as_of, scope.fa_id, scope.fa_id,
+             _storage_tenant_id(scope), campaign_id,
              scope.fa_id),
         ).fetchone()
     if row is None:
@@ -291,6 +301,15 @@ def rank_campaigns_by_member_metric(
                   ON m.tenant_id = c.tenant_id AND m.campaign_id = c.campaign_id
                  AND m.added_by_user_id = %s AND m.is_deleted = FALSE
                  AND m.added_at <= %s
+                 AND EXISTS (
+                     SELECT 1 FROM contact AS member_contact
+                     WHERE member_contact.tenant_id = m.tenant_id
+                       AND member_contact.contact_id = m.contact_id
+                       AND member_contact.is_deleted = FALSE
+                       AND (member_contact.assigned_to_user_id = %s OR
+                            (member_contact.assigned_to_user_id IS NULL
+                             AND member_contact.created_by_user_id = %s))
+                 )
                 WHERE c.tenant_id = %s AND c.created_by_user_id = %s
                   AND c.is_deleted = FALSE
                 GROUP BY c.campaign_id, c.name, c.status
@@ -304,6 +323,7 @@ def rank_campaigns_by_member_metric(
             LIMIT 21
             """,
             (period_start, period_start, period_end, scope.fa_id, as_of,
+             scope.fa_id, scope.fa_id,
              _storage_tenant_id(scope), scope.fa_id),
         ).fetchall()
     return tuple(rows)
