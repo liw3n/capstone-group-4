@@ -9,6 +9,7 @@ from psycopg.rows import dict_row
 from app.config import get_settings
 from app.campaigns.models import (
     CampaignDraftArtifact,
+    CampaignDraftCreationMetadata,
     CampaignDraftOptionProposal,
     CampaignDraftRevisionArtifact,
 )
@@ -222,6 +223,7 @@ def append_exchange_with_campaign_draft(
     expected_revision: int | None = None,
     selected_option_set_id: str | None = None,
     selected_option_number: int | None = None,
+    creation: CampaignDraftCreationMetadata | None = None,
 ):
     """Atomically persist a chat exchange and its generated/revised draft."""
     from app.campaigns.draft_repository import (
@@ -233,6 +235,8 @@ def append_exchange_with_campaign_draft(
     with _connection() as connection:
         _append_exchange(connection, session_id, user_item, assistant_item)
         if isinstance(artifact, CampaignDraftRevisionArtifact):
+            if creation is not None:
+                raise ValueError("campaign revision cannot replace creation metadata")
             if draft_id is None or expected_revision is None:
                 raise ValueError("current campaign draft context is required")
             if selected_option_set_id is not None:
@@ -255,8 +259,10 @@ def append_exchange_with_campaign_draft(
                 artifact,
                 connection=connection,
             )
+        if creation is None:
+            raise ValueError("new campaign draft requires creation metadata")
         return create_campaign_draft(
-            scope, session_id, artifact, connection=connection
+            scope, session_id, artifact, creation, connection=connection
         )
 
 

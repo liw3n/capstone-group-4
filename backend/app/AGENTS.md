@@ -40,6 +40,10 @@ uv run uvicorn app.main:app --reload --port 4000
   interpretation must use strict structured output; deterministic server logic
   owns supported enums, defaults and the final readiness decision. Do not infer
   demographic or financial restrictions from vague life-stage terms.
+- Require an explicit start and end date before reference retrieval. Treat
+  natural-language date extraction as untrusted, reject incomplete or reversed
+  schedules, never invent schedule defaults, and persist the resolved dates as
+  adviser-owned creation metadata outside model-authored draft content.
 - Carry resolved age, gender and cash criteria as a server-owned lock. Supply the
   lock to generation for coherent copy and overwrite generated criteria before
   draft preparation; the model must not change adviser choices or safe defaults.

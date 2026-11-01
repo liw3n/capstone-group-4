@@ -903,7 +903,7 @@ def chat_query(
             status_code=502, detail="LLM orchestrator returned invalid option metadata"
         )
     if not result.artifacts and (
-        has_option_set or result.requested_revision_fields
+        has_option_set or result.requested_revision_fields or result.creation is not None
     ):
         raise HTTPException(
             status_code=502, detail="LLM orchestrator returned orphaned draft metadata"
@@ -917,6 +917,8 @@ def chat_query(
         candidate = result.artifacts[0]
         try:
             if isinstance(candidate, CampaignDraftRevisionArtifact):
+                if result.creation is not None:
+                    raise ValueError("campaign revision includes new creation metadata")
                 artifact = CampaignDraftRevisionArtifact.model_validate(
                     candidate.model_dump(mode="json")
                 )
@@ -928,6 +930,8 @@ def chat_query(
                     result.requested_revision_fields,
                 )
             elif isinstance(candidate, CampaignDraftOptionProposal):
+                if result.creation is not None:
+                    raise ValueError("campaign options include creation metadata")
                 if has_option_set or result.requested_revision_fields:
                     raise ValueError("campaign options include revision metadata")
                 artifact = CampaignDraftOptionProposal.model_validate(
@@ -940,6 +944,9 @@ def chat_query(
             elif isinstance(candidate, CampaignDraftArtifact):
                 if has_option_set or result.requested_revision_fields:
                     raise ValueError("new campaign draft includes revision metadata")
+                if result.creation is None:
+                    raise ValueError("new campaign draft is missing its schedule")
+                result.creation.require_complete()
                 artifact = CampaignDraftArtifact.model_validate(
                     candidate.model_dump(mode="json")
                 )
@@ -986,6 +993,11 @@ def chat_query(
             expected_revision=current_draft.revision if current_draft else None,
             selected_option_set_id=result.selected_option_set_id,
             selected_option_number=result.selected_option_number,
+            **(
+                {"creation": result.creation}
+                if isinstance(artifact, CampaignDraftArtifact)
+                else {}
+            ),
         )
 
     return QueryResponse(

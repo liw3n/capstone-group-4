@@ -189,7 +189,9 @@ failed draft validation. After successful campaign generation or selective
 revision it contains the complete server-validated structured draft, including
 its stable `draftId`, `revision`, lifecycle status, objective, citations,
 `changedFields`, validation warnings and `created: false`. Existing clients that
-read only `ai_answer` remain compatible.
+read only `ai_answer` remain compatible. Initial generation also returns the
+explicitly clarified adviser-owned schedule under `creation.startDate` and
+`creation.endDate`; those values are not model-authored draft fields.
 
 `campaignDraftOptions` is normally `null`. When the adviser asks for
 alternatives for one narrative field, it contains a persisted
@@ -223,10 +225,11 @@ For a clear but underspecified campaign-generation request, the server responds
 with at most three server-selected clarification questions before reference
 retrieval or draft generation. The hybrid interpreter first normalizes common
 punctuation and known phrases. When material questions remain, a separate strict
-JSON-schema model call extracts only planning focus, audience presence and
-explicit targeting intent. The server then validates that untrusted extraction
-against the supported enums and makes the final readiness decision. The model
-cannot add a targeting band or mark an unsupported band as valid.
+JSON-schema model call extracts only planning focus, audience presence, explicit
+targeting intent and an explicitly stated schedule. The server then validates
+that untrusted extraction against the supported enums and date-ordering rules
+and makes the final readiness decision. The model cannot add a targeting band,
+mark an unsupported band as valid or invent a missing campaign date or duration.
 
 When readiness is reached, the server materialises the resolved age, gender and
 cash values as a targeting lock. Explicit adviser selections and unrestricted
@@ -235,6 +238,9 @@ so the model can write consistent copy, and the server overwrites the generated
 `draft.criteria` with the locked values before calling
 `prepare_campaign_draft`. The existing targeting-text validation still rejects
 a demographic summary or rationale that contradicts those locked criteria.
+The server separately locks the resolved schedule and carries it to persistence
+as adviser-owned creation metadata; the schedule is never added to the
+model-generated `draft` object.
 
 The active flow is stored in PostgreSQL against the fixed tenant, supplied
 adviser and resolved chat session. The next message in that session is treated
@@ -251,7 +257,11 @@ it is not one of the supported age bands; the interpreter cannot silently round
 it to `Under 35`. Undefined cash terms such as `high-value` require a threshold.
 For conflicting explicit values, the latest clarification answer takes precedence.
 An absent gender or cash restriction is recorded in the canonical objective as
-unrestricted and locked as an empty criteria list rather than inferred. While questions remain, no MCP retrieval,
+unrestricted and locked as an empty criteria list rather than inferred. Both
+campaign dates are material: if neither is present the server asks for both, if
+one is present it asks only for the missing date, and an end date before the
+start date is rejected. `use safe defaults` may resolve targeting but never
+supplies a schedule. While questions remain, no MCP retrieval,
 draft generation, draft persistence or campaign creation occurs. A bounded
 intent-extraction call may occur. The response
 continues to use the existing `ai_answer` string, so both route forms remain
@@ -767,8 +777,10 @@ only the objective, adviser answers and pending question IDs in
 - Server-owned during initial generation: the resolved age groups, genders and
   cash bands. Later review/edit stages may change them explicitly, but the
   generation model cannot replace them.
-- Adviser-edited content: the same reviewable fields plus later builder metadata
-  such as dates, audience source and routing, once those endpoints are built.
+- Adviser-owned creation metadata: start and end dates are explicitly supplied
+  or clarified before initial generation, stored separately from model-authored
+  content, and remain editable in review. Audience source remains `contacts` in
+  this prototype.
 - Server-owned content: tenant and adviser ownership, draft and campaign IDs,
   revision and lifecycle state, campaign status, creator, timestamps, hashes,
   signing tokens and idempotency state.

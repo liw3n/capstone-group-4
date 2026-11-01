@@ -65,7 +65,8 @@ Terraform. Do not use it as a lightweight unit-test command.
   boundary itself remains read-only. Consent-safe
   outreach, interaction/task mutation and outcome tools remain incomplete.
 - Campaign clarification state is persisted per tenant, adviser and chat
-  session. Generated structured drafts and their current optimistic revision are
+  session and now includes required pre-generation schedule questions. Generated
+  structured drafts and their current optimistic revision are
   retained separately from campaign records; short-lived option sets are stored
   separately from both draft content and chat prose.
 - Adviser/session-scoped draft review routes support exact manual edits and

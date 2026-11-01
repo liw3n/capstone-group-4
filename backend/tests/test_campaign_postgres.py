@@ -386,7 +386,11 @@ def test_campaign_draft_revisions_are_scoped_idempotent_and_optimistically_locke
         get_latest_campaign_draft,
         update_campaign_draft_revision,
     )
-    from app.campaigns.models import CampaignDraftArtifact, CampaignDraftRevisionArtifact
+    from app.campaigns.models import (
+        CampaignDraftArtifact,
+        CampaignDraftCreationMetadata,
+        CampaignDraftRevisionArtifact,
+    )
     from test_orchestrator import campaign_draft_artifact
 
     chat_sql = (CREATE_TABLES / "create_campaign_chat_sessions.sql").read_text()
@@ -405,7 +409,10 @@ def test_campaign_draft_revisions_are_scoped_idempotent_and_optimistically_locke
     initial = CampaignDraftArtifact.model_validate(campaign_draft_artifact())
     campaign_count = database.execute("SELECT count(*) FROM mock_campaign").fetchone()[0]
 
-    created = create_campaign_draft(scope, "session-draft", initial)
+    creation = CampaignDraftCreationMetadata(
+        startDate="2026-11-10", endDate="2027-01-31"
+    )
+    created = create_campaign_draft(scope, "session-draft", initial, creation)
 
     assert created.revision == 1
     assert get_latest_campaign_draft(scope, "session-draft") == created
@@ -471,6 +478,7 @@ def test_campaign_draft_options_are_scoped_revision_bound_and_atomically_selecte
     )
     from app.campaigns.models import (
         CampaignDraftArtifact,
+        CampaignDraftCreationMetadata,
         CampaignDraftOptionProposal,
         CampaignDraftRevisionArtifact,
     )
@@ -494,6 +502,9 @@ def test_campaign_draft_options_are_scoped_revision_bound_and_atomically_selecte
         scope,
         "session-options",
         CampaignDraftArtifact.model_validate(campaign_draft_artifact()),
+        CampaignDraftCreationMetadata(
+            startDate="2026-11-10", endDate="2027-01-31"
+        ),
     )
     proposal = CampaignDraftOptionProposal(
         field="name",

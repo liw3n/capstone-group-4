@@ -738,6 +738,13 @@ Completed clarification also produces an in-memory targeting lock. The lock is
 included in the generation instructions and enforced over the model's structured
 criteria immediately before `prepare_campaign_draft`; narrative targeting text
 must still pass the existing consistency checks.
+The 1 November schedule-clarification extension also requires an explicit start
+and end date before retrieval. Exact or unambiguous natural-language dates are
+normalized through the same bounded extraction boundary, validated for
+completeness and ordering, and retained in a separate server-owned schedule
+lock. The lock is persisted directly as adviser-owned `creation_metadata` when
+the initial draft is stored; dates are never model-generated draft fields and
+`use safe defaults` cannot invent them.
 Stage 6 adds the read-only `revise_campaign_draft` MCP boundary. It accepts an
 authoritative current draft and revision, the original objective and citations,
 an explicit selected-field list, and proposed values for exactly those fields.
@@ -814,7 +821,8 @@ the canonical values above. Explicit storage converters now isolate the current
 campaign JSON representation. The focused Stage 1-8 regression suite passes 139
 tests; adjacent discovery, matching, REST and current-schema checks pass 63 tests,
 with four isolated PostgreSQL checks skipped when their opt-in database is absent.
-After Stage 10, the complete deterministic backend suite passes 290 tests with
+After the post-Stage-10 routing and schedule-clarification changes, the complete
+deterministic backend suite passes 299 tests with
 32 opt-in PostgreSQL tests skipped when their isolated database URLs are absent.
 The frontend suite passes 19 tests, and strict TypeScript checking and the
 production build both pass.
@@ -920,13 +928,19 @@ Implementation:
 - Resolve conflicting explicit criteria from the latest adviser answer; never let
   an earlier value or model interpretation override a later correction.
 - Ask at most three material questions covering a missing planning focus or
-  audience and ambiguous age/cash language.
+  audience, ambiguous age/cash language and a missing or invalid schedule.
+- Ask for both campaign dates when absent, only the missing date when one is
+  known, and ask again when the end precedes the start. Do not apply a schedule
+  default.
 - Do not ask for gender or cash merely because those fields exist; when omitted,
   append explicit unrestricted defaults to the canonical objective.
 - Materialise the resolved age, gender and cash criteria as a server-owned lock,
   pass it to draft generation, and overwrite model-returned criteria with it
   immediately before preparation. Continue to reject contradictory summary or
   rationale text rather than silently rewriting model-authored prose.
+- Materialise the resolved dates as a separate server-owned schedule lock and
+  pass them to initial draft persistence as `CampaignDraftCreationMetadata`, not
+  to the generated draft schema.
 - Persist the original objective, adviser answers, pending question IDs and
   bounded round count in `campaign_generation_clarifications`, scoped by tenant,
   adviser and chat session.
@@ -936,8 +950,8 @@ Implementation:
 Exit criteria:
 
 - The workforce-entrant example asks for planning focus and an explicit age group
-  before retrieval or draft generation; any model call at this point is limited
-  to schema-constrained intent extraction.
+  plus an explicit campaign schedule before retrieval or draft generation; any
+  model call at this point is limited to schema-constrained intent extraction.
 - Hyphenated natural language such as `general financial-planning` resolves the
   focus, while unsupported `Under 30` remains unresolved and re-asks only age.
 - A reply resumes the same scoped flow and generates from the original objective
@@ -949,6 +963,11 @@ Exit criteria:
   idempotent and state survives process restarts.
 - Three unresolved rounds stop safely, and cancellation never generates or
   creates a campaign.
+- A complete objective without dates asks for a schedule and performs no
+  retrieval. One known date asks only for the other; reversed dates are rejected.
+- An explicit natural-language date range is normalized and persisted on the
+  initial draft as creation metadata. Extracted dates are ignored when the
+  adviser supplied no date signal.
 
 ### Stage 6 Implement the revise campaign draft MCP tool
 
@@ -1177,6 +1196,8 @@ rollback cases. Run `terraform validate` after initialisation is available.
 - Every draft passes the shared Pydantic schema before reaching the frontend.
 - Invalid or ambiguous objectives produce safe errors, warnings or clarification
   questions rather than fabricated precision.
+- No draft is generated until the adviser has supplied a complete, ordered start
+  and end date; schedule defaults are prohibited.
 - The response includes editable fields, assumptions and targeting rationale.
 - Regenerating selected sections does not change unselected fields.
 - Generation and regeneration never insert, update, activate or send campaigns.

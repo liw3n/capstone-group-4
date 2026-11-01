@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import date
 import re
 from typing import Literal, Protocol
 from uuid import uuid4
@@ -33,6 +34,16 @@ CLARIFICATION_QUESTIONS = {
         "Which supported cash band should that term mean: Below SGD 50,000, SGD "
         "50,000–250,000, SGD 250,000–1,000,000, above SGD 1,000,000, "
         "or no cash restriction?"
+    ),
+    "schedule": (
+        "What dates should the campaign run? Provide both a start and end date, "
+        "for example 15 November 2026 to 31 December 2026."
+    ),
+    "start_date": (
+        "What date should the campaign start? Please provide an exact date."
+    ),
+    "end_date": (
+        "What date should the campaign end? Please provide an exact date."
     ),
 }
 
@@ -80,6 +91,16 @@ _NUMERIC_CASH_PATTERN = re.compile(
 _EXPLICIT_GENDER_PATTERN = re.compile(
     r"\b(?:male|female|men|women|all genders|no gender restriction)\b"
 )
+_ISO_DATE_PATTERN = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+_DATE_SIGNAL_PATTERN = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}\b|"
+    r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|"
+    r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|"
+    r"jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|"
+    r"nov(?:ember)?|dec(?:ember)?)\b|"
+    r"\b(?:today|tomorrow|next\s+(?:week|month|monday|tuesday|wednesday|"
+    r"thursday|friday|saturday|sunday))\b"
+)
 
 
 @dataclass(frozen=True)
@@ -99,10 +120,32 @@ class CampaignTargetingLock:
 
 
 @dataclass(frozen=True)
+class CampaignScheduleLock:
+    """Server-resolved adviser schedule retained outside generated content."""
+
+    start_date: date | None
+    end_date: date | None
+
+    @property
+    def complete(self) -> bool:
+        return self.start_date is not None and self.end_date is not None
+
+    @property
+    def valid(self) -> bool:
+        return (
+            self.complete
+            and self.start_date is not None
+            and self.end_date is not None
+            and self.end_date >= self.start_date
+        )
+
+
+@dataclass(frozen=True)
 class CampaignObjectiveAssessment:
     canonical_objective: str
     question_ids: tuple[str, ...]
     targeting_lock: CampaignTargetingLock
+    schedule_lock: CampaignScheduleLock
 
 
 class CampaignIntentExtraction(BaseModel):
@@ -136,6 +179,8 @@ class CampaignIntentExtraction(BaseModel):
     unsupportedCashCriterion: bool
     genders: list[Literal["male", "female"]] = Field(max_length=2)
     genderUnrestricted: bool
+    startDate: date | None
+    endDate: date | None
 
     @model_validator(mode="after")
     def validate_consistency(self):
@@ -187,11 +232,14 @@ INTENT_EXTRACTION_SCHEMA = {
             "items": {"type": "string", "enum": ["male", "female"]},
         },
         "genderUnrestricted": {"type": "boolean"},
+        "startDate": {"type": ["string", "null"]},
+        "endDate": {"type": ["string", "null"]},
     },
     "required": [
         "planningFocus", "audienceSpecified", "ageGroups", "ageUnrestricted",
         "unsupportedAgeCriterion", "cashBands", "cashUnrestricted",
         "unsupportedCashCriterion", "genders", "genderUnrestricted",
+        "startDate", "endDate",
     ],
 }
 
@@ -340,6 +388,49 @@ def _targeting_lock(
     )
 
 
+def _parse_iso_date(value: str) -> date | None:
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _deterministic_schedule(
+    statements: tuple[str, ...],
+) -> CampaignScheduleLock:
+    """Resolve only unambiguous ISO schedules without model interpretation."""
+    start_date: date | None = None
+    end_date: date | None = None
+    for statement in statements:
+        values = [
+            parsed
+            for raw in _ISO_DATE_PATTERN.findall(statement)
+            if (parsed := _parse_iso_date(raw)) is not None
+        ]
+        if len(values) >= 2:
+            start_date, end_date = values[-2:]
+        elif len(values) == 1:
+            if re.search(r"\b(?:end|until|through)\b", statement):
+                end_date = values[0]
+            elif re.search(r"\b(?:start(?:ing)?|from)\b", statement):
+                start_date = values[0]
+    return CampaignScheduleLock(start_date, end_date)
+
+
+def _schedule_lock(
+    statements: tuple[str, ...],
+    extracted: CampaignIntentExtraction | None,
+) -> CampaignScheduleLock:
+    deterministic = _deterministic_schedule(statements)
+    combined = " ".join(statements)
+    if extracted is None or not _DATE_SIGNAL_PATTERN.search(combined):
+        return deterministic
+    return CampaignScheduleLock(
+        deterministic.start_date or extracted.startDate,
+        deterministic.end_date or extracted.endDate,
+    )
+
+
 def assess_campaign_objective(
     objective: str,
     answers: tuple[str, ...] = (),
@@ -347,6 +438,10 @@ def assess_campaign_objective(
 ) -> CampaignObjectiveAssessment:
     statements = tuple(value.casefold() for value in (objective, *answers))
     combined = " ".join(statements)
+    targeting_statements = tuple(
+        _ISO_DATE_PATTERN.sub("", statement) for statement in statements
+    )
+    targeting_combined = " ".join(targeting_statements)
     normalised = _normalise_for_matching(combined)
     use_defaults = bool(
         re.search(r"\buse (?:safe )?defaults?\b", combined)
@@ -369,7 +464,7 @@ def assess_campaign_objective(
         question_ids.append("audience")
 
     explicit_age = _latest_explicit_dimension(
-        statements, _SUPPORTED_AGE_PATTERN, _NUMERIC_AGE_PATTERN
+        targeting_statements, _SUPPORTED_AGE_PATTERN, _NUMERIC_AGE_PATTERN
     )
     if explicit_age is not None:
         supported_age = bool(_SUPPORTED_AGE_PATTERN.search(explicit_age))
@@ -383,16 +478,16 @@ def assess_campaign_objective(
         ) or bool(
             extracted is not None
             and extracted.ageGroups
-            and _AMBIGUOUS_AGE_PATTERN.search(combined)
+            and _AMBIGUOUS_AGE_PATTERN.search(targeting_combined)
         )
     if (
-        (_AMBIGUOUS_AGE_PATTERN.search(combined) and not supported_age)
+        (_AMBIGUOUS_AGE_PATTERN.search(targeting_combined) and not supported_age)
         or unsupported_age
     ) and not unrestricted_targeting:
         question_ids.append("age")
 
     explicit_cash = _latest_explicit_dimension(
-        statements, _SUPPORTED_CASH_PATTERN, _NUMERIC_CASH_PATTERN
+        targeting_statements, _SUPPORTED_CASH_PATTERN, _NUMERIC_CASH_PATTERN
     )
     if explicit_cash is not None:
         supported_cash = bool(_SUPPORTED_CASH_PATTERN.search(explicit_cash))
@@ -406,13 +501,22 @@ def assess_campaign_objective(
         ) or bool(
             extracted is not None
             and extracted.cashBands
-            and _AMBIGUOUS_CASH_PATTERN.search(combined)
+            and _AMBIGUOUS_CASH_PATTERN.search(targeting_combined)
         )
     if (
-        (_AMBIGUOUS_CASH_PATTERN.search(combined) and not supported_cash)
+        (_AMBIGUOUS_CASH_PATTERN.search(targeting_combined) and not supported_cash)
         or unsupported_cash
     ) and not unrestricted_targeting:
         question_ids.append("cash")
+
+    schedule_lock = _schedule_lock(statements, extracted)
+    if not schedule_lock.complete or not schedule_lock.valid:
+        if schedule_lock.start_date is None and schedule_lock.end_date is not None:
+            question_ids.append("start_date")
+        elif schedule_lock.end_date is None and schedule_lock.start_date is not None:
+            question_ids.append("end_date")
+        else:
+            question_ids.append("schedule")
 
     clarification = ""
     if answers:
@@ -433,6 +537,12 @@ def assess_campaign_objective(
         defaults.append("Gender targeting: no gender restriction.")
     if not supported_cash:
         defaults.append("Cash targeting: no cash restriction.")
+    if schedule_lock.valid:
+        defaults.append(
+            "Campaign schedule: "
+            f"{schedule_lock.start_date.isoformat()} to "
+            f"{schedule_lock.end_date.isoformat()}."
+        )
     canonical = objective + clarification
     if not question_ids:
         additions = interpreted + defaults
@@ -443,7 +553,8 @@ def assess_campaign_objective(
     return CampaignObjectiveAssessment(
         canonical.strip(),
         tuple(question_ids[:3]),
-        _targeting_lock(statements, explicit_age, explicit_cash),
+        _targeting_lock(targeting_statements, explicit_age, explicit_cash),
+        schedule_lock,
     )
 
 
@@ -455,7 +566,8 @@ def render_campaign_clarification(question_ids: tuple[str, ...]) -> str:
     return (
         "## A few details before I draft the campaign\n\n"
         f"{questions}\n\n"
-        "Reply in one message, or say **use safe defaults**. You can also say "
+        "Reply in one message. You may say **use safe defaults** for targeting, "
+        "but the campaign schedule must be explicit. You can also say "
         "**cancel campaign draft**.\n\n"
         "No campaign draft has been generated or created yet."
     )

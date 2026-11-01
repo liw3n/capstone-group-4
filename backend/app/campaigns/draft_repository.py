@@ -433,9 +433,11 @@ def create_campaign_draft(
     scope: RequestScope,
     session_id: str,
     artifact: CampaignDraftArtifact,
+    creation: CampaignDraftCreationMetadata,
     *,
     connection=None,
 ) -> PersistedCampaignDraftArtifact:
+    creation.require_complete()
     draft_id = str(uuid4())
     model_version = getattr(config.get_settings(), "llm_model", None)
 
@@ -444,9 +446,9 @@ def create_campaign_draft(
             f"""
             INSERT INTO campaign_generation_drafts
                 (draft_id, tenant_id, fa_id, session_id, objective,
-                 references_used, draft, validation, revision, status,
+                 references_used, draft, creation_metadata, validation, revision, status,
                  changed_fields, model_version, prompt_version)
-            SELECT %s, %s, %s, sessions.session_id, %s, %s, %s, %s,
+            SELECT %s, %s, %s, sessions.session_id, %s, %s, %s, %s, %s,
                    1, 'generated', ARRAY[]::TEXT[], %s, 'stage-7-v1'
             FROM campaign_chat_sessions AS sessions
             WHERE sessions.session_id = %s AND sessions.fa_id = %s
@@ -459,6 +461,7 @@ def create_campaign_draft(
                 artifact.objective,
                 Jsonb([item.model_dump(mode="json") for item in artifact.referencesUsed]),
                 Jsonb(artifact.draft.model_dump(mode="json")),
+                Jsonb(creation.model_dump(mode="json")),
                 Jsonb(artifact.validation.model_dump(mode="json")),
                 model_version,
                 session_id,

@@ -32,7 +32,8 @@ synthetic seed scripts are tracked in `pulse_schema_migration`.
 
 - Chat and synthetic campaign records are persisted, but production-compatible
   contact/interaction/task tables do not support the full workflow yet.
-- `campaign_generation_clarifications` retains bounded pre-generation answers;
+- `campaign_generation_clarifications` retains bounded pre-generation answers
+  and pending targeting/schedule question IDs;
   `campaign_generation_drafts` retains the current validated review-only draft
   and optimistic revision; `campaign_generation_draft_options` retains
   short-lived, revision-bound narrative choices. The chat session holds only the

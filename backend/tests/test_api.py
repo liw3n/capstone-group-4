@@ -25,12 +25,14 @@ class FakeOrchestrator:
         requested_revision_fields=(),
         selected_option_set_id=None,
         selected_option_number=None,
+        creation=None,
     ):
         self.answer = answer
         self.artifacts = tuple(artifacts)
         self.requested_revision_fields = tuple(requested_revision_fields)
         self.selected_option_set_id = selected_option_set_id
         self.selected_option_number = selected_option_number
+        self.creation = creation
         self.calls = []
 
     def run(self, message, history, **context):
@@ -41,6 +43,7 @@ class FakeOrchestrator:
             self.selected_option_set_id,
             self.selected_option_number,
             self.requested_revision_fields,
+            self.creation,
         )
 
 
@@ -135,12 +138,17 @@ def test_api_alias_uses_same_query_handler(monkeypatch):
 
 
 def test_generation_returns_and_atomically_persists_structured_draft(monkeypatch):
-    from app.campaigns.models import CampaignDraftArtifact
+    from app.campaigns.models import CampaignDraftArtifact, CampaignDraftCreationMetadata
     from test_orchestrator import campaign_draft_artifact, persisted_campaign_draft
 
     artifact = CampaignDraftArtifact.model_validate(campaign_draft_artifact())
     persisted = persisted_campaign_draft()
-    orchestrator = FakeOrchestrator("Rendered draft", (artifact,))
+    creation = CampaignDraftCreationMetadata(
+        startDate="2026-11-10", endDate="2027-01-31"
+    )
+    orchestrator = FakeOrchestrator(
+        "Rendered draft", (artifact,), creation=creation
+    )
     atomic_calls = []
     monkeypatch.setattr(main, "latest_session", lambda _fa_id: session())
     monkeypatch.setattr(main, "get_history", lambda _session_id: [])
@@ -169,6 +177,35 @@ def test_generation_returns_and_atomically_persists_structured_draft(monkeypatch
     assert response.json()["campaignDraft"]["draftId"] == persisted.draftId
     assert response.json()["campaignDraft"]["revision"] == 1
     assert atomic_calls[0][0][4] == artifact
+    assert atomic_calls[0][1]["creation"] == creation
+
+
+def test_generation_artifact_without_locked_schedule_is_rejected(monkeypatch):
+    from app.campaigns.models import CampaignDraftArtifact
+    from test_orchestrator import campaign_draft_artifact
+
+    artifact = CampaignDraftArtifact.model_validate(campaign_draft_artifact())
+    monkeypatch.setattr(main, "latest_session", lambda _fa_id: session())
+    monkeypatch.setattr(main, "get_history", lambda _session_id: [])
+    monkeypatch.setattr(main, "get_latest_campaign_draft", lambda *_args: None)
+    monkeypatch.setattr(
+        main, "get_orchestrator", lambda: FakeOrchestrator("Draft", (artifact,))
+    )
+    monkeypatch.setattr(
+        main,
+        "append_exchange_with_campaign_draft",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("an unscheduled draft must not be persisted")
+        ),
+    )
+
+    response = client.post(
+        "/api/chat/query",
+        json={"fa_id": "fa-1", "message_content": "Create a campaign"},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "LLM orchestrator returned an invalid artifact"
 
 
 class FakeDraftReviewOrchestrator:

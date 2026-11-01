@@ -340,6 +340,8 @@ def intent_extraction(**overrides):
         "unsupportedCashCriterion": False,
         "genders": [],
         "genderUnrestricted": False,
+        "startDate": None,
+        "endDate": None,
     }
     payload.update(overrides)
     return completion(message(content=json.dumps(payload)))
@@ -818,14 +820,23 @@ def test_full_campaign_request_renders_active_draft_without_restart():
     assert "No draft fields were changed" in result.answer
 
 
-def test_generation_wording_does_not_replace_an_active_draft_implicitly():
+@pytest.mark.parametrize(
+    "message_value",
+    [
+        "Please create a retirement campaign",
+        "Help me generate a campaign targeting male students",
+    ],
+)
+def test_generation_wording_does_not_replace_an_active_draft_implicitly(
+    message_value,
+):
     client = FakeClient([])
     orchestrator = ChatOrchestrator(
         client, settings(), CampaignRevisionRegistry()
     )
 
     result = orchestrator.run(
-        "Please create a retirement campaign",
+        message_value,
         [],
         scope=RequestScope("fa-1"),
         session_id="session-1",
@@ -948,6 +959,34 @@ def test_revision_without_a_stored_draft_does_not_restart_generation():
     assert result.artifacts == ()
 
 
+def test_whole_campaign_generation_with_targeting_is_not_routed_as_revision():
+    message_value = "Help me generate a campaign targeting male students"
+    client = FakeClient([intent_extraction(genders=["male"])])
+    clarification_store = FakeClarificationStore()
+    orchestrator = ChatOrchestrator(
+        client,
+        settings(),
+        CampaignGenerationRegistry(campaign_draft_artifact()),
+        clarification_store=clarification_store,
+    )
+
+    assert _is_campaign_generation_request(message_value) is True
+    assert is_campaign_revision_candidate(message_value) is False
+    result = orchestrator.run(
+        message_value,
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        revision_context_checked=True,
+    )
+
+    assert "No campaign draft is available to revise" not in result
+    assert "What should the campaign primarily cover" in result
+    assert "Which supported age group should be used" in result
+    assert client.calls[0]["schema_name"] == "campaign_intent_extraction"
+    assert clarification_store.active is not None
+
+
 def test_option_request_without_a_stored_draft_does_not_fall_into_generic_chat():
     orchestrator = ChatOrchestrator(
         FakeClient([]), settings(), CampaignRevisionRegistry()
@@ -976,7 +1015,9 @@ def test_successful_campaign_draft_is_rendered_without_another_model_call():
     registry = CampaignGenerationRegistry(artifact)
     orchestrator = ChatOrchestrator(client, settings(), registry)
 
-    result = orchestrator.run("Create a retirement campaign", [])
+    result = orchestrator.run(
+        "Create a retirement campaign from 2026-11-10 to 2027-01-31", []
+    )
 
     assert len(client.calls) == 1
     assert client.calls[0]["structured"] is True
@@ -999,6 +1040,121 @@ def test_successful_campaign_draft_is_rendered_without_another_model_call():
     assert "### Client message" in result
     assert "### Disclaimer" in result
     assert "Draft only — not created" in result
+    assert result.creation is not None
+    assert result.creation.startDate.isoformat() == "2026-11-10"
+    assert result.creation.endDate.isoformat() == "2027-01-31"
+
+
+def test_complete_objective_without_schedule_requests_dates_before_retrieval():
+    client = FakeClient([intent_extraction()])
+    registry = CampaignGenerationRegistry(campaign_draft_artifact())
+    store = FakeClarificationStore()
+    orchestrator = ChatOrchestrator(
+        client, settings(), registry, clarification_store=store
+    )
+
+    result = orchestrator.run(
+        "Create a retirement campaign for all clients",
+        [], scope=RequestScope("fa-1"), session_id="session-1",
+    )
+
+    assert "What dates should the campaign run" in result
+    assert store.active.pending_question_ids == ("schedule",)
+    assert registry.executed == []
+
+
+def test_one_explicit_schedule_date_requests_only_the_missing_date():
+    assessment = assess_campaign_objective(
+        "Create a retirement campaign for all clients starting 2026-11-10"
+    )
+
+    assert assessment.question_ids == ("end_date",)
+    assert assessment.schedule_lock.start_date.isoformat() == "2026-11-10"
+    assert assessment.schedule_lock.end_date is None
+
+
+def test_bare_date_reply_uses_the_pending_end_date_question_context():
+    artifact = campaign_draft_artifact()
+    client = FakeClient([
+        intent_extraction(startDate="2026-11-10"),
+        completion(message(content=json.dumps({
+            "referencesUsed": artifact["referencesUsed"],
+            "draft": artifact["draft"],
+        }))),
+    ])
+    store = FakeClarificationStore()
+    orchestrator = ChatOrchestrator(
+        client,
+        settings(),
+        CampaignGenerationRegistry(artifact),
+        clarification_store=store,
+    )
+    scope = RequestScope("fa-1")
+    first = orchestrator.run(
+        "Create a retirement campaign for all clients starting 2026-11-10",
+        [], scope=scope, session_id="session-1",
+    )
+
+    result = orchestrator.run(
+        "2027-01-31", [], scope=scope, session_id="session-1"
+    )
+
+    assert "What date should the campaign end" in first
+    assert result.creation is not None
+    assert result.creation.startDate.isoformat() == "2026-11-10"
+    assert result.creation.endDate.isoformat() == "2027-01-31"
+    assert store.status == "completed"
+
+
+def test_reversed_schedule_is_rejected_before_retrieval():
+    assessment = assess_campaign_objective(
+        "Create a retirement campaign for all clients from 2027-01-31 to 2026-11-10"
+    )
+
+    assert assessment.question_ids == ("schedule",)
+    assert assessment.schedule_lock.valid is False
+
+
+def test_natural_language_schedule_is_extracted_then_locked_server_side():
+    artifact = campaign_draft_artifact()
+    client = FakeClient([
+        intent_extraction(startDate="2026-11-15", endDate="2027-01-31"),
+        completion(message(content=json.dumps({
+            "referencesUsed": artifact["referencesUsed"],
+            "draft": artifact["draft"],
+        }))),
+    ])
+    orchestrator = ChatOrchestrator(
+        client, settings(), CampaignGenerationRegistry(artifact)
+    )
+
+    result = orchestrator.run(
+        "Create a retirement campaign for all clients from 15 November 2026 "
+        "through 31 January 2027",
+        [],
+    )
+
+    assert result.creation is not None
+    assert result.creation.model_dump(mode="json") == {
+        "startDate": "2026-11-15",
+        "endDate": "2027-01-31",
+        "audienceSource": "contacts",
+    }
+
+
+def test_extracted_dates_are_ignored_without_an_explicit_date_signal():
+    extracted = CampaignIntentExtraction.model_validate({
+        **json.loads(intent_extraction().choices[0].message.content),
+        "startDate": "2026-11-15",
+        "endDate": "2027-01-31",
+    })
+
+    assessment = assess_campaign_objective(
+        "Create a retirement campaign for all clients", extracted=extracted
+    )
+
+    assert assessment.question_ids == ("schedule",)
+    assert assessment.schedule_lock.complete is False
 
 
 def test_vague_life_stage_campaign_requests_clarification_before_retrieval():
@@ -1023,7 +1179,9 @@ def test_vague_life_stage_campaign_requests_clarification_before_retrieval():
     assert len(client.calls) == 1
     assert client.calls[0]["schema_name"] == "campaign_intent_extraction"
     assert registry.executed == []
-    assert clarification_store.active.pending_question_ids == ("focus", "age")
+    assert clarification_store.active.pending_question_ids == (
+        "focus", "age", "schedule"
+    )
 
 
 def test_clarification_reply_resumes_generation_with_safe_unrestricted_defaults():
@@ -1050,7 +1208,8 @@ def test_clarification_reply_resumes_generation_with_safe_unrestricted_defaults(
     )
 
     result = orchestrator.run(
-        "Use a general financial planning introduction and target Under 35.",
+        "Use a general financial planning introduction and target Under 35. "
+        "Run it from 2026-11-10 to 2027-01-31.",
         [],
         scope=scope,
         session_id="session-1",
@@ -1098,7 +1257,8 @@ def test_clarified_targeting_is_locked_before_draft_preparation():
     )
 
     orchestrator.run(
-        "Budgeting and emergency savings, under 35.",
+        "Budgeting and emergency savings, under 35, from 2026-11-10 to "
+        "2027-01-31.",
         [], scope=scope, session_id="session-1",
     )
 
@@ -1115,7 +1275,8 @@ def test_clarified_targeting_is_locked_before_draft_preparation():
 
 def test_latest_explicit_targeting_values_form_the_server_lock():
     assessment = assess_campaign_objective(
-        "Create a budgeting campaign for women under 35 with cash below SGD 50,000",
+        "Create a budgeting campaign for women under 35 with cash below SGD 50,000 "
+        "from 2026-11-10 to 2027-01-31",
         ("Change the audience to men aged 35-44 with no cash restriction.",),
     )
 
@@ -1147,7 +1308,8 @@ def test_hyphenated_focus_is_understood_but_unsupported_age_is_asked_again():
     )
 
     result = orchestrator.run(
-        "1. general financial-planning introduction\n2. Under 30",
+        "1. general financial-planning introduction\n2. Under 30\n"
+        "3. 2026-11-10 to 2027-01-31",
         [], scope=scope, session_id="session-1",
     )
 
@@ -1157,7 +1319,9 @@ def test_hyphenated_focus_is_understood_but_unsupported_age_is_asked_again():
 
 
 def test_latest_explicit_age_answer_overrides_an_earlier_unsupported_answer():
-    objective = "Create a campaign targeting students"
+    objective = (
+        "Create a campaign targeting students from 2026-11-10 to 2027-01-31"
+    )
     focus_and_unsupported_age = (
         "General financial-planning introduction for Under 30",
     )
@@ -1198,7 +1362,8 @@ def test_model_interprets_natural_clarification_then_server_validates_defaults()
     )
 
     result = orchestrator.run(
-        "Teach them the basics of managing money, for the Under 35 group.",
+        "Teach them the basics of managing money, for the Under 35 group, "
+        "from 2026-11-10 to 2027-01-31.",
         [], scope=scope, session_id="session-1",
     )
 
@@ -1299,7 +1464,9 @@ def test_prepare_error_gets_a_deterministic_safe_explanation():
         client, settings(), CampaignGenerationRegistry(artifact)
     )
 
-    result = orchestrator.run("Create a retirement campaign", [])
+    result = orchestrator.run(
+        "Create a retirement campaign from 2026-11-10 to 2027-01-31", []
+    )
 
     assert "Campaign draft could not be prepared" in result
     assert "The disclaimer is incomplete" in result

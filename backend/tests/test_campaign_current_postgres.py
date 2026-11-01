@@ -160,7 +160,14 @@ def test_preview_metadata_is_scoped_and_invalidated_by_revision(current_database
     )
     scope = RequestScope(ADVISER)
     artifact = CampaignDraftArtifact.model_validate(campaign_draft_artifact())
-    persisted = draft_repository.create_campaign_draft(scope, session_id, artifact)
+    persisted = draft_repository.create_campaign_draft(
+        scope,
+        session_id,
+        artifact,
+        CampaignDraftCreationMetadata(
+            startDate=date(2026, 11, 10), endDate=date(2027, 1, 31)
+        ),
+    )
     now = datetime(2026, 10, 31, 8, 0, tzinfo=timezone.utc)
     metadata = draft_repository.store_campaign_draft_preview(
         scope,
@@ -204,12 +211,10 @@ def _prepared_confirmation(current_database, session_id):
     )
     scope = RequestScope(ADVISER)
     artifact = CampaignDraftArtifact.model_validate(campaign_draft_artifact())
-    persisted = draft_repository.create_campaign_draft(scope, session_id, artifact)
-    persisted = draft_repository.update_campaign_draft_creation_metadata(
+    persisted = draft_repository.create_campaign_draft(
         scope,
         session_id,
-        persisted.draftId,
-        persisted.revision,
+        artifact,
         CampaignDraftCreationMetadata(
             startDate=date(2026, 11, 10),
             endDate=date(2027, 1, 31),

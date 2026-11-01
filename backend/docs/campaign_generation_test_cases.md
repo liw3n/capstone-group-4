@@ -18,6 +18,12 @@ generated draft is complete, internally consistent with the objective, valid
 against the schema, educational rather than prescriptive, and clearly subject to
 adviser review.
 
+Every generation case must also supply or clarify an explicit campaign start and
+end date before reference retrieval begins. Dates are stored as adviser-owned
+creation metadata rather than model-authored draft content. The examples below
+focus on generated content, so a test harness may use a fixed synthetic schedule
+such as `2026-11-10` to `2027-01-31`.
+
 ## Retirement asset consolidation review
 
 **Plain-language objective**
@@ -68,12 +74,28 @@ writes.
 | `How did this campaign perform last week?` | Preserve performance-tool intent; do not revise the active draft. |
 | `Draft an email for this campaign` | Preserve email preview/confirmation routing; do not revise the active draft. |
 
+Without an active draft, `Help me generate a campaign targeting male students`
+must start whole-campaign generation and treat `male` as targeting input, not as
+a request to revise a missing draft. With an active draft, the same wording must
+still require explicit new/replacement intent before discarding the review
+context. `Generate a more unique campaign name` remains a field-revision request.
+
 For concurrent review, submit revision `n` after revision `n + 1` already exists.
 The stale request must return `409`, must not write, and the frontend must reload
 the latest scoped revision before allowing another edit.
 
 ## Final preview and creation cases
 
+- A complete campaign objective without dates asks for both dates and performs
+  no reference retrieval, generation or draft persistence.
+- If only the start or end date is known, ask only for the missing date. Reject
+  an end date before the start date and do not silently reorder it.
+- `use safe defaults` may resolve unrestricted targeting but cannot supply dates.
+- Natural-language dates may be normalized by strict structured extraction only
+  when the adviser supplied an explicit date signal; a model-invented schedule
+  without such a signal is ignored.
+- A generated draft contains the locked dates in `creation` immediately, while
+  keeping them outside the AI-authored `draft` object.
 - A draft without reviewed start and end dates cannot receive a final preview.
 - Any saved content or schedule edit advances the revision and invalidates the
   previous preview token.

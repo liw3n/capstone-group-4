@@ -102,7 +102,9 @@ checks and startup commands are in `backend/AGENTS.md`.
 - Campaign generation now has a bounded, adviser/session-scoped hybrid
   clarification step before reference retrieval. Schema-constrained model
   extraction interprets natural language, while server validation owns supported
-  targeting enums and safe defaults. Resolved age, gender and cash criteria are
+  targeting enums and safe defaults. It also requires an explicit, ordered
+  start/end schedule before retrieval; resolved dates are locked as adviser-owned
+  creation metadata and never defaulted by the model. Resolved age, gender and cash criteria are
   locked server-side before draft preparation, so generation cannot replace the
   adviser's choices. Validated structured drafts are stored separately from
   campaigns and returned by chat with a stable draft ID and optimistic revision.
