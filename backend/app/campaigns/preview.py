@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from app.config import get_settings
 from app.campaigns.models import (
     CampaignDraft,
+    CampaignDraftCreationMetadata,
     CampaignDraftValidation,
     PersistedCampaignDraftArtifact,
 )
@@ -71,11 +72,13 @@ def _decode_part(value: str) -> bytes:
 def campaign_preview_content_hash(
     draft: CampaignDraft,
     validation: CampaignDraftValidation,
+    creation: CampaignDraftCreationMetadata,
 ) -> str:
     """Hash the exact content and policy result displayed in the final preview."""
     canonical = json.dumps(
         {
             "draft": draft.model_dump(mode="json"),
+            "creation": creation.model_dump(mode="json"),
             "validation": validation.model_dump(mode="json"),
         },
         sort_keys=True,

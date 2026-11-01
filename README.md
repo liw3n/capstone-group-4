@@ -263,8 +263,8 @@ make dev -> run_services.sh (FastAPI + MCP) and npm run dev (Vite)
 
 ![PULSE system architecture](backend/docs/Architecture.svg)
 
-[Open the system diagram](backend/docs/Architecture.svg). The PNG is an older
-export. `frontend/` owns browser-local task and pipeline state; PostgreSQL owns
+[Open the system diagram](backend/docs/Architecture.svg). The PNG is a synchronized
+rendered export. `frontend/` owns browser-local task and pipeline state; PostgreSQL owns
 contacts, campaigns and chat history, while the backend owns MCP tools. `docs/` and
 `gwm_api/` contain local company references, not runnable integrations.
 

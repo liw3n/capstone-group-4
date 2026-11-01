@@ -56,6 +56,11 @@ export interface CampaignDraftArtifact {
     assumptions: string[];
     disclaimer: string;
   };
+  creation: {
+    startDate: string | null;
+    endDate: string | null;
+    audienceSource: 'contacts';
+  };
   revision: number;
   status: 'generated' | 'reviewed' | 'confirmed' | 'rejected' | 'expired';
   changedFields: CampaignDraftField[];

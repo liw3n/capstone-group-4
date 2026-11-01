@@ -19,13 +19,15 @@ import {
 import {
   CampaignDraftApiError,
   CampaignDraftChanges,
+  CampaignDraftCreationChanges,
   CampaignDraftPreview,
+  confirmCampaignDraft,
   getCampaignDraft,
   previewCampaignDraft,
   regenerateCampaignDraft,
   updateCampaignDraft,
 } from '../services/campaignDraftApi';
-import { CampaignGender } from '../types';
+import { Campaign, CampaignGender } from '../types';
 
 const TO_DRAFT_GENDER: Record<CampaignGender | DraftCampaignGender, DraftCampaignGender> = {
   male: 'male',
@@ -40,6 +42,7 @@ interface CampaignDraftReviewProps {
   initialDraft: CampaignDraftArtifact;
   onCancel: () => void;
   onDraftUpdated: (draft: CampaignDraftArtifact) => void;
+  onCampaignCreated: (campaign: Campaign) => void;
 }
 
 interface ReviewForm {
@@ -48,6 +51,8 @@ interface ReviewForm {
   clientMessage: string;
   criteria: CampaignCriteria;
   targetDemographicSummary: string;
+  startDate: string;
+  endDate: string;
 }
 
 const FIELD_LABELS: Record<CampaignDraftField, string> = {
@@ -75,7 +80,23 @@ function formFromDraft(artifact: CampaignDraftArtifact): ReviewForm {
       cashBands: [...artifact.draft.criteria.cashBands],
     },
     targetDemographicSummary: artifact.draft.targetDemographicSummary,
+    startDate: artifact.creation.startDate ?? '',
+    endDate: artifact.creation.endDate ?? '',
   };
+}
+
+export function campaignDraftCreationChanges(
+  artifact: CampaignDraftArtifact,
+  form: ReviewForm,
+): CampaignDraftCreationChanges {
+  const changes: CampaignDraftCreationChanges = {};
+  if (form.startDate !== (artifact.creation.startDate ?? '')) {
+    changes.startDate = form.startDate;
+  }
+  if (form.endDate !== (artifact.creation.endDate ?? '')) {
+    changes.endDate = form.endDate;
+  }
+  return changes;
 }
 
 function sameValues(left: unknown, right: unknown): boolean {
@@ -189,15 +210,22 @@ function DraftPreview({
   preview,
   onBack,
   onCancel,
+  onConfirm,
+  confirming,
+  error,
 }: {
   artifact: CampaignDraftArtifact;
   preview: CampaignDraftPreview;
   onBack: () => void;
   onCancel: () => void;
+  onConfirm: () => void;
+  confirming: boolean;
+  error: string;
 }) {
   const previewArtifact: CampaignDraftArtifact = {
     ...artifact,
     draft: preview.draft,
+    creation: preview.creation,
     validation: preview.validation,
     revision: preview.revision,
   };
@@ -216,11 +244,26 @@ function DraftPreview({
         This exact draft and its policy checks were verified by the server. The preview expires at{' '}
         {new Date(preview.expiresAt).toLocaleTimeString()}.
       </div>
+      {error && (
+        <div role="alert" className="rounded-md border border-danger/20 bg-danger-soft px-4 py-3 text-[12px] text-danger">
+          {error}
+        </div>
+      )}
       <section className="rounded-lg border border-line bg-white p-5">
         <h2 className="text-[18px] font-semibold text-ink">{preview.draft.name}</h2>
         <p className="mt-3 whitespace-pre-wrap text-[13px] leading-relaxed text-body">
           {preview.draft.description}
         </p>
+        <div className="mt-5 grid gap-4 border-t border-line-soft pt-4 sm:grid-cols-2">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-faint">Start date</p>
+            <p className="mt-1 text-[13px] text-body">{preview.creation.startDate}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-faint">End date</p>
+            <p className="mt-1 text-[13px] text-body">{preview.creation.endDate}</p>
+          </div>
+        </div>
         <div className="mt-5 border-t border-line-soft pt-4">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-faint">Client message</p>
           <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-body">
@@ -236,12 +279,15 @@ function DraftPreview({
       </section>
       <ReviewMetadata artifact={previewArtifact} />
       <div className="flex flex-wrap gap-2">
-        <Button variant="primary" onClick={onBack}>Back to editing</Button>
-        <Button variant="secondary" onClick={onCancel}>Return to campaigns</Button>
+        <Button variant="primary" onClick={onConfirm} disabled={confirming}>
+          <CheckCircle2 size={14} /> {confirming ? 'Creating…' : 'Create draft campaign'}
+        </Button>
+        <Button variant="secondary" onClick={onBack} disabled={confirming}>Back to editing</Button>
+        <Button variant="secondary" onClick={onCancel} disabled={confirming}>Return to campaigns</Button>
       </div>
       <p className="text-[11px] text-muted">
-        Stage 9 verifies explicit confirmation readiness on the server. Campaign creation remains
-        intentionally unavailable until the Stage 10 atomic creation workflow is implemented.
+        Confirmation creates one inactive draft campaign. It does not select clients, activate the
+        campaign, or send any communication.
       </p>
     </div>
   );
@@ -253,6 +299,7 @@ export default function CampaignDraftReview({
   initialDraft,
   onCancel,
   onDraftUpdated,
+  onCampaignCreated,
 }: CampaignDraftReviewProps) {
   const [artifact, setArtifact] = useState(initialDraft);
   const [form, setForm] = useState<ReviewForm>(() => formFromDraft(initialDraft));
@@ -262,8 +309,10 @@ export default function CampaignDraftReview({
   const [regenerating, setRegenerating] = useState(false);
   const [preview, setPreview] = useState<CampaignDraftPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
   const request = useRef<AbortController | null>(null);
+  const confirmationKey = useRef<string | null>(null);
 
   useEffect(() => () => request.current?.abort(), []);
 
@@ -276,21 +325,29 @@ export default function CampaignDraftReview({
       setForm(formFromDraft(initialDraft));
       setSelectedFields([]);
       setPreview(null);
+      confirmationKey.current = null;
       setError('');
     }
   }, [artifact.draftId, artifact.revision, initialDraft]);
 
   const changes = useMemo(() => campaignDraftChanges(artifact, form), [artifact, form]);
+  const creationChanges = useMemo(
+    () => campaignDraftCreationChanges(artifact, form),
+    [artifact, form],
+  );
   const changedFields = Object.keys(changes) as CampaignDraftField[];
-  const dirty = changedFields.length > 0;
+  const changedCreationFields = Object.keys(creationChanges);
+  const dirty = changedFields.length > 0 || changedCreationFields.length > 0;
   const invalid = !form.name.trim() || !form.description.trim()
-    || !form.clientMessage.trim() || !form.targetDemographicSummary.trim();
+    || !form.clientMessage.trim() || !form.targetDemographicSummary.trim()
+    || !form.startDate || !form.endDate || form.endDate < form.startDate;
 
   const applyArtifact = (next: CampaignDraftArtifact) => {
     setArtifact(next);
     setForm(formFromDraft(next));
     setSelectedFields([]);
     setPreview(null);
+    confirmationKey.current = null;
     setError('');
     onDraftUpdated(next);
   };
@@ -327,7 +384,12 @@ export default function CampaignDraftReview({
     setError('');
     try {
       const updated = await updateCampaignDraft(
-        advisorId, sessionId, artifact, changes, controller.signal,
+        advisorId,
+        sessionId,
+        artifact,
+        changes,
+        creationChanges,
+        controller.signal,
       );
       if (!controller.signal.aborted) applyArtifact(updated);
     } catch (reason) {
@@ -368,7 +430,7 @@ export default function CampaignDraftReview({
   };
 
   const generatePreview = async () => {
-    if (dirty || saving || regenerating || previewLoading) return;
+    if (dirty || invalid || saving || regenerating || previewLoading) return;
     const controller = new AbortController();
     request.current?.abort();
     request.current = controller;
@@ -381,13 +443,55 @@ export default function CampaignDraftReview({
         artifact,
         controller.signal,
       );
-      if (!controller.signal.aborted) setPreview(verified);
+      if (!controller.signal.aborted) {
+        confirmationKey.current = null;
+        setPreview(verified);
+      }
     } catch (reason) {
       await showError(reason, controller);
     } finally {
       if (request.current === controller) {
         request.current = null;
         setPreviewLoading(false);
+      }
+    }
+  };
+
+  const createCampaignFromPreview = async () => {
+    if (!preview || confirming) return;
+    const controller = new AbortController();
+    request.current?.abort();
+    request.current = controller;
+    setConfirming(true);
+    setError('');
+    const key = confirmationKey.current ?? crypto.randomUUID();
+    confirmationKey.current = key;
+    try {
+      const campaign = await confirmCampaignDraft(
+        advisorId,
+        sessionId,
+        preview,
+        key,
+        controller.signal,
+      );
+      if (!controller.signal.aborted) onCampaignCreated(campaign);
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return;
+      if (reason instanceof CampaignDraftApiError && reason.status === 410) {
+        setPreview(null);
+        confirmationKey.current = null;
+        setError('The final preview expired. Generate a new preview before creating the campaign.');
+      } else if (reason instanceof CampaignDraftApiError && reason.status === 409) {
+        setPreview(null);
+        confirmationKey.current = null;
+        setError(reason.message);
+      } else {
+        setError(reason instanceof Error ? reason.message : 'Unable to create the campaign.');
+      }
+    } finally {
+      if (request.current === controller) {
+        request.current = null;
+        setConfirming(false);
       }
     }
   };
@@ -399,6 +503,9 @@ export default function CampaignDraftReview({
         preview={preview}
         onBack={() => setPreview(null)}
         onCancel={onCancel}
+        onConfirm={() => void createCampaignFromPreview()}
+        confirming={confirming}
+        error={error}
       />
     );
   }
@@ -412,7 +519,7 @@ export default function CampaignDraftReview({
       <div>
         <h1 className="text-xl font-semibold text-ink">Review generated campaign</h1>
         <p className="mt-1 text-[12px] text-muted">
-          AI-generated revision {artifact.revision}. Edit and validate the draft before a later confirmation step.
+          AI-generated revision {artifact.revision}. Review and save every required field before confirmation.
         </p>
       </div>
 
@@ -445,8 +552,18 @@ export default function CampaignDraftReview({
             <h2 className="text-[14px] font-semibold text-ink">Campaign details</h2>
             <label className="flex flex-col gap-1.5">
               <span className="field-label">Campaign name *</span>
-              <input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} className="input-field" />
+              <input maxLength={200} value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} className="input-field" />
             </label>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="flex flex-col gap-1.5">
+                <span className="field-label">Start date *</span>
+                <input type="date" value={form.startDate} onChange={(event) => setForm((current) => ({ ...current, startDate: event.target.value }))} className="input-field" />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="field-label">End date *</span>
+                <input type="date" min={form.startDate || undefined} value={form.endDate} onChange={(event) => setForm((current) => ({ ...current, endDate: event.target.value }))} className="input-field" />
+              </label>
+            </div>
             <label className="flex flex-col gap-1.5">
               <span className="field-label">Campaign description *</span>
               <textarea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} rows={4} className="input-field resize-y" />
@@ -525,7 +642,7 @@ export default function CampaignDraftReview({
 
           <div className="border-t border-line-soft pt-4">
             <p className="text-[11px] text-muted">
-              {dirty ? `${changedFields.length} unsaved section${changedFields.length === 1 ? '' : 's'}.` : 'All changes are saved.'}
+              {dirty ? `${changedFields.length + changedCreationFields.length} unsaved field${changedFields.length + changedCreationFields.length === 1 ? '' : 's'}.` : 'All changes are saved.'}
             </p>
             {invalid && <p className="mt-1 text-[10px] text-danger">Complete every required field before saving.</p>}
           </div>
@@ -534,7 +651,7 @@ export default function CampaignDraftReview({
             <Button variant="primary" onClick={() => void saveDraft()} disabled={!dirty || invalid || saving || regenerating}>
               <Save size={14} /> {saving ? 'Saving…' : 'Save draft'}
             </Button>
-            <Button variant="secondary" onClick={() => void generatePreview()} disabled={dirty || saving || regenerating || previewLoading}>
+            <Button variant="secondary" onClick={() => void generatePreview()} disabled={dirty || invalid || saving || regenerating || previewLoading}>
               <Eye size={14} /> {previewLoading ? 'Generating…' : 'Generate final preview'}
             </Button>
             <Button variant="secondary" onClick={onCancel}>Cancel</Button>

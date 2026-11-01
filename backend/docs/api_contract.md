@@ -558,9 +558,10 @@ the editable Campaigns review experience.
 ### Campaign draft review
 
 Every route below is available both with and without the `/api` prefix. Drafts
-are review artifacts, not campaign records. These endpoints never write the
-official `campaign` or `campaign_member` tables, select a named audience,
-activate outreach or send messages.
+are review artifacts, not campaign records. Review, revision and preview
+endpoints never write the official `campaign` or `campaign_member` tables. Only
+the explicit confirmation endpoint creates one inactive `campaign` row; none of
+these endpoints selects a named audience, activates outreach or sends messages.
 
 `GET /campaign-drafts/{draft_id}?fa_id=<adviser>&session_id=<session>` returns
 the current `campaign_draft` artifact only when it belongs to that adviser and
@@ -579,6 +580,10 @@ condition failed; a scoped draft in a non-reviewable lifecycle state returns
   "changes": {
     "name": "Clearer retirement check-in",
     "cashBands": ["50kTo250k"]
+  },
+  "creationChanges": {
+    "startDate": "2026-11-10",
+    "endDate": "2027-01-31"
   }
 }
 ```
@@ -590,6 +595,9 @@ objective, citations and current artifact, reruns complete policy validation,
 preserves every unselected field and stores the next revision as `reviewed`.
 For a manual criteria edit, `targetDemographicSummary` and rationale are updated
 as dependent metadata; `changedFields` includes the demographic summary.
+`creationChanges` accepts adviser-owned `startDate` and `endDate`. Date-only
+updates do not invoke the model, but they still advance the optimistic revision,
+invalidate any prior preview and reject an end date before the start date.
 
 `POST /campaign-drafts/{draft_id}/regenerate` asks the model to propose values
 for only the selected independent fields, then passes the proposal through the
@@ -619,11 +627,12 @@ uses this pointer to restore the current structured draft rather than parsing
 assistant prose. On a `409` save/regeneration conflict, the frontend reloads the
 latest scoped revision and asks the adviser to review it before continuing.
 
-#### Final preview and confirmation readiness
+#### Final preview and campaign creation
 
 `POST /campaign-drafts/{draft_id}/preview` reloads the scoped current revision,
 resolves every cited catalogue entry again, reruns deterministic policy
-validation and hashes the exact draft plus validation result. Request:
+validation and hashes the exact draft, reviewed creation metadata and validation
+result. Both start and end dates must be present. Request:
 
 ```json
 {
@@ -646,6 +655,11 @@ draft ID, revision and content hash:
   "confirmationToken": "signed-token",
   "expiresAt": "2026-10-31T08:05:00Z",
   "draft": {},
+  "creation": {
+    "startDate": "2026-11-10",
+    "endDate": "2027-01-31",
+    "audienceSource": "contacts"
+  },
   "validation": {
     "schema_valid": true,
     "policy_valid": true,
@@ -663,8 +677,9 @@ all stored preview metadata. Deployments should set a stable secret of at least
 16 bytes in `PULSE_CAMPAIGN_PREVIEW_SECRET`; otherwise a random process-local
 secret is used and outstanding tokens stop working after a restart.
 
-`POST /campaign-drafts/{draft_id}/confirm` verifies that the exact server-issued
-preview remains current. Request:
+`POST /campaign-drafts/{draft_id}/confirm` is the explicit consequential action.
+It verifies that the exact server-issued preview remains current and then creates
+one campaign. Request:
 
 ```json
 {
@@ -676,23 +691,34 @@ preview remains current. Request:
 }
 ```
 
-Stage 9 returns a typed readiness result only:
+The response is the stored `CampaignPayload`; its essential creation fields are:
 
 ```json
 {
-  "type": "campaign_draft_confirmation_ready",
-  "draftId": "11111111-1111-4111-8111-111111111111",
-  "revision": 3,
-  "contentHash": "64-lowercase-hex-characters",
-  "readyForCreation": true,
-  "created": false
+  "id": "22222222-2222-4222-8222-222222222222",
+  "name": "Clearer retirement check-in",
+  "status": "draft",
+  "startDate": "2026-11-10",
+  "endDate": "2027-01-31",
+  "origin": "advisor",
+  "audienceSource": "contacts",
+  "createdByAdvisorId": "advisor-123"
 }
 ```
 
-It deliberately does not mark the draft confirmed, persist the idempotency key
-or create a campaign. Stage 10 will consume the verified token and idempotency
-key inside the same transaction as campaign creation. The Stage 9 frontend
-therefore displays the server preview but does not yet expose a creation button.
+The server locks the scoped draft, revalidates its citations and policy, checks
+the revision, stored token digest, signature and expiry, and inserts the official
+`campaign` row with server-forced `status: draft`. In the same PostgreSQL
+transaction it marks the project-owned generation draft `confirmed`, records the
+created campaign ID, confirmed revision/time and idempotency key, and clears the
+session's active-draft pointer. Repeating the request with the same key returns
+the same campaign; a conflicting repeat returns `409`.
+
+Adviser ownership is represented by official
+`campaign.created_by_user_id`. Confirmation does not write `campaign_member`:
+that official table represents named contact membership, and this workflow has
+not selected or consent-filtered named contacts. Confirmation also does not
+activate the campaign or send communication.
 
 Missing, cross-adviser and cross-session drafts return `404`. Stale revisions,
 missing previews, altered tokens and superseded previews return `409`; expired
@@ -701,9 +727,9 @@ catalogue/configuration or storage failures return `503`.
 
 ### Campaign generation contracts and ownership
 
-Stages 1-9 define generation, selective revision, review-only draft persistence,
-the editable review experience and a server-verified final preview without
-enabling campaign creation.
+Stages 1-10 define generation, selective revision, review-only draft persistence,
+the editable review experience, a server-verified final preview and explicit
+creation of an inactive campaign.
 The lifecycle values are `generated`, `reviewed`, `confirmed`, `rejected` and
 `expired`. MCP preparation and revision remain read-only and return unpersisted
 artifacts. The FastAPI host validates those artifacts again and stores the
@@ -712,7 +738,9 @@ adviser and chat session. The chat session's active-draft pointer identifies the
 review context, while `campaign_generation_draft_options` stores short-lived,
 revision-bound narrative choices separately from chat prose. Stage 9 stores only
 the final preview hash, revision, token digest and timestamps in the project-owned
-draft table. Atomic campaign creation remains a subsequent stage.
+draft table. Stage 10 adds adviser-reviewed creation metadata, confirmation audit
+fields, the idempotency key and created-campaign linkage without altering the
+official campaign schemas.
 
 Campaign targeting uses the same canonical values in chat artifacts, draft
 review endpoints, MCP arguments and frontend payloads:

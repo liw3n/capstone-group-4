@@ -258,6 +258,11 @@ def persisted_campaign_draft(revision=1, **draft_changes):
     return PersistedCampaignDraftArtifact.model_validate({
         **artifact,
         "draftId": "11111111-1111-4111-8111-111111111111",
+        "creation": {
+            "startDate": "2026-11-10",
+            "endDate": "2027-01-31",
+            "audienceSource": "contacts",
+        },
         "revision": revision,
         "status": "generated",
         "changedFields": [],

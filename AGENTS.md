@@ -118,13 +118,18 @@ checks and startup commands are in `backend/AGENTS.md`.
   structured, prefilled review mode with optimistic manual edits, selected-field
   regeneration and stale-revision reload. Final preview is now server-validated
   and bound to the exact revision, content hash, adviser, tenant and session by
-  a short-lived signed token whose digest is persisted. The confirmation route
-  verifies readiness only and returns `created: false`; campaign creation and
-  the final UI creation control remain Stage 10 work.
-- `campaign`, `campaign_member`, `interaction`, and `task_item` are described by
-  the company schema document, but their column definitions are absent. Do not
-  invent a production-compatible schema without documenting the prototype
-  assumptions.
+  a short-lived signed token whose digest is persisted. The review also captures
+  adviser-owned start/end dates. Explicit final confirmation atomically creates
+  exactly one official-schema campaign with `draft` status, records the linkage
+  and idempotency key on the project-owned draft, and clears its active-review
+  pointer. It does not activate the campaign, select contacts, create
+  `campaign_member` rows or send outreach.
+- The checked-in `campaign` and `campaign_member` definitions are the official
+  schemas available to this project and must remain unchanged. A
+  `campaign_member` represents named contact membership, not adviser ownership;
+  generation leaves it empty until a later consent-aware audience-selection
+  workflow. `interaction` and `task_item` production-compatible details remain
+  incomplete; do not invent columns for them.
 - There is no real authentication/authorization or verified tenant boundary.
   UI role selection and request-supplied adviser IDs are prototype mechanisms.
 - There is a small Node frontend test suite for campaign-draft review helpers

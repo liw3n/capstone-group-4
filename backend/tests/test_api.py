@@ -275,6 +275,51 @@ def test_review_draft_manual_update_uses_trusted_revision_boundary(monkeypatch):
     assert update_calls[0][1] == {"status": "reviewed"}
 
 
+def test_review_draft_dates_are_persisted_without_calling_the_model(monkeypatch):
+    from app.campaigns.models import CampaignDraftCreationMetadata
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft().model_copy(
+        update={"creation": CampaignDraftCreationMetadata()}
+    )
+    persisted = persisted_campaign_draft(revision=2)
+    update_calls = []
+    monkeypatch.setattr(main, "get_session", lambda _session_id: session())
+    monkeypatch.setattr(main, "get_campaign_draft", lambda *_args: current)
+    monkeypatch.setattr(
+        main,
+        "get_orchestrator",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("adviser-owned schedule fields must not call the model")
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "update_campaign_draft_creation_metadata",
+        lambda *args: update_calls.append(args) or persisted,
+    )
+
+    response = client.patch(
+        f"/api/campaign-drafts/{current.draftId}",
+        json={
+            "fa_id": "fa-1",
+            "session_id": "session-1",
+            "expectedRevision": 1,
+            "creationChanges": {
+                "startDate": "2026-11-10",
+                "endDate": "2027-01-31",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert update_calls[0][4].model_dump(mode="json") == {
+        "startDate": "2026-11-10",
+        "endDate": "2027-01-31",
+        "audienceSource": "contacts",
+    }
+
+
 def test_review_draft_regeneration_is_selected_field_only(monkeypatch):
     from test_orchestrator import persisted_campaign_draft
 
@@ -367,19 +412,91 @@ def _configure_campaign_preview(monkeypatch, current):
     )
     monkeypatch.setattr(main, "preview_utc_now", lambda: now)
     monkeypatch.setattr(main, "store_campaign_draft_preview", store)
-    monkeypatch.setattr(
-        main,
-        "get_campaign_draft_preview_metadata",
-        lambda *_args: metadata["value"],
-    )
     return metadata, now
 
 
-def test_campaign_preview_and_confirmation_are_review_only(monkeypatch):
+def test_campaign_preview_requires_reviewed_start_and_end_dates(monkeypatch):
+    from app.campaigns.models import CampaignDraftCreationMetadata
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft().model_copy(
+        update={"creation": CampaignDraftCreationMetadata()}
+    )
+    monkeypatch.setattr(main, "get_session", lambda _session_id: session())
+    monkeypatch.setattr(main, "get_campaign_draft", lambda *_args: current)
+    monkeypatch.setattr(
+        main,
+        "revalidate_campaign_draft_preview",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("incomplete creation metadata must fail before policy preview")
+        ),
+    )
+
+    response = client.post(
+        f"/api/campaign-drafts/{current.draftId}/preview",
+        json={
+            "fa_id": "fa-1",
+            "session_id": "session-1",
+            "revision": current.revision,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "campaign start and end dates are required"
+
+
+def _created_campaign_record(current):
+    return {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "name": current.draft.name,
+        "status": "draft",
+        "startDate": current.creation.startDate,
+        "endDate": current.creation.endDate,
+        "description": current.draft.description,
+        "clientMessage": current.draft.clientMessage,
+        "origin": "advisor",
+        "audienceSource": "contacts",
+        "createdByAdvisorId": "fa-1",
+        "criteria": {
+            **current.draft.criteria.model_dump(mode="json"),
+            "ageRange": None,
+            "cashRange": None,
+        },
+        "teamIds": [],
+        "advisorIds": [],
+        "includeIds": [],
+        "excludeIds": [],
+        "leadIds": [],
+        "leadStats": {"uploaded": 0, "added": 0, "removed": 0},
+        "createdBy": "fa-1",
+        "createdAt": "2026-11-01T08:00:00Z",
+        "actions": {},
+        "emailLog": [],
+        "leadContacts": [],
+    }
+
+
+def test_campaign_preview_and_confirmation_create_one_draft_campaign(monkeypatch):
+    from app.campaigns.draft_repository import CampaignDraftConfirmationResult
     from test_orchestrator import persisted_campaign_draft
 
     current = persisted_campaign_draft()
     metadata, _now = _configure_campaign_preview(monkeypatch, current)
+    confirmation_calls = []
+    monkeypatch.setattr(
+        main,
+        "confirm_campaign_draft",
+        lambda *args: confirmation_calls.append(args)
+        or CampaignDraftConfirmationResult(
+            campaign_id="22222222-2222-4222-8222-222222222222",
+            created=True,
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "get_campaign_record",
+        lambda *_args: _created_campaign_record(current),
+    )
 
     preview_response = client.post(
         f"/campaign-drafts/{current.draftId}/preview",
@@ -394,6 +511,7 @@ def test_campaign_preview_and_confirmation_are_review_only(monkeypatch):
     preview = preview_response.json()
     assert preview["type"] == "campaign_draft_preview"
     assert preview["draft"] == current.draft.model_dump(mode="json")
+    assert preview["creation"] == current.creation.model_dump(mode="json")
     assert preview["validation"] == current.validation.model_dump(mode="json")
     assert preview["created"] is False
     assert metadata["value"].revision == current.revision
@@ -410,18 +528,14 @@ def test_campaign_preview_and_confirmation_are_review_only(monkeypatch):
     )
 
     assert confirmation_response.status_code == 200
-    assert confirmation_response.json() == {
-        "type": "campaign_draft_confirmation_ready",
-        "draftId": current.draftId,
-        "revision": current.revision,
-        "contentHash": preview["contentHash"],
-        "readyForCreation": True,
-        "created": False,
-    }
-    assert current.status == "generated"
+    assert confirmation_response.json()["id"] == "22222222-2222-4222-8222-222222222222"
+    assert confirmation_response.json()["status"] == "draft"
+    assert confirmation_calls[0][3] == current.revision
+    assert confirmation_calls[0][5] == "confirm-stage-nine-1234"
 
 
 def test_new_campaign_preview_supersedes_previous_token(monkeypatch):
+    from app.campaigns.draft_repository import CampaignDraftConfirmationConflict
     from test_orchestrator import persisted_campaign_draft
 
     current = persisted_campaign_draft()
@@ -439,6 +553,15 @@ def test_new_campaign_preview_supersedes_previous_token(monkeypatch):
         f"/api/campaign-drafts/{current.draftId}/preview", json=payload
     ).json()
     assert first["confirmationToken"] != second["confirmationToken"]
+    monkeypatch.setattr(
+        main,
+        "confirm_campaign_draft",
+        lambda *_args: (_ for _ in ()).throw(
+            CampaignDraftConfirmationConflict(
+                "Campaign draft preview is stale or has been superseded"
+            )
+        ),
+    )
 
     response = client.post(
         f"/campaign-drafts/{current.draftId}/confirm",
@@ -454,6 +577,7 @@ def test_new_campaign_preview_supersedes_previous_token(monkeypatch):
 
 
 def test_expired_campaign_preview_requires_a_fresh_preview(monkeypatch):
+    from app.campaigns.preview import CampaignPreviewTokenError
     from test_orchestrator import persisted_campaign_draft
 
     current = persisted_campaign_draft()
@@ -466,10 +590,16 @@ def test_expired_campaign_preview_requires_a_fresh_preview(monkeypatch):
     preview = client.post(
         f"/api/campaign-drafts/{current.draftId}/preview", json=payload
     ).json()
+    assert now is not None
     monkeypatch.setattr(
         main,
-        "preview_utc_now",
-        lambda: now + timedelta(minutes=6),
+        "confirm_campaign_draft",
+        lambda *_args: (_ for _ in ()).throw(
+            CampaignPreviewTokenError(
+                "expired_confirmation_token",
+                "Campaign draft preview token has expired",
+            )
+        ),
     )
 
     response = client.post(

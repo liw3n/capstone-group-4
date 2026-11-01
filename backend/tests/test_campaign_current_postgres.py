@@ -11,7 +11,17 @@ import pytest
 
 from app import config
 from app.campaigns import catalog, draft_repository, repository
-from app.campaigns.models import CampaignDraftArtifact, CampaignDraftRevisionArtifact
+from app.campaigns.models import (
+    CampaignDraftArtifact,
+    CampaignDraftCreationMetadata,
+    CampaignDraftRevisionArtifact,
+)
+from app.campaigns.preview import (
+    campaign_preview_content_hash,
+    campaign_preview_token_digest,
+    get_campaign_preview_signer,
+    revalidate_campaign_draft_preview,
+)
 from app.campaigns.matching import recommend_clients_for_campaign
 from app.campaigns.repository import CampaignInactive, RequestScope
 from app.contacts.catalog import list_contacts
@@ -183,3 +193,172 @@ def test_preview_metadata_is_scoped_and_invalidated_by_revision(current_database
     assert draft_repository.get_campaign_draft_preview_metadata(
         scope, session_id, persisted.draftId
     ) is None
+
+
+def _prepared_confirmation(current_database, session_id):
+    from test_orchestrator import campaign_draft_artifact
+
+    current_database.execute(
+        'INSERT INTO campaign_chat_sessions (fa_id, session_id) VALUES (%s, %s)',
+        (ADVISER, session_id),
+    )
+    scope = RequestScope(ADVISER)
+    artifact = CampaignDraftArtifact.model_validate(campaign_draft_artifact())
+    persisted = draft_repository.create_campaign_draft(scope, session_id, artifact)
+    persisted = draft_repository.update_campaign_draft_creation_metadata(
+        scope,
+        session_id,
+        persisted.draftId,
+        persisted.revision,
+        CampaignDraftCreationMetadata(
+            startDate=date(2026, 11, 10),
+            endDate=date(2027, 1, 31),
+        ),
+    )
+    validation = revalidate_campaign_draft_preview(persisted, scope)
+    content_hash = campaign_preview_content_hash(
+        persisted.draft,
+        validation,
+        persisted.creation,
+    )
+    now = datetime.now(timezone.utc)
+    token, claims = get_campaign_preview_signer().issue(
+        draft_id=persisted.draftId,
+        revision=persisted.revision,
+        content_hash=content_hash,
+        scope=scope,
+        session_id=session_id,
+        now=now,
+    )
+    draft_repository.store_campaign_draft_preview(
+        scope,
+        session_id,
+        persisted.draftId,
+        persisted.revision,
+        content_hash=content_hash,
+        token_digest=campaign_preview_token_digest(token),
+        created_at=now,
+        expires_at=datetime.fromtimestamp(claims.expires_at, tz=timezone.utc),
+    )
+    return scope, persisted, token, now
+
+
+def test_confirmation_atomically_creates_one_official_draft_campaign(current_database):
+    session_id = 'stage-ten-session'
+    scope, persisted, token, now = _prepared_confirmation(
+        current_database, session_id
+    )
+
+    first = draft_repository.confirm_campaign_draft(
+        scope,
+        session_id,
+        persisted.draftId,
+        persisted.revision,
+        token,
+        'stage-ten-idempotency-key',
+        now=now + timedelta(seconds=1),
+    )
+    retry = draft_repository.confirm_campaign_draft(
+        scope,
+        session_id,
+        persisted.draftId,
+        persisted.revision,
+        token,
+        'stage-ten-idempotency-key',
+        now=now + timedelta(seconds=2),
+    )
+
+    assert first.created is True
+    assert retry.created is False
+    assert retry.campaign_id == first.campaign_id
+    campaign = current_database.execute(
+        """SELECT status, origin, audience_source, created_by_user_id,
+                  start_date, end_date, audience_criteria
+           FROM campaign WHERE tenant_id = %s AND campaign_id = %s""",
+        (ADVISER, first.campaign_id),
+    ).fetchone()
+    assert campaign['status'] == 'draft'
+    assert campaign['origin'] == 'advisor'
+    assert campaign['audience_source'] == 'contacts'
+    assert str(campaign['created_by_user_id']) == ADVISER
+    assert campaign['start_date'] == date(2026, 11, 10)
+    assert campaign['end_date'] == date(2027, 1, 31)
+    assert campaign['audience_criteria'] == {
+        'ageGroups': ['55-64'],
+        'genders': [],
+        'cashBands': ['50k-250k', '250k-1m'],
+    }
+    draft = current_database.execute(
+        """SELECT status, created_campaign_id, confirmed_revision,
+                  confirmation_idempotency_key
+           FROM campaign_generation_drafts WHERE draft_id = %s""",
+        (persisted.draftId,),
+    ).fetchone()
+    assert draft['status'] == 'confirmed'
+    assert str(draft['created_campaign_id']) == first.campaign_id
+    assert draft['confirmed_revision'] == persisted.revision
+    assert draft['confirmation_idempotency_key'] == 'stage-ten-idempotency-key'
+    session = current_database.execute(
+        'SELECT active_campaign_draft_id FROM campaign_chat_sessions WHERE session_id = %s',
+        (session_id,),
+    ).fetchone()
+    assert session['active_campaign_draft_id'] is None
+    assert current_database.execute(
+        'SELECT count(*) AS count FROM campaign WHERE campaign_id = %s',
+        (first.campaign_id,),
+    ).fetchone()['count'] == 1
+
+
+def test_confirmation_rolls_back_campaign_when_draft_confirmation_fails(current_database):
+    session_id = 'stage-ten-rollback-session'
+    scope, persisted, token, now = _prepared_confirmation(
+        current_database, session_id
+    )
+    campaigns_before = current_database.execute(
+        'SELECT count(*) AS count FROM campaign'
+    ).fetchone()['count']
+    current_database.execute(
+        """
+        CREATE FUNCTION reject_stage_ten_confirmation() RETURNS trigger AS $$
+        BEGIN
+            IF NEW.status = 'confirmed' THEN
+                RAISE EXCEPTION 'forced confirmation failure';
+            END IF;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+        CREATE TRIGGER reject_stage_ten_confirmation
+        BEFORE UPDATE ON campaign_generation_drafts
+        FOR EACH ROW EXECUTE FUNCTION reject_stage_ten_confirmation();
+        """
+    )
+
+    with pytest.raises(draft_repository.CampaignDraftStorageUnavailable):
+        draft_repository.confirm_campaign_draft(
+            scope,
+            session_id,
+            persisted.draftId,
+            persisted.revision,
+            token,
+            'stage-ten-rollback-key',
+            now=now + timedelta(seconds=1),
+        )
+
+    assert current_database.execute(
+        'SELECT count(*) AS count FROM campaign'
+    ).fetchone()['count'] == campaigns_before
+    draft = current_database.execute(
+        """SELECT status, created_campaign_id, confirmation_idempotency_key
+           FROM campaign_generation_drafts WHERE draft_id = %s""",
+        (persisted.draftId,),
+    ).fetchone()
+    assert draft == {
+        'status': 'reviewed',
+        'created_campaign_id': None,
+        'confirmation_idempotency_key': None,
+    }
+    session = current_database.execute(
+        'SELECT active_campaign_draft_id FROM campaign_chat_sessions WHERE session_id = %s',
+        (session_id,),
+    ).fetchone()
+    assert session['active_campaign_draft_id'] == persisted.draftId

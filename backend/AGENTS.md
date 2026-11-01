@@ -71,9 +71,10 @@ Terraform. Do not use it as a lightweight unit-test command.
 - Adviser/session-scoped draft review routes support exact manual edits and
   selected-field regeneration through the same policy boundary. They update
   review state only. Server-validated final previews and short-lived,
-  revision-bound confirmation tokens are implemented; confirmation currently
-  verifies creation readiness without writing a campaign. Atomic campaign
-  creation remains unimplemented.
+  revision-bound confirmation tokens are implemented. Explicit confirmation
+  atomically writes one official-schema campaign with `draft` status and marks
+  the project-owned generation draft confirmed. It creates no contact
+  memberships, activation or outreach.
 - Adviser identity is caller-supplied. There is no authentication or verified
   tenant middleware; current scope checks are prototype boundaries.
 - There is no production CRM adapter for `gwm_api/`.

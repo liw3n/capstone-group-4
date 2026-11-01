@@ -90,9 +90,12 @@ The Review draft action opens `CampaignDraftReview` inside the existing
 Campaigns workspace; it is a review mode, not a separate routed page. All seven
 generated fields are prefilled and editable, while rationale, assumptions,
 warnings and synthetic catalogue provenance remain visible. Saves and selected-
-field regeneration use the current optimistic revision. The preview is local
-and read-only: Stage 8 deliberately does not estimate a named audience, expose
-Confirm, create a campaign or send communications.
+field regeneration use the current optimistic revision. The adviser also reviews
+required start/end dates. A final preview is reloaded and signed by the server;
+only that screen exposes **Create draft campaign**. Explicit confirmation creates
+one inactive, adviser-owned campaign and returns it to the Campaigns workspace.
+It does not estimate or select a named audience, create contact memberships,
+activate the campaign or send communications.
 If another chat or browser action advances the draft first, a stale update is
 rejected and the review reloads the latest scoped revision for rechecking.
 

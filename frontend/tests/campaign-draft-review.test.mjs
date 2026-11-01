@@ -7,6 +7,7 @@ import { createServer } from 'vite';
 let server;
 let CampaignDraftReview;
 let campaignDraftChanges;
+let campaignDraftCreationChanges;
 
 const artifact = {
   type: 'campaign_draft',
@@ -32,6 +33,11 @@ const artifact = {
     assumptions: ['Retirement timing must be confirmed.'],
     disclaimer: 'Educational information only; individual suitability requires adviser review.',
   },
+  creation: {
+    startDate: '2026-11-10',
+    endDate: '2027-01-31',
+    audienceSource: 'contacts',
+  },
   revision: 2,
   status: 'reviewed',
   changedFields: ['name'],
@@ -49,17 +55,19 @@ before(async () => {
   const module = await server.ssrLoadModule('/src/components/CampaignDraftReview.tsx');
   CampaignDraftReview = module.default;
   campaignDraftChanges = module.campaignDraftChanges;
+  campaignDraftCreationChanges = module.campaignDraftCreationChanges;
 });
 
 after(async () => { await server?.close(); });
 
-test('generated review uses the campaign screen without exposing campaign creation', () => {
+test('generated review uses the campaign screen and requires an explicit final preview', () => {
   const html = renderToStaticMarkup(createElement(CampaignDraftReview, {
     advisorId: 'adv-demo',
     sessionId: 'session-1',
     initialDraft: artifact,
     onCancel() {},
     onDraftUpdated() {},
+    onCampaignCreated() {},
   }));
 
   assert.ok(html.includes('Review generated campaign'));
@@ -69,9 +77,11 @@ test('generated review uses the campaign screen without exposing campaign creati
   assert.ok(html.includes('campaign-pattern-retirement-001'));
   assert.ok(html.includes('Save draft'));
   assert.ok(html.includes('Generate final preview'));
+  assert.ok(html.includes('Start date'));
+  assert.ok(html.includes('End date'));
   assert.ok(html.includes('fixed age and cash bands only'));
   assert.ok(!html.includes('Minimum age'));
-  assert.ok(!html.includes('Create campaign'));
+  assert.ok(!html.includes('Create draft campaign'));
   assert.ok(!html.includes('Estimated audience'));
 });
 
@@ -86,10 +96,33 @@ test('manual review sends only fields changed from the authoritative revision', 
       cashBands: artifact.draft.criteria.cashBands,
     },
     targetDemographicSummary: artifact.draft.targetDemographicSummary,
+    startDate: artifact.creation.startDate,
+    endDate: artifact.creation.endDate,
   };
 
   assert.deepEqual(campaignDraftChanges(artifact, form), {
     name: 'Retirement Confidence Review',
     genders: ['female'],
+  });
+  assert.deepEqual(campaignDraftCreationChanges(artifact, form), {});
+});
+
+test('schedule review sends only changed adviser-owned creation fields', () => {
+  const form = {
+    name: artifact.draft.name,
+    description: artifact.draft.description,
+    clientMessage: artifact.draft.clientMessage,
+    criteria: {
+      ageGroups: artifact.draft.criteria.ageGroups,
+      genders: [],
+      cashBands: artifact.draft.criteria.cashBands,
+    },
+    targetDemographicSummary: artifact.draft.targetDemographicSummary,
+    startDate: artifact.creation.startDate,
+    endDate: '2027-02-28',
+  };
+
+  assert.deepEqual(campaignDraftCreationChanges(artifact, form), {
+    endDate: '2027-02-28',
   });
 });

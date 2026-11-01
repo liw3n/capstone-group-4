@@ -553,12 +553,13 @@ PostgreSQL transaction:
    reviewed start date, end date, audience source and routing fields supplied
    through the campaign-builder review step.
 8. Insert the `campaign` row using the supplied schema and parameterised SQL.
-9. Insert the corresponding `campaign_member` ownership or assignment rows in
-   the same transaction, using only official existing columns.
+9. Do not insert `campaign_member` rows during generation. In the official
+   schema those rows represent named contact membership, not adviser ownership,
+   and this workflow has not selected or consent-filtered named contacts.
 10. Update `campaign_generation_drafts` to `confirmed`, record the created campaign
     ID, confirmed revision, confirmation time and idempotency key.
 11. Commit and return the newly created `CampaignPayload`. If any step fails,
-    roll back all three writes so no partial campaign or assignment remains.
+    roll back both writes so no partial campaign or confirmed draft remains.
 
 The current catalogue service opens its own connection. Refactor it to accept a
 caller-owned transaction, or add a dedicated `confirm_campaign_draft` repository
@@ -626,8 +627,8 @@ scope, session, objective, references, structured draft, validation, revision,
 status, changed fields, model/prompt version placeholders and timestamps. Stage
 8 uses those fields for editable review without adding builder metadata. Stage 9
 adds the canonical preview hash, revision, one-way token digest and issue/expiry
-timestamps. Idempotency persistence and confirmed campaign linkage remain Stage
-10 additions.
+timestamps. Stage 10 adds reviewed creation metadata, idempotency persistence,
+confirmation audit fields and the created-campaign linkage.
 
 ## Testing and evaluation
 
@@ -666,14 +667,14 @@ timestamps. Idempotency persistence and confirmed campaign linkage remain Stage
   generation succeeds.
 - The draft artifact reports the exact reference IDs and versions used.
 - Adviser and tenant scope cannot be supplied by model tool arguments.
-- Generation, regeneration and Stage 9 readiness checks leave `campaign`
+- Generation, regeneration and preview generation leave `campaign`
   unchanged.
 - Stale, expired or cross-adviser confirmation is rejected.
 - Valid confirmation creates exactly one `draft` campaign.
-- Confirmation atomically creates the campaign and adviser assignment and marks
-  the source draft confirmed.
-- A failure after any attempted insert rolls back the campaign, assignment and
-  draft-status change.
+- Confirmation atomically creates the campaign and marks the source draft
+  confirmed. Adviser ownership is the official `campaign.created_by_user_id`.
+- A failure after any attempted insert rolls back the campaign and draft-status
+  change.
 - Repeated confirmation with the same idempotency key returns the same campaign;
   a conflicting repeat returns a deliberate conflict.
 - Browser or model attempts to confirm `active` are ignored or rejected; the
@@ -793,11 +794,17 @@ returns that exact content with a five-minute HMAC token bound to the draft,
 revision, content hash, tenant, adviser and session. The project-owned draft row
 stores only the token digest and preview timestamps; a new preview supersedes
 the previous token, and any revision clears the metadata. The paired confirmation
-route verifies readiness and the future idempotency-key shape but deliberately
-returns `created = false`. No Stage 9 path changes the supplied `campaign` or
-`campaign_member` schemas or writes those tables. The frontend displays the
-server result and leaves creation unavailable until Stage 10 can make the
-campaign write atomic.
+route initially stopped at readiness verification. No Stage 9 path changed the
+supplied `campaign` or `campaign_member` schemas.
+
+Stage 10 includes adviser-reviewed start/end dates in the canonical preview
+hash. Confirmation now locks and revalidates the current draft, verifies the
+stored preview digest and signed token, inserts one official `campaign` row with
+`status = draft`, and marks the project-owned generation draft confirmed in one
+transaction. Safe retries with the same idempotency key return the same
+campaign. The frontend exposes the consequential action only on the final
+server preview. No `campaign_member` row is created because this stage does not
+select named contacts.
 
 The 31 October contract-reconciliation pass restored the canonical targeting
 vocabulary after the current campaign-table schema introduced different storage
@@ -807,9 +814,9 @@ the canonical values above. Explicit storage converters now isolate the current
 campaign JSON representation. The focused Stage 1-8 regression suite passes 139
 tests; adjacent discovery, matching, REST and current-schema checks pass 63 tests,
 with four isolated PostgreSQL checks skipped when their opt-in database is absent.
-After Stage 9, the complete deterministic backend suite passes 288 tests with
-30 opt-in PostgreSQL tests skipped when their isolated database URLs are absent.
-The frontend suite passes 18 tests, and strict TypeScript checking and the
+After Stage 10, the complete deterministic backend suite passes 290 tests with
+32 opt-in PostgreSQL tests skipped when their isolated database URLs are absent.
+The frontend suite passes 19 tests, and strict TypeScript checking and the
 production build both pass.
 
 ### Stage 1 Define shared contracts and lifecycle boundaries
@@ -1039,9 +1046,9 @@ Exit criteria:
 
 ### Stage 9 Implement preview and confirmation endpoints
 
-Status: implemented on 31 October 2026. The confirmation endpoint verifies
-readiness only; Stage 10 remains responsible for the consequential campaign
-write and final confirmation control.
+Status: implemented on 31 October 2026. At this stage boundary the confirmation
+endpoint verified readiness only; the subsequent Stage 10 implementation now
+performs the consequential campaign write and exposes the final control.
 
 Implementation:
 
@@ -1064,24 +1071,31 @@ Exit criteria:
 
 ### Stage 10 Implement the atomic PostgreSQL campaign write
 
+Status: implemented on 1 November 2026.
+
 Implementation:
 
 - Add a transaction-aware `confirm_campaign_draft` repository operation.
 - Lock and revalidate the draft, derive trusted ownership fields and generate the
   campaign ID.
 - Force campaign status to `draft`.
-- Insert `campaign` and the required `campaign_member` ownership rows using the
-  official existing columns, then mark the project-owned generation draft
-  confirmed in the same transaction. Do not alter or invent official columns.
+- Insert one `campaign` row using the official existing columns, then mark the
+  project-owned generation draft confirmed in the same transaction. Adviser
+  ownership comes from `campaign.created_by_user_id`; do not misuse the official
+  contact-membership table for ownership and do not alter or invent official
+  columns.
 - Return the stored campaign and support safe idempotent retries.
-- Add rollback tests that fail after each write boundary.
+- Store reviewed start/end dates separately from model-authored draft content,
+  bind them into the final preview hash and require them before creation.
+- Clear the chat session's active draft pointer after successful confirmation.
 
 Exit criteria:
 
-- One confirmation creates exactly one campaign and the correct ownership rows.
-- Partial writes are impossible under tested failure conditions.
+- One confirmation creates exactly one campaign owned by the confirming adviser.
+- PostgreSQL transaction rollback prevents partial campaign/confirmation state.
 - Repeated requests cannot create duplicates.
 - The resulting campaign is `draft`; activation requires a separate action.
+- No contact membership, activation or communication occurs.
 
 ### Stage 11 Complete evaluation and documentation
 
@@ -1170,8 +1184,9 @@ rollback cases. Run `terraform validate` after initialisation is available.
   record.
 - Confirmed records are created with `status = "draft"` and never automatically
   activated.
-- Confirmation inserts the campaign, adviser assignment and confirmed draft
-  state in one transaction and rolls all of them back on failure.
+- Confirmation inserts the campaign and confirmed draft state in one transaction
+  and rolls both back on failure. No `campaign_member` row is created until a
+  later named-contact, consent-aware workflow exists.
 - Retrying the same confirmed request cannot create a duplicate campaign.
 - Existing chat, campaign discovery, recommendation and performance tools remain
   functional.
@@ -1180,14 +1195,13 @@ rollback cases. Run `terraform validate` after initialisation is available.
   adviser review, suitability assessment and applicable communication-consent
   checks.
 
-## Decisions to confirm before implementation
+## Decisions still open after Stage 10
 
 1. Whether `targetDemographicSummary` remains review-only metadata or becomes a
    persisted campaign field.
 2. Whether the direct campaign-builder entry point is required alongside chat in
    the first release.
-3. Whether confirmation creates only a draft, as proposed, or whether a separate
-   activation workflow must be included in the same milestone.
+3. The design and confirmation boundary for the separate activation workflow.
 4. Whether the MCP tool must support independent objective-only calls from other
    MCP clients; if so, move model generation into a shared service callable by
    both MCP and the PULSE orchestrator.

@@ -5,6 +5,7 @@ import {
   CampaignDraftField,
   CampaignGender,
 } from './chatApi';
+import { Campaign } from '../types';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 
@@ -18,6 +19,11 @@ export type CampaignDraftChanges = Partial<{
   targetDemographicSummary: string;
 }>;
 
+export type CampaignDraftCreationChanges = Partial<{
+  startDate: string;
+  endDate: string;
+}>;
+
 export interface CampaignDraftPreview {
   type: 'campaign_draft_preview';
   draftId: string;
@@ -26,17 +32,9 @@ export interface CampaignDraftPreview {
   confirmationToken: string;
   expiresAt: string;
   draft: CampaignDraftArtifact['draft'];
+  creation: CampaignDraftArtifact['creation'];
   validation: CampaignDraftArtifact['validation'];
   requires_adviser_review: true;
-  created: false;
-}
-
-export interface CampaignDraftConfirmationReadiness {
-  type: 'campaign_draft_confirmation_ready';
-  draftId: string;
-  revision: number;
-  contentHash: string;
-  readyForCreation: true;
   created: false;
 }
 
@@ -93,6 +91,7 @@ export function updateCampaignDraft(
   sessionId: string,
   current: CampaignDraftArtifact,
   changes: CampaignDraftChanges,
+  creationChanges: CampaignDraftCreationChanges,
   signal?: AbortSignal,
 ): Promise<CampaignDraftArtifact> {
   return request<CampaignDraftArtifact>(
@@ -105,6 +104,7 @@ export function updateCampaignDraft(
         session_id: sessionId,
         expectedRevision: current.revision,
         changes,
+        creationChanges,
       }),
     },
   );
@@ -154,14 +154,14 @@ export function previewCampaignDraft(
   );
 }
 
-export function confirmCampaignDraftReadiness(
+export function confirmCampaignDraft(
   advisorId: string,
   sessionId: string,
   preview: CampaignDraftPreview,
   idempotencyKey: string,
   signal?: AbortSignal,
-): Promise<CampaignDraftConfirmationReadiness> {
-  return request<CampaignDraftConfirmationReadiness>(
+): Promise<Campaign> {
+  return request<Campaign>(
     apiUrl(`/api/campaign-drafts/${encodeURIComponent(preview.draftId)}/confirm`),
     {
       method: 'POST',

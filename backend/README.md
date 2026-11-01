@@ -73,6 +73,14 @@ editable source; the PNG is its synchronized rendered export.
 - `POST /chat/new?fa_id=<id>`
 - `GET /chat/history?session_id=<id>`
 - `POST /chat/query`
+- `GET /campaign-drafts/{draft_id}?fa_id=<id>&session_id=<id>`
+- `PATCH /campaign-drafts/{draft_id}`
+- `POST /campaign-drafts/{draft_id}/regenerate`
+- `POST /campaign-drafts/{draft_id}/preview`
+- `POST /campaign-drafts/{draft_id}/confirm`
+
+The campaign-draft routes also support matching `/api/...` forms. Only the final
+confirmation route creates a campaign, always in `draft` status.
 
 See `docs/api_contract.md` for request and response details.
 
@@ -183,16 +191,20 @@ revision validation boundary and optimistic revision check.
 
 The frontend opens the artifact in a prefilled review mode inside the existing
 Campaigns workspace. It shows rationale, assumptions, warnings and synthetic
-catalogue provenance and supports editing and multi-section regeneration.
+catalogue provenance and supports editing, campaign schedule review and
+multi-section regeneration.
 The final preview is reloaded and policy-validated by FastAPI, then bound to the
 current revision with a five-minute signed token. Only the token digest and
 preview metadata are stored in the project-owned draft table. Set
 `PULSE_CAMPAIGN_PREVIEW_SECRET` to a stable secret of at least 16 bytes in a
 deployed environment; without it, a process-local random secret intentionally
-invalidates outstanding previews after restart. Stage 9 confirmation verifies
-readiness only and returns `created: false`; Stage 10 will add the atomic write
-to the unchanged official `campaign` schema. The UI does not show a creation
-button until that write exists.
+invalidates outstanding previews after restart. Explicit confirmation now locks
+and revalidates the latest revision and atomically inserts one row into the
+unchanged official `campaign` schema with `status = draft`. The same transaction
+marks the generation draft confirmed and persists its idempotency key and created
+campaign ID. The UI exposes this as **Create draft campaign** only on the exact
+server preview. Generation does not select named contacts, so it deliberately
+does not write `campaign_member`; it also does not activate or send the campaign.
 If an optimistic save is stale, the review reloads the latest scoped revision
 in place rather than directing the adviser back through chat.
 

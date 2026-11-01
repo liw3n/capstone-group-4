@@ -656,6 +656,14 @@ export default function App() {
                       onDraftUpdated={(draft) => setCampaignDraftReview((current) =>
                         current ? { ...current, draft } : current,
                       )}
+                      onCampaignCreated={(campaign) => {
+                        setCampaigns((current) => [
+                          campaign,
+                          ...current.filter((item) => item.id !== campaign.id),
+                        ]);
+                        setCampaignDraftReview(null);
+                        setSelectedCampaignId(campaign.id);
+                      }}
                     />
                   ) : buildingCampaign ? (
                     <CampaignBuilder

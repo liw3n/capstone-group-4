@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS campaign_generation_drafts (
     references_used JSONB NOT NULL DEFAULT '[]'::jsonb
         CHECK (jsonb_typeof(references_used) = 'array'),
     draft JSONB NOT NULL CHECK (jsonb_typeof(draft) = 'object'),
+    creation_metadata JSONB NOT NULL DEFAULT
+        '{"startDate":null,"endDate":null,"audienceSource":"contacts"}'::jsonb
+        CHECK (jsonb_typeof(creation_metadata) = 'object'),
     validation JSONB NOT NULL CHECK (jsonb_typeof(validation) = 'object'),
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
     status VARCHAR(16) NOT NULL DEFAULT 'generated'
@@ -32,6 +35,11 @@ CREATE TABLE IF NOT EXISTS campaign_generation_drafts (
         CHECK (preview_token_digest IS NULL OR preview_token_digest ~ '^[a-f0-9]{64}$'),
     preview_created_at TIMESTAMPTZ,
     preview_expires_at TIMESTAMPTZ,
+    created_campaign_id UUID,
+    confirmed_revision INTEGER
+        CHECK (confirmed_revision IS NULL OR confirmed_revision >= 1),
+    confirmed_at TIMESTAMPTZ,
+    confirmation_idempotency_key VARCHAR(128),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (tenant_id, draft_id)
@@ -45,7 +53,7 @@ CREATE INDEX IF NOT EXISTS idx_campaign_generation_draft_scope_status
     ON campaign_generation_drafts (tenant_id, fa_id, status, updated_at DESC);
 
 COMMENT ON TABLE campaign_generation_drafts IS
-    'PULSE prototype review-only generated campaign drafts; not a supplied GCRM table.';
+    'PULSE prototype generated campaign review and confirmation state; not a supplied GCRM table.';
 
 -- Stage 9 additions for databases provisioned before server-issued previews.
 -- Only a one-way token digest is retained; the reusable plaintext token is
@@ -59,6 +67,27 @@ ALTER TABLE campaign_generation_drafts
         CHECK (preview_token_digest IS NULL OR preview_token_digest ~ '^[a-f0-9]{64}$'),
     ADD COLUMN IF NOT EXISTS preview_created_at TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS preview_expires_at TIMESTAMPTZ;
+
+-- Stage 10 additions remain on the PULSE-owned review table. The supplied
+-- campaign and campaign_member schemas are intentionally unchanged.
+ALTER TABLE campaign_generation_drafts
+    ADD COLUMN IF NOT EXISTS creation_metadata JSONB NOT NULL DEFAULT
+        '{"startDate":null,"endDate":null,"audienceSource":"contacts"}'::jsonb
+        CHECK (jsonb_typeof(creation_metadata) = 'object'),
+    ADD COLUMN IF NOT EXISTS created_campaign_id UUID,
+    ADD COLUMN IF NOT EXISTS confirmed_revision INTEGER
+        CHECK (confirmed_revision IS NULL OR confirmed_revision >= 1),
+    ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS confirmation_idempotency_key VARCHAR(128);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_campaign_generation_draft_created_campaign
+    ON campaign_generation_drafts (created_campaign_id)
+    WHERE created_campaign_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_campaign_generation_draft_idempotency
+    ON campaign_generation_drafts
+        (tenant_id, fa_id, confirmation_idempotency_key)
+    WHERE confirmation_idempotency_key IS NOT NULL;
 
 -- Structured alternatives are stored separately from chat prose so a later
 -- instruction such as "use the fifth option" can be resolved safely.

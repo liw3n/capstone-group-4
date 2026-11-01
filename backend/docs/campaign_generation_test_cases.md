@@ -1,7 +1,7 @@
 # Campaign generation test cases
 
-These five synthetic campaign drafts are reference outputs for testing a future
-MCP campaign-generation tool. Each case begins with a financial adviser's
+These five synthetic campaign drafts are reference outputs for testing the
+MCP campaign-generation workflow. Each case begins with a financial adviser's
 plain-language objective and provides the six fields expected in a complete,
 ready-to-review proposal. The adviser must be able to edit or regenerate every
 field before explicitly approving creation; generating a draft must not create,
@@ -71,6 +71,20 @@ writes.
 For concurrent review, submit revision `n` after revision `n + 1` already exists.
 The stale request must return `409`, must not write, and the frontend must reload
 the latest scoped revision before allowing another edit.
+
+## Final preview and creation cases
+
+- A draft without reviewed start and end dates cannot receive a final preview.
+- Any saved content or schedule edit advances the revision and invalidates the
+  previous preview token.
+- Only the explicit **Create draft campaign** action for the latest valid preview
+  inserts a campaign; the stored status is always `draft`.
+- Retrying the same confirmation with the same idempotency key returns the same
+  campaign and does not insert a duplicate.
+- Confirmation records official adviser ownership through
+  `campaign.created_by_user_id`. It creates no `campaign_member` row because no
+  named contact audience has been selected or consent-filtered.
+- Confirmation never activates the campaign or sends outreach.
 
 ## Young family protection check-in
 

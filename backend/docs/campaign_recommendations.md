@@ -253,4 +253,4 @@ for the interim presentation.
 
 The general system architecture is in `Architecture.svg`, covering CRM state,
 chat, AI/MCP, PostgreSQL and the shared development provisioning workflow. The rendered
-`Architecture.png` is an older export.
+`Architecture.png` is the synchronized rendered export.

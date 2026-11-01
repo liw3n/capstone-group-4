@@ -26,13 +26,25 @@ SCOPE = RequestScope("advisor-123", "tenant-123")
 
 def test_preview_hash_is_canonical_and_changes_with_visible_content():
     artifact = persisted_campaign_draft()
-    first = campaign_preview_content_hash(artifact.draft, artifact.validation)
+    first = campaign_preview_content_hash(
+        artifact.draft, artifact.validation, artifact.creation
+    )
     equivalent = artifact.draft.__class__.model_validate(
         artifact.draft.model_dump(mode="json")
     )
-    assert campaign_preview_content_hash(equivalent, artifact.validation) == first
+    assert campaign_preview_content_hash(
+        equivalent, artifact.validation, artifact.creation
+    ) == first
     changed = artifact.draft.model_copy(update={"name": "Different review name"})
-    assert campaign_preview_content_hash(changed, artifact.validation) != first
+    assert campaign_preview_content_hash(
+        changed, artifact.validation, artifact.creation
+    ) != first
+    changed_creation = artifact.creation.model_copy(
+        update={"endDate": artifact.creation.startDate}
+    )
+    assert campaign_preview_content_hash(
+        artifact.draft, artifact.validation, changed_creation
+    ) != first
 
 
 def test_preview_token_is_scope_revision_content_and_expiry_bound():
