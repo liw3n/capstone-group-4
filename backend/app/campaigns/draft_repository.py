@@ -1,6 +1,7 @@
 """Scoped PostgreSQL persistence for review-only campaign draft revisions."""
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -29,6 +30,15 @@ class CampaignDraftNotFound(ValueError):
 
 class CampaignDraftStaleRevision(ValueError):
     """Raised when an update is based on a superseded revision."""
+
+
+@dataclass(frozen=True)
+class CampaignDraftPreviewMetadata:
+    content_hash: str
+    revision: int
+    token_digest: str
+    created_at: datetime
+    expires_at: datetime
 
 
 def _timestamp_iso(value: datetime) -> str:
@@ -140,6 +150,114 @@ def get_latest_campaign_draft(
         with draft_transaction() as active_connection:
             row = read(active_connection)
     return _from_row(row) if row else None
+
+
+def get_campaign_draft_preview_metadata(
+    scope: RequestScope,
+    session_id: str,
+    draft_id: str,
+    *,
+    connection=None,
+) -> CampaignDraftPreviewMetadata | None:
+    def read(active_connection):
+        return active_connection.execute(
+            """
+            SELECT preview_content_hash, preview_revision, preview_token_digest,
+                   preview_created_at, preview_expires_at
+            FROM campaign_generation_drafts
+            WHERE draft_id = %s AND tenant_id = %s AND fa_id = %s
+              AND session_id = %s AND status IN ('generated', 'reviewed')
+            """,
+            (draft_id, scope.tenant_id, scope.fa_id, session_id),
+        ).fetchone()
+
+    if connection is not None:
+        row = read(connection)
+    else:
+        with draft_transaction() as active_connection:
+            row = read(active_connection)
+    if row is None or any(
+        row[field] is None
+        for field in (
+            "preview_content_hash",
+            "preview_revision",
+            "preview_token_digest",
+            "preview_created_at",
+            "preview_expires_at",
+        )
+    ):
+        return None
+    return CampaignDraftPreviewMetadata(
+        content_hash=row["preview_content_hash"],
+        revision=row["preview_revision"],
+        token_digest=row["preview_token_digest"],
+        created_at=row["preview_created_at"],
+        expires_at=row["preview_expires_at"],
+    )
+
+
+def store_campaign_draft_preview(
+    scope: RequestScope,
+    session_id: str,
+    draft_id: str,
+    revision: int,
+    *,
+    content_hash: str,
+    token_digest: str,
+    created_at: datetime,
+    expires_at: datetime,
+    connection=None,
+) -> CampaignDraftPreviewMetadata:
+    def update(active_connection):
+        return active_connection.execute(
+            """
+            UPDATE campaign_generation_drafts
+            SET preview_content_hash = %s, preview_revision = %s,
+                preview_token_digest = %s, preview_created_at = %s,
+                preview_expires_at = %s
+            WHERE draft_id = %s AND tenant_id = %s AND fa_id = %s
+              AND session_id = %s AND revision = %s
+              AND status IN ('generated', 'reviewed')
+            RETURNING preview_content_hash, preview_revision,
+                      preview_token_digest, preview_created_at,
+                      preview_expires_at
+            """,
+            (
+                content_hash,
+                revision,
+                token_digest,
+                created_at,
+                expires_at,
+                draft_id,
+                scope.tenant_id,
+                scope.fa_id,
+                session_id,
+                revision,
+            ),
+        ).fetchone()
+
+    if connection is not None:
+        row = update(connection)
+    else:
+        with draft_transaction() as active_connection:
+            row = update(active_connection)
+    if row is None:
+        current = get_campaign_draft(
+            scope,
+            session_id,
+            draft_id,
+            connection=connection,
+        )
+        if current is None:
+            raise CampaignDraftNotFound("campaign draft not found")
+        raise CampaignDraftStaleRevision("campaign draft revision is stale")
+    return CampaignDraftPreviewMetadata(
+        content_hash=row["preview_content_hash"],
+        revision=row["preview_revision"],
+        token_digest=row["preview_token_digest"],
+        created_at=row["preview_created_at"],
+        expires_at=row["preview_expires_at"],
+    )
 
 
 def get_pending_campaign_draft_options(
@@ -373,7 +491,10 @@ def update_campaign_draft_revision(
             UPDATE campaign_generation_drafts
             SET objective = %s, references_used = %s, draft = %s,
                 validation = %s, revision = %s, status = %s,
-                changed_fields = %s, updated_at = CURRENT_TIMESTAMP
+                changed_fields = %s, updated_at = CURRENT_TIMESTAMP,
+                preview_content_hash = NULL, preview_revision = NULL,
+                preview_token_digest = NULL, preview_created_at = NULL,
+                preview_expires_at = NULL
             WHERE draft_id = %s AND tenant_id = %s AND fa_id = %s
               AND session_id = %s AND revision = %s
               AND status IN ('generated', 'reviewed')

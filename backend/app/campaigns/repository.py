@@ -6,6 +6,8 @@ import re
 from math import isfinite
 from uuid import UUID
 
+from app.campaigns.criteria import criteria_from_storage
+
 DEMO_DATE = date(2026, 8, 26)  # Same as frontend/data/seed.ts.
 DEMO_TENANT = "pulse-demo"
 DEMO_FA = "adv-steven-raynaldi"
@@ -114,25 +116,8 @@ def _campaign_from_row(row: dict, scope: RequestScope) -> Campaign:
     raw = row.get("audience_criteria")
     if not isinstance(raw, dict):
         raise CampaignStorageUnavailable("Campaign targeting criteria are missing or invalid")
-    aliases = {
-        "ageGroups": {
-            "under35": "under35", "35-44": "35to44", "35to44": "35to44",
-            "45-54": "45to54", "45to54": "45to54", "55-64": "55to64",
-            "55to64": "55to64", "65plus": "65plus",
-        },
-        "genders": {"male": "male", "female": "female"},
-        "cashBands": {
-            "under50k": "under50k", "50k-250k": "50kTo250k", "50kto250k": "50kTo250k",
-            "250k-1m": "250kTo1m", "250kto1m": "250kTo1m", "above1m": "above1m",
-        },
-    }
     try:
-        bands = {}
-        for field, mapping in aliases.items():
-            values = raw.get(field, [])
-            if not isinstance(values, list):
-                raise ValueError("Invalid targeting values")
-            bands[field] = tuple(mapping[value.strip().lower()] for value in values)
+        bands = criteria_from_storage(raw)
 
         def bound(custom: str, legacy: str, side: str, age: bool = False):
             value = raw.get(custom)
@@ -148,7 +133,8 @@ def _campaign_from_row(row: dict, scope: RequestScope) -> Campaign:
             return int(number) if age else number
 
         criteria = Criteria(
-            age_groups=bands["ageGroups"], genders=bands["genders"], cash_bands=bands["cashBands"],
+            age_groups=tuple(bands["ageGroups"]), genders=tuple(bands["genders"]),
+            cash_bands=tuple(bands["cashBands"]),
             age_min=bound("ageCustomMin", "ageRange", "min", age=True),
             age_max=bound("ageCustomMax", "ageRange", "max", age=True),
             cash_min=bound("cashCustomMin", "cashRange", "min"),

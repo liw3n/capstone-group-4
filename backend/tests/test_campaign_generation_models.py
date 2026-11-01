@@ -58,11 +58,32 @@ def test_model_facing_contracts_exclude_server_owned_fields():
     forbidden = {"tenant_id", "tenantId", "fa_id", "faId", "status", "createdBy", "createdAt"}
     for contract in (
         CampaignReferenceQuery, PrepareCampaignDraftArguments,
-        ReviseCampaignDraftArguments, CampaignDraftPreviewRequest,
-        CampaignDraftConfirmationRequest,
+        ReviseCampaignDraftArguments,
     ):
         properties = set(contract.model_json_schema().get("properties", {}))
         assert not properties & forbidden
+
+
+def test_preview_and_confirmation_are_scoped_http_contracts():
+    preview = CampaignDraftPreviewRequest(
+        fa_id="advisor-123",
+        session_id="session-123",
+        revision=2,
+    )
+    assert preview.revision == 2
+    confirmation = CampaignDraftConfirmationRequest(
+        fa_id="advisor-123",
+        session_id="session-123",
+        revision=2,
+        confirmationToken="signed-preview-token-value",
+        idempotencyKey="confirm-12345678",
+    )
+    assert confirmation.idempotencyKey == "confirm-12345678"
+    with pytest.raises(ValidationError):
+        CampaignDraftConfirmationRequest.model_validate({
+            **confirmation.model_dump(),
+            "idempotencyKey": "unsafe key with spaces",
+        })
 
 
 def test_reference_contract_validates_dates_and_targeting_rationale():

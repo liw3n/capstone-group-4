@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from types import SimpleNamespace
@@ -331,6 +333,180 @@ def test_review_draft_rejects_stale_revision_before_generation(monkeypatch):
     )
 
     assert response.status_code == 409
+
+
+def _configure_campaign_preview(monkeypatch, current):
+    from app.campaigns.draft_repository import CampaignDraftPreviewMetadata
+    from app.campaigns.preview import CampaignPreviewTokenSigner
+
+    now = datetime(2026, 10, 31, 8, 0, tzinfo=timezone.utc)
+    metadata = {"value": None}
+
+    def store(_scope, _session_id, _draft_id, revision, **values):
+        stored = CampaignDraftPreviewMetadata(
+            content_hash=values["content_hash"],
+            revision=revision,
+            token_digest=values["token_digest"],
+            created_at=values["created_at"],
+            expires_at=values["expires_at"],
+        )
+        metadata["value"] = stored
+        return stored
+
+    monkeypatch.setattr(main, "get_session", lambda _session_id: session())
+    monkeypatch.setattr(main, "get_campaign_draft", lambda *_args: current)
+    monkeypatch.setattr(
+        main,
+        "revalidate_campaign_draft_preview",
+        lambda _current, _scope: current.validation,
+    )
+    monkeypatch.setattr(
+        main,
+        "get_campaign_preview_signer",
+        lambda: CampaignPreviewTokenSigner(b"stage-nine-test-secret-value"),
+    )
+    monkeypatch.setattr(main, "preview_utc_now", lambda: now)
+    monkeypatch.setattr(main, "store_campaign_draft_preview", store)
+    monkeypatch.setattr(
+        main,
+        "get_campaign_draft_preview_metadata",
+        lambda *_args: metadata["value"],
+    )
+    return metadata, now
+
+
+def test_campaign_preview_and_confirmation_are_review_only(monkeypatch):
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft()
+    metadata, _now = _configure_campaign_preview(monkeypatch, current)
+
+    preview_response = client.post(
+        f"/campaign-drafts/{current.draftId}/preview",
+        json={
+            "fa_id": "fa-1",
+            "session_id": "session-1",
+            "revision": current.revision,
+        },
+    )
+
+    assert preview_response.status_code == 200
+    preview = preview_response.json()
+    assert preview["type"] == "campaign_draft_preview"
+    assert preview["draft"] == current.draft.model_dump(mode="json")
+    assert preview["validation"] == current.validation.model_dump(mode="json")
+    assert preview["created"] is False
+    assert metadata["value"].revision == current.revision
+
+    confirmation_response = client.post(
+        f"/api/campaign-drafts/{current.draftId}/confirm",
+        json={
+            "fa_id": "fa-1",
+            "session_id": "session-1",
+            "revision": current.revision,
+            "confirmationToken": preview["confirmationToken"],
+            "idempotencyKey": "confirm-stage-nine-1234",
+        },
+    )
+
+    assert confirmation_response.status_code == 200
+    assert confirmation_response.json() == {
+        "type": "campaign_draft_confirmation_ready",
+        "draftId": current.draftId,
+        "revision": current.revision,
+        "contentHash": preview["contentHash"],
+        "readyForCreation": True,
+        "created": False,
+    }
+    assert current.status == "generated"
+
+
+def test_new_campaign_preview_supersedes_previous_token(monkeypatch):
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft()
+    _configure_campaign_preview(monkeypatch, current)
+    payload = {
+        "fa_id": "fa-1",
+        "session_id": "session-1",
+        "revision": current.revision,
+    }
+
+    first = client.post(
+        f"/api/campaign-drafts/{current.draftId}/preview", json=payload
+    ).json()
+    second = client.post(
+        f"/api/campaign-drafts/{current.draftId}/preview", json=payload
+    ).json()
+    assert first["confirmationToken"] != second["confirmationToken"]
+
+    response = client.post(
+        f"/campaign-drafts/{current.draftId}/confirm",
+        json={
+            **payload,
+            "confirmationToken": first["confirmationToken"],
+            "idempotencyKey": "confirm-superseded-1234",
+        },
+    )
+
+    assert response.status_code == 409
+    assert "superseded" in response.json()["detail"]
+
+
+def test_expired_campaign_preview_requires_a_fresh_preview(monkeypatch):
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft()
+    _metadata, now = _configure_campaign_preview(monkeypatch, current)
+    payload = {
+        "fa_id": "fa-1",
+        "session_id": "session-1",
+        "revision": current.revision,
+    }
+    preview = client.post(
+        f"/api/campaign-drafts/{current.draftId}/preview", json=payload
+    ).json()
+    monkeypatch.setattr(
+        main,
+        "preview_utc_now",
+        lambda: now + timedelta(minutes=6),
+    )
+
+    response = client.post(
+        f"/api/campaign-drafts/{current.draftId}/confirm",
+        json={
+            **payload,
+            "confirmationToken": preview["confirmationToken"],
+            "idempotencyKey": "confirm-expired-1234",
+        },
+    )
+
+    assert response.status_code == 410
+
+
+def test_campaign_preview_hides_cross_adviser_draft(monkeypatch):
+    from test_orchestrator import persisted_campaign_draft
+
+    current = persisted_campaign_draft()
+    monkeypatch.setattr(main, "get_session", lambda _session_id: session("fa-2"))
+    monkeypatch.setattr(
+        main,
+        "get_campaign_draft",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("cross-adviser draft storage must not be queried")
+        ),
+    )
+
+    response = client.post(
+        f"/api/campaign-drafts/{current.draftId}/preview",
+        json={
+            "fa_id": "fa-1",
+            "session_id": "session-1",
+            "revision": current.revision,
+        },
+    )
+
+    assert response.status_code == 404
 
 
 def test_revision_loads_authoritative_draft_and_returns_same_id_next_revision(monkeypatch):

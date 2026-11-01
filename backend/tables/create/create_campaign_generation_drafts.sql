@@ -25,6 +25,13 @@ CREATE TABLE IF NOT EXISTS campaign_generation_drafts (
         ),
     model_version VARCHAR(128),
     prompt_version VARCHAR(64) NOT NULL DEFAULT 'stage-7-v1',
+    preview_content_hash CHAR(64)
+        CHECK (preview_content_hash IS NULL OR preview_content_hash ~ '^[a-f0-9]{64}$'),
+    preview_revision INTEGER CHECK (preview_revision IS NULL OR preview_revision >= 1),
+    preview_token_digest CHAR(64)
+        CHECK (preview_token_digest IS NULL OR preview_token_digest ~ '^[a-f0-9]{64}$'),
+    preview_created_at TIMESTAMPTZ,
+    preview_expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (tenant_id, draft_id)
@@ -39,6 +46,19 @@ CREATE INDEX IF NOT EXISTS idx_campaign_generation_draft_scope_status
 
 COMMENT ON TABLE campaign_generation_drafts IS
     'PULSE prototype review-only generated campaign drafts; not a supplied GCRM table.';
+
+-- Stage 9 additions for databases provisioned before server-issued previews.
+-- Only a one-way token digest is retained; the reusable plaintext token is
+-- returned to the adviser session and never stored.
+ALTER TABLE campaign_generation_drafts
+    ADD COLUMN IF NOT EXISTS preview_content_hash CHAR(64)
+        CHECK (preview_content_hash IS NULL OR preview_content_hash ~ '^[a-f0-9]{64}$'),
+    ADD COLUMN IF NOT EXISTS preview_revision INTEGER
+        CHECK (preview_revision IS NULL OR preview_revision >= 1),
+    ADD COLUMN IF NOT EXISTS preview_token_digest CHAR(64)
+        CHECK (preview_token_digest IS NULL OR preview_token_digest ~ '^[a-f0-9]{64}$'),
+    ADD COLUMN IF NOT EXISTS preview_created_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS preview_expires_at TIMESTAMPTZ;
 
 -- Structured alternatives are stored separately from chat prose so a later
 -- instruction such as "use the fifth option" can be resolved safely.

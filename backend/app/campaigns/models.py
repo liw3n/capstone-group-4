@@ -9,9 +9,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-AgeGroup = Literal["under35", "35-44", "45-54", "55-64", "65plus"]
-Gender = Literal["Male", "Female"]
-CashBand = Literal["under50k", "50k-250k", "250k-1m", "above1m"]
+from app.campaigns.criteria import AgeGroup, CashBand, Gender
+
 CampaignCategory = Literal[
     "retirement", "protection", "education", "legacy", "property", "other"
 ]
@@ -306,12 +305,18 @@ class ReviseCampaignDraftArguments(StrictModel):
 
 
 class CampaignDraftPreviewRequest(StrictModel):
+    fa_id: str = Field(min_length=1, max_length=64)
+    session_id: str = Field(min_length=1, max_length=64)
     revision: int = Field(ge=1, strict=True)
 
 
 class CampaignDraftConfirmationRequest(CampaignDraftPreviewRequest):
     confirmationToken: str = Field(min_length=20, max_length=8_000)
-    idempotencyKey: str = Field(min_length=8, max_length=128)
+    idempotencyKey: str = Field(
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$",
+    )
 
 
 class CampaignDraftValidation(StrictModel):
@@ -482,9 +487,26 @@ class PersistedCampaignDraftOptionSet(StrictModel):
 
 
 class CampaignDraftPreview(StrictModel):
-    draftId: str = Field(min_length=1, max_length=128)
+    type: Literal["campaign_draft_preview"] = "campaign_draft_preview"
+    draftId: str = Field(pattern=r"^[a-f0-9-]{36}$", min_length=36, max_length=36)
     revision: int = Field(ge=1, strict=True)
     contentHash: str = Field(pattern=r"^[a-f0-9]{64}$")
     confirmationToken: str = Field(min_length=20, max_length=8_000)
-    expiresAt: str = Field(min_length=1, max_length=64)
+    expiresAt: datetime
     draft: CampaignDraft
+    validation: CampaignDraftValidation
+    requires_adviser_review: Literal[True] = True
+    created: Literal[False] = False
+
+
+class CampaignDraftConfirmationReadiness(StrictModel):
+    """Stage 9 verification result; Stage 10 performs the actual creation."""
+
+    type: Literal["campaign_draft_confirmation_ready"] = (
+        "campaign_draft_confirmation_ready"
+    )
+    draftId: str = Field(pattern=r"^[a-f0-9-]{36}$", min_length=36, max_length=36)
+    revision: int = Field(ge=1, strict=True)
+    contentHash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    readyForCreation: Literal[True] = True
+    created: Literal[False] = False

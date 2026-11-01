@@ -102,6 +102,27 @@ discarding an existing draft.
 
 ## Data contracts
 
+### Canonical targeting vocabulary and storage boundary
+
+The campaign-generation, MCP, HTTP and frontend contracts use one canonical
+targeting vocabulary:
+
+- `ageGroups`: `under35`, `35to44`, `45to54`, `55to64`, `65plus`;
+- `genders`: `male`, `female`;
+- `cashBands`: `under50k`, `50kTo250k`, `250kTo1m`, `above1m`.
+
+The current prototype `campaign.audience_criteria` JSON uses hyphenated age and
+cash bands (`35-44`, `50k-250k`, `250k-1m`) and title-cased genders (`Male`,
+`Female`). Those are storage values only. `app/campaigns/criteria.py` owns the
+explicit, fail-closed conversion in both directions. Database adapters must
+convert stored criteria before returning domain or HTTP objects and must convert
+canonical criteria before writing the current campaign table. Model-facing
+Pydantic and JSON Schema contracts deliberately reject storage-only values; they
+must not accept a union of both representations.
+
+Contact gender remains a separate CRM field and may use `Male` or `Female` at
+the contact API boundary. It does not change the campaign-targeting vocabulary.
+
 ### Generated campaign draft
 
 Create shared Pydantic models outside `main.py` so FastAPI routes, the MCP server
@@ -134,7 +155,7 @@ class CampaignDraft(BaseModel):
 ```
 
 `targetDemographicSummary`, `rationale`, `assumptions` and `disclaimer` are review
-metadata in the first release. They are not copied into `mock_campaign` unless a
+metadata in the first release. They are not copied into `campaign` unless a
 separate data-model decision explicitly adds fields for them.
 
 ### Curated campaign catalogue entry
@@ -458,9 +479,8 @@ current draft revision. They do not mutate the draft. A later instruction such
 as "use the fifth option" resolves against that structured set and enters the
 same selective-revision boundary; it never depends on parsing prior assistant
 prose. Option sets expire after 15 minutes and become stale after any successful
-draft revision. Preview tokens do not exist yet; when Stage 9 adds them,
-binding them to the revision will make an earlier token stale after any
-subsequent revision.
+draft revision. Stage 9 preview tokens are bound to the revision, so an earlier
+token becomes stale after any subsequent revision.
 
 ## Review and confirmation workflow
 
@@ -478,7 +498,7 @@ Persist generated drafts separately from campaigns. After the orchestrator
 returns a validated artifact, the API stores a `campaign_generation_drafts` row
 and returns its `draftId` and `revision`. Generation may create or update this
 draft record, but neither generation nor regeneration may write to
-`mock_campaign` or `mock_campaign_advisor`.
+`campaign` or `campaign_member`.
 
 Manual edits and section regeneration update the draft row using optimistic
 locking. The request supplies the last observed revision; the server rejects a
@@ -532,9 +552,9 @@ PostgreSQL transaction:
 7. Force `status = "draft"` regardless of model or browser input. Validate the
    reviewed start date, end date, audience source and routing fields supplied
    through the campaign-builder review step.
-8. Insert the `mock_campaign` row using parameterised SQL.
-9. Insert the corresponding `mock_campaign_advisor` ownership or assignment rows
-   in the same transaction.
+8. Insert the `campaign` row using the supplied schema and parameterised SQL.
+9. Insert the corresponding `campaign_member` ownership or assignment rows in
+   the same transaction, using only official existing columns.
 10. Update `campaign_generation_drafts` to `confirmed`, record the created campaign
     ID, confirmed revision, confirmation time and idempotency key.
 11. Commit and return the newly created `CampaignPayload`. If any step fails,
@@ -546,7 +566,7 @@ function that owns the complete transaction. Do not call the current
 connection-owning `create_campaign` function and then update the draft in a
 separate transaction.
 
-The existing `mock_campaign.status` constraint already permits `draft`. The
+The existing `campaign.status` contract permits `draft`. The
 confirmation path must supply `draft` explicitly because the current API and
 catalogue creation defaults are `active`; align those defaults separately so an
 omitted browser field cannot activate a campaign.
@@ -596,7 +616,7 @@ should record:
 Add constraints and indexes for adviser and tenant lookup, current status and
 created campaign ID. Enforce one created campaign per draft with a uniqueness
 constraint. If `created_campaign_id` is represented as a foreign key, use the
-same `(tenant_id, campaign_id)` types as `mock_campaign`.
+same key types as the official `campaign` schema.
 
 Store only synthetic prototype data. Apply retention rules before any production
 use. Every read and mutation must enforce both adviser and tenant ownership.
@@ -604,9 +624,10 @@ use. Every read and mutation must enforce both adviser and tenant ownership.
 Stages 7-8 implement the fields required for generated/reviewed cross-turn state:
 scope, session, objective, references, structured draft, validation, revision,
 status, changed fields, model/prompt version placeholders and timestamps. Stage
-8 uses those fields for editable review without adding builder metadata. Hashes,
-token expiry, idempotency and confirmed campaign linkage in the full target
-above remain Stage 9-10 additions.
+8 uses those fields for editable review without adding builder metadata. Stage 9
+adds the canonical preview hash, revision, one-way token digest and issue/expiry
+timestamps. Idempotency persistence and confirmed campaign linkage remain Stage
+10 additions.
 
 ## Testing and evaluation
 
@@ -645,7 +666,8 @@ above remain Stage 9-10 additions.
   generation succeeds.
 - The draft artifact reports the exact reference IDs and versions used.
 - Adviser and tenant scope cannot be supplied by model tool arguments.
-- Generation and regeneration leave `mock_campaign` unchanged.
+- Generation, regeneration and Stage 9 readiness checks leave `campaign`
+  unchanged.
 - Stale, expired or cross-adviser confirmation is rejected.
 - Valid confirmation creates exactly one `draft` campaign.
 - Confirmation atomically creates the campaign and adviser assignment and marks
@@ -693,7 +715,7 @@ normal test suite flaky.
 
 Complete each stage and its exit criteria before beginning a dependent stage.
 
-Implementation status as of 18 October 2026: Stages 1-8 are implemented and
+Implementation status as of 31 October 2026: Stages 1-9 are implemented and
 covered by deterministic backend and frontend tests. They add shared contracts, a versioned
 12-entry synthetic catalogue, scoped deterministic retrieval, signed retrieval
 tokens, the read-only `find_campaign_references` MCP tool and the read-only
@@ -733,7 +755,7 @@ latest-reviewable compatibility fallback for older rows), uses a strict
 selected-field schema for the model proposal, invokes Stage 6 directly,
 and updates the same row only when its expected revision still matches. The
 draft update and matching chat exchange commit atomically. No generation or
-revision path writes `mock_campaign`.
+revision path writes `campaign`.
 The Stage 7 hardening pass adds an explicit active-draft pointer per chat session
 and a state-aware turn resolver across the completed Stage 1-7 flow. It keeps
 ordinary MCP operations on their existing route, requires explicit intent before
@@ -748,7 +770,7 @@ updates in both direct and `/api` route forms. `ChatPanel` exposes a structured
 review action that opens the draft inside the existing Campaigns workspace. The
 review mode prepopulates all generated fields, shows rationale, assumptions,
 warnings and catalogue provenance, supports exact manual edits and multi-field
-regeneration, and offers a local read-only preview. It does not calculate a
+regeneration, and offers a server-verified read-only preview. It does not calculate a
 named audience, create a campaign, activate outreach or send communications.
 The Stage 8 routing hardening loads an active scoped draft for broad field/value
 instructions even when they omit `campaign` or `draft`, while explicit discovery,
@@ -763,6 +785,32 @@ Criteria changes refresh dependent summary/rationale metadata, and chat-driven
 criteria regeneration also revises description and client message against the
 resolved criteria, while the server derives the demographic summary and
 rationale. A stale review save reloads the latest revision in place.
+
+Stage 9 replaces the browser-only preview with a scoped FastAPI preview route.
+The server reloads the current draft, re-resolves its catalogue citations,
+reruns policy validation and hashes the exact draft plus validation result. It
+returns that exact content with a five-minute HMAC token bound to the draft,
+revision, content hash, tenant, adviser and session. The project-owned draft row
+stores only the token digest and preview timestamps; a new preview supersedes
+the previous token, and any revision clears the metadata. The paired confirmation
+route verifies readiness and the future idempotency-key shape but deliberately
+returns `created = false`. No Stage 9 path changes the supplied `campaign` or
+`campaign_member` schemas or writes those tables. The frontend displays the
+server result and leaves creation unavailable until Stage 10 can make the
+campaign write atomic.
+
+The 31 October contract-reconciliation pass restored the canonical targeting
+vocabulary after the current campaign-table schema introduced different storage
+spellings into the shared generation model. Generation contracts, the curated
+catalogue, clarification, validation, orchestration and frontend continue to use
+the canonical values above. Explicit storage converters now isolate the current
+campaign JSON representation. The focused Stage 1-8 regression suite passes 139
+tests; adjacent discovery, matching, REST and current-schema checks pass 63 tests,
+with four isolated PostgreSQL checks skipped when their opt-in database is absent.
+After Stage 9, the complete deterministic backend suite passes 288 tests with
+30 opt-in PostgreSQL tests skipped when their isolated database URLs are absent.
+The frontend suite passes 18 tests, and strict TypeScript checking and the
+production build both pass.
 
 ### Stage 1 Define shared contracts and lifecycle boundaries
 
@@ -978,8 +1026,8 @@ Implementation:
 - Paired `POST /campaign-drafts/{draft_id}/regenerate` routes regenerate one or
   several explicitly selected fields. Criteria selections also refresh their
   dependent targeting metadata and client-facing copy.
-- A local read-only preview is available only for the latest saved revision.
-  Confirm remains unavailable until Stage 9 supplies a server-issued preview.
+- The review proceeds to a server-issued preview only for the latest saved
+  revision. Campaign creation remains unavailable until Stage 10.
 
 Exit criteria:
 
@@ -991,19 +1039,28 @@ Exit criteria:
 
 ### Stage 9 Implement preview and confirmation endpoints
 
+Status: implemented on 31 October 2026. The confirmation endpoint verifies
+readiness only; Stage 10 remains responsible for the consequential campaign
+write and final confirmation control.
+
 Implementation:
 
 - Add paired `/campaign-drafts/...` and `/api/campaign-drafts/...` preview and
   confirmation routes.
 - Issue preview tokens bound to the latest canonical content hash and revision.
-- Add idempotency keys and deliberate stale, expired and cross-scope errors.
-- Keep confirmation out of MCP and require an explicit frontend click.
+- Validate the future idempotency-key shape and add deliberate stale, expired
+  and cross-scope errors. Persist and consume the key only in Stage 10's
+  transaction.
+- Keep confirmation out of MCP. The frontend obtains and displays the exact
+  server preview; it does not expose a misleading create button before Stage 10.
 
 Exit criteria:
 
 - Only a currently valid preview can be confirmed.
 - Editing or regenerating after preview makes confirmation fail until a new
   preview is issued.
+- Preview and confirmation readiness leave the draft reviewable and do not write
+  `campaign` or `campaign_member`.
 
 ### Stage 10 Implement the atomic PostgreSQL campaign write
 
@@ -1013,8 +1070,9 @@ Implementation:
 - Lock and revalidate the draft, derive trusted ownership fields and generate the
   campaign ID.
 - Force campaign status to `draft`.
-- Insert `mock_campaign` and `mock_campaign_advisor`, then mark the generation
-  draft confirmed in the same transaction.
+- Insert `campaign` and the required `campaign_member` ownership rows using the
+  official existing columns, then mark the project-owned generation draft
+  confirmed in the same transaction. Do not alter or invent official columns.
 - Return the stored campaign and support safe idempotent retries.
 - Add rollback tests that fail after each write boundary.
 
@@ -1043,6 +1101,8 @@ Exit criteria:
 ## Expected file changes
 
 - `backend/app/campaigns/models.py` or `drafts.py`: shared draft contracts.
+- `backend/app/campaigns/criteria.py`: canonical targeting types and explicit
+  current-campaign storage conversion.
 - `backend/app/campaigns/validation.py`: deterministic policy checks.
 - `backend/app/campaigns/catalogue.json`: versioned synthetic approved patterns.
 - `backend/app/campaigns/reference_repository.py`: filtering and deterministic

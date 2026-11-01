@@ -18,6 +18,28 @@ export type CampaignDraftChanges = Partial<{
   targetDemographicSummary: string;
 }>;
 
+export interface CampaignDraftPreview {
+  type: 'campaign_draft_preview';
+  draftId: string;
+  revision: number;
+  contentHash: string;
+  confirmationToken: string;
+  expiresAt: string;
+  draft: CampaignDraftArtifact['draft'];
+  validation: CampaignDraftArtifact['validation'];
+  requires_adviser_review: true;
+  created: false;
+}
+
+export interface CampaignDraftConfirmationReadiness {
+  type: 'campaign_draft_confirmation_ready';
+  draftId: string;
+  revision: number;
+  contentHash: string;
+  readyForCreation: true;
+  created: false;
+}
+
 export class CampaignDraftApiError extends Error {
   readonly status: number;
 
@@ -107,6 +129,49 @@ export function regenerateCampaignDraft(
         expectedRevision: current.revision,
         fields,
         instruction,
+      }),
+    },
+  );
+}
+
+export function previewCampaignDraft(
+  advisorId: string,
+  sessionId: string,
+  current: CampaignDraftArtifact,
+  signal?: AbortSignal,
+): Promise<CampaignDraftPreview> {
+  return request<CampaignDraftPreview>(
+    apiUrl(`/api/campaign-drafts/${encodeURIComponent(current.draftId)}/preview`),
+    {
+      method: 'POST',
+      signal,
+      body: JSON.stringify({
+        fa_id: advisorId,
+        session_id: sessionId,
+        revision: current.revision,
+      }),
+    },
+  );
+}
+
+export function confirmCampaignDraftReadiness(
+  advisorId: string,
+  sessionId: string,
+  preview: CampaignDraftPreview,
+  idempotencyKey: string,
+  signal?: AbortSignal,
+): Promise<CampaignDraftConfirmationReadiness> {
+  return request<CampaignDraftConfirmationReadiness>(
+    apiUrl(`/api/campaign-drafts/${encodeURIComponent(preview.draftId)}/confirm`),
+    {
+      method: 'POST',
+      signal,
+      body: JSON.stringify({
+        fa_id: advisorId,
+        session_id: sessionId,
+        revision: preview.revision,
+        confirmationToken: preview.confirmationToken,
+        idempotencyKey,
       }),
     },
   );

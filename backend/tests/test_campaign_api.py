@@ -53,9 +53,9 @@ def test_list_alias_passes_adviser_scope_to_storage(monkeypatch):
         "client_messaging": "Synthetic educational outreach message.",
         "audience_source": "contacts",
         "audience_criteria": {
-            "ageGroups": [],
+            "ageGroups": ["35-44", "55-64"],
             "genders": ["Male", "Female"],
-            "cashBands": [],
+            "cashBands": ["50k-250k", "250k-1m"],
         },
         "lead_count_uploaded": 0,
         "lead_count_promoted": 0,
@@ -75,7 +75,13 @@ def test_list_alias_passes_adviser_scope_to_storage(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()[0]["id"] == "b3333333-3333-3333-3333-333333333333"
-    assert response.json()[0]["criteria"]["genders"] == ["Male", "Female"]
+    assert response.json()[0]["criteria"] == {
+        "ageGroups": ["35to44", "55to64"],
+        "ageRange": None,
+        "genders": ["male", "female"],
+        "cashBands": ["50kTo250k", "250kTo1m"],
+        "cashRange": None,
+    }
     assert response.json()[0]["origin"] == "advisor"
     assert calls == [("advisor", RequestScope("adv-demo"))]
 

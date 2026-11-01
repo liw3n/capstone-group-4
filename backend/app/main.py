@@ -1,5 +1,6 @@
 from functools import lru_cache
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+import hmac
 from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Path, Query
@@ -21,6 +22,10 @@ from app.campaigns.models import (
     CampaignDraftArtifact,
     CampaignDraftField,
     CampaignDraftOptionProposal,
+    CampaignDraftConfirmationReadiness,
+    CampaignDraftConfirmationRequest,
+    CampaignDraftPreview,
+    CampaignDraftPreviewRequest,
     CampaignDraftRegenerationRequest,
     CampaignDraftRevisionArtifact,
     CampaignDraftUpdateRequest,
@@ -33,16 +38,32 @@ from app.campaigns.draft_repository import (
     CampaignDraftNotFound,
     CampaignDraftStaleRevision,
     CampaignDraftStorageUnavailable,
+    get_campaign_draft_preview_metadata,
     get_campaign_draft,
     get_latest_campaign_draft,
     get_pending_campaign_draft_options,
+    store_campaign_draft_preview,
     update_campaign_draft_revision,
+)
+from app.campaigns.preview import (
+    CampaignPreviewConfigurationError,
+    CampaignPreviewTokenError,
+    campaign_preview_content_hash,
+    campaign_preview_token_digest,
+    get_campaign_preview_signer,
+    revalidate_campaign_draft_preview,
+    utc_now as preview_utc_now,
+)
+from app.campaigns.reference_repository import (
+    CatalogueConfigurationError,
+    RetrievalTokenError,
 )
 
 from app.campaigns.repository import (
     CAMPAIGN_ID_PATTERN, CampaignInactive, CampaignStorageUnavailable, CampaignUnavailable,
     RequestScope, get_campaign, require_active,
 )
+from app.campaigns.validation import CampaignDraftPolicyError
 from app.contacts.catalog import (
     ContactStorageUnavailable,
     create_contact,
@@ -616,6 +637,166 @@ def campaign_draft_regenerate(
         payload.expectedRevision,
         artifact,
         status="reviewed",
+    )
+
+
+def _revalidate_campaign_preview(
+    current: PersistedCampaignDraftArtifact,
+    scope: RequestScope,
+):
+    try:
+        return revalidate_campaign_draft_preview(current, scope)
+    except (CatalogueConfigurationError, CampaignPreviewConfigurationError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Campaign draft preview is temporarily unavailable",
+        ) from exc
+    except RetrievalTokenError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except CampaignDraftPolicyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post(
+    "/campaign-drafts/{draft_id}/preview",
+    response_model=CampaignDraftPreview,
+)
+@app.post(
+    "/api/campaign-drafts/{draft_id}/preview",
+    response_model=CampaignDraftPreview,
+)
+def campaign_draft_preview(
+    draft_id: CampaignDraftId,
+    payload: CampaignDraftPreviewRequest,
+) -> CampaignDraftPreview:
+    scope, current = _review_campaign_draft(
+        draft_id,
+        payload.fa_id,
+        payload.session_id,
+    )
+    if current.revision != payload.revision:
+        raise CampaignDraftStaleRevision("campaign draft revision is stale")
+
+    validation = _revalidate_campaign_preview(current, scope)
+    content_hash = campaign_preview_content_hash(current.draft, validation)
+    now = preview_utc_now()
+    try:
+        token, claims = get_campaign_preview_signer().issue(
+            draft_id=draft_id,
+            revision=current.revision,
+            content_hash=content_hash,
+            scope=scope,
+            session_id=payload.session_id,
+            now=now,
+        )
+    except CampaignPreviewConfigurationError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Campaign draft preview is temporarily unavailable",
+        ) from exc
+    expires_at = datetime.fromtimestamp(claims.expires_at, tz=timezone.utc)
+    store_campaign_draft_preview(
+        scope,
+        payload.session_id,
+        draft_id,
+        current.revision,
+        content_hash=content_hash,
+        token_digest=campaign_preview_token_digest(token),
+        created_at=now,
+        expires_at=expires_at,
+    )
+    return CampaignDraftPreview(
+        draftId=draft_id,
+        revision=current.revision,
+        contentHash=content_hash,
+        confirmationToken=token,
+        expiresAt=expires_at,
+        draft=current.draft,
+        validation=validation,
+    )
+
+
+@app.post(
+    "/campaign-drafts/{draft_id}/confirm",
+    response_model=CampaignDraftConfirmationReadiness,
+)
+@app.post(
+    "/api/campaign-drafts/{draft_id}/confirm",
+    response_model=CampaignDraftConfirmationReadiness,
+)
+def campaign_draft_confirm(
+    draft_id: CampaignDraftId,
+    payload: CampaignDraftConfirmationRequest,
+) -> CampaignDraftConfirmationReadiness:
+    """Verify explicit intent without creating or confirming a campaign yet."""
+    scope, current = _review_campaign_draft(
+        draft_id,
+        payload.fa_id,
+        payload.session_id,
+    )
+    if current.revision != payload.revision:
+        raise CampaignDraftStaleRevision("campaign draft revision is stale")
+
+    validation = _revalidate_campaign_preview(current, scope)
+    content_hash = campaign_preview_content_hash(current.draft, validation)
+    metadata = get_campaign_draft_preview_metadata(
+        scope,
+        payload.session_id,
+        draft_id,
+    )
+    if metadata is None:
+        raise HTTPException(
+            status_code=409,
+            detail="A fresh server preview is required before confirmation",
+        )
+    now = preview_utc_now()
+    if metadata.expires_at <= now:
+        raise HTTPException(
+            status_code=410,
+            detail="Campaign draft preview token has expired",
+        )
+    if (
+        metadata.revision != current.revision
+        or metadata.content_hash != content_hash
+        or not hmac.compare_digest(
+            metadata.token_digest,
+            campaign_preview_token_digest(payload.confirmationToken),
+        )
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Campaign draft preview is stale or has been superseded",
+        )
+    try:
+        claims = get_campaign_preview_signer().verify(
+            payload.confirmationToken,
+            draft_id=draft_id,
+            revision=current.revision,
+            content_hash=content_hash,
+            scope=scope,
+            session_id=payload.session_id,
+            now=now,
+        )
+    except CampaignPreviewConfigurationError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Campaign draft preview is temporarily unavailable",
+        ) from exc
+    except CampaignPreviewTokenError as exc:
+        status_code = 410 if exc.code == "expired_confirmation_token" else 409
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    if int(metadata.expires_at.timestamp()) != claims.expires_at:
+        raise HTTPException(
+            status_code=409,
+            detail="Campaign draft preview is stale or has been superseded",
+        )
+
+    # Stage 10 will consume the validated idempotency key in the same
+    # transaction that inserts the campaign and marks this draft confirmed.
+    return CampaignDraftConfirmationReadiness(
+        draftId=draft_id,
+        revision=current.revision,
+        contentHash=content_hash,
     )
 
 

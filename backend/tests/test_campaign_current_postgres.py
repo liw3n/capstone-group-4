@@ -1,5 +1,5 @@
 """Opt-in current-schema checks in an isolated schema, never public demo tables."""
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -10,7 +10,8 @@ from psycopg.conninfo import make_conninfo
 import pytest
 
 from app import config
-from app.campaigns import catalog, repository
+from app.campaigns import catalog, draft_repository, repository
+from app.campaigns.models import CampaignDraftArtifact, CampaignDraftRevisionArtifact
 from app.campaigns.matching import recommend_clients_for_campaign
 from app.campaigns.repository import CampaignInactive, RequestScope
 from app.contacts.catalog import list_contacts
@@ -36,6 +37,14 @@ def current_database(monkeypatch):
             with psycopg.connect(scoped_url, autocommit=True) as connection:
                 for name in ('create_mock_user_account.sql', 'create_campaign.sql', 'create_contact.sql'):
                     connection.execute((TABLES / 'create' / name).read_text())
+                connection.execute(
+                    (TABLES / 'create' / 'create_campaign_chat_sessions.sql').read_text()
+                )
+                draft_ddl = (
+                    TABLES / 'create' / 'create_campaign_generation_drafts.sql'
+                ).read_text()
+                connection.execute(draft_ddl)
+                connection.execute(draft_ddl)
                 for name in ('mock_user_account.sql', 'mock_contact.sql', 'mock_campaign.sql'):
                     connection.execute((TABLES / 'mock_data' / name).read_text())
                 monkeypatch.setattr(config, 'get_settings', lambda: settings.model_copy(
@@ -129,3 +138,48 @@ def test_contact_and_campaign_catalogues_isolate_advisers_in_one_tenant(current_
     assert other_campaign not in {row['id'] for row in catalog.list_campaigns('advisor', owner_scope)}
     assert catalog.get_campaign_record('advisor', owner_scope, other_campaign) is None
     assert catalog.get_campaign_record('advisor', other_scope, other_campaign)['id'] == other_campaign
+
+
+def test_preview_metadata_is_scoped_and_invalidated_by_revision(current_database):
+    from test_orchestrator import campaign_draft_artifact
+
+    session_id = 'stage-nine-session'
+    current_database.execute(
+        'INSERT INTO campaign_chat_sessions (fa_id, session_id) VALUES (%s, %s)',
+        (ADVISER, session_id),
+    )
+    scope = RequestScope(ADVISER)
+    artifact = CampaignDraftArtifact.model_validate(campaign_draft_artifact())
+    persisted = draft_repository.create_campaign_draft(scope, session_id, artifact)
+    now = datetime(2026, 10, 31, 8, 0, tzinfo=timezone.utc)
+    metadata = draft_repository.store_campaign_draft_preview(
+        scope,
+        session_id,
+        persisted.draftId,
+        persisted.revision,
+        content_hash='a' * 64,
+        token_digest='b' * 64,
+        created_at=now,
+        expires_at=now + timedelta(minutes=5),
+    )
+    assert metadata.content_hash == 'a' * 64
+    assert draft_repository.get_campaign_draft_preview_metadata(
+        RequestScope('other-adviser'), session_id, persisted.draftId
+    ) is None
+
+    next_draft = persisted.draft.model_copy(update={'name': 'Revised preview name'})
+    revision = CampaignDraftRevisionArtifact(
+        objective=persisted.objective,
+        referencesUsed=persisted.referencesUsed,
+        draft=next_draft,
+        previousRevision=1,
+        revision=2,
+        changedFields=['name'],
+        validation=persisted.validation,
+    )
+    draft_repository.update_campaign_draft_revision(
+        scope, session_id, persisted.draftId, 1, revision, status='reviewed'
+    )
+    assert draft_repository.get_campaign_draft_preview_metadata(
+        scope, session_id, persisted.draftId
+    ) is None

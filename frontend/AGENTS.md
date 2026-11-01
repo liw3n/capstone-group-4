@@ -77,8 +77,10 @@ the frontend and backend are served separately.
   draft artifacts persist in PostgreSQL. The typed chat client accepts the
   optional structured draft and draft-option responses. Stage 8 opens the
   active artifact in a structured Campaigns review mode with optimistic saves,
-  selected-field regeneration, stale-revision reload and local read-only preview;
-  open/closed panel state and optimistic messages remain browser state.
+  selected-field regeneration, stale-revision reload and a server-verified final
+  preview. Campaign creation remains unavailable until the backend atomic write
+  is implemented; open/closed panel state and optimistic messages remain browser
+  state.
 - Role selection is a prototype, not authentication or authorization.
 - A small Node test suite covers campaign-draft review rendering and manual
   change selection. There is no browser end-to-end runner; `npm run lint` is a

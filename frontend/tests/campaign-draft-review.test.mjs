@@ -68,7 +68,7 @@ test('generated review uses the campaign screen without exposing campaign creati
   assert.ok(html.includes('Retirement timing must be confirmed'));
   assert.ok(html.includes('campaign-pattern-retirement-001'));
   assert.ok(html.includes('Save draft'));
-  assert.ok(html.includes('Preview draft'));
+  assert.ok(html.includes('Generate final preview'));
   assert.ok(html.includes('fixed age and cash bands only'));
   assert.ok(!html.includes('Minimum age'));
   assert.ok(!html.includes('Create campaign'));

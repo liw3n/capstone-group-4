@@ -116,9 +116,11 @@ checks and startup commands are in `backend/AGENTS.md`.
   are stored as short-lived, revision-bound option sets so numbered selections
   do not rely on parsing chat prose. The Campaigns workspace now provides a
   structured, prefilled review mode with optimistic manual edits, selected-field
-  regeneration, stale-revision reload and a local read-only preview. Drafts remain review-only:
-  server-issued preview tokens, confirmation and campaign creation are not yet
-  implemented.
+  regeneration and stale-revision reload. Final preview is now server-validated
+  and bound to the exact revision, content hash, adviser, tenant and session by
+  a short-lived signed token whose digest is persisted. The confirmation route
+  verifies readiness only and returns `created: false`; campaign creation and
+  the final UI creation control remain Stage 10 work.
 - `campaign`, `campaign_member`, `interaction`, and `task_item` are described by
   the company schema document, but their column definitions are absent. Do not
   invent a production-compatible schema without documenting the prototype

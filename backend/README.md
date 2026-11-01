@@ -176,19 +176,34 @@ warnings. The draft row and the matching user/assistant exchange are committed
 in one PostgreSQL transaction. Updates use optimistic locking, so a stale
 revision cannot overwrite newer work. These writes affect only
 `campaign_generation_drafts` and chat tables; they do not create or update
-`mock_campaign`. Stage 8 exposes adviser/session-scoped GET, PATCH and selected-
+`campaign`. Stage 8 exposes adviser/session-scoped GET, PATCH and selected-
 field regeneration routes at `/campaign-drafts/{draft_id}` (and matching `/api`
 forms). Manual edits and model proposals both pass through the same selective-
 revision validation boundary and optimistic revision check.
 
 The frontend opens the artifact in a prefilled review mode inside the existing
 Campaigns workspace. It shows rationale, assumptions, warnings and synthetic
-catalogue provenance, supports editing and multi-section regeneration, and has
-a local read-only preview. It does not show a named audience or create a
-campaign. Server-issued preview tokens and explicit campaign creation
-confirmation remain later stages.
+catalogue provenance and supports editing and multi-section regeneration.
+The final preview is reloaded and policy-validated by FastAPI, then bound to the
+current revision with a five-minute signed token. Only the token digest and
+preview metadata are stored in the project-owned draft table. Set
+`PULSE_CAMPAIGN_PREVIEW_SECRET` to a stable secret of at least 16 bytes in a
+deployed environment; without it, a process-local random secret intentionally
+invalidates outstanding previews after restart. Stage 9 confirmation verifies
+readiness only and returns `created: false`; Stage 10 will add the atomic write
+to the unchanged official `campaign` schema. The UI does not show a creation
+button until that write exists.
 If an optimistic save is stale, the review reloads the latest scoped revision
 in place rather than directing the adviser back through chat.
+
+Campaign generation, MCP, HTTP and frontend code share the canonical targeting
+values `under35`/`35to44`/`45to54`/`55to64`/`65plus`, lower-case
+`male`/`female`, and `under50k`/`50kTo250k`/`250kTo1m`/`above1m`. The current
+`campaign.audience_criteria` JSON uses hyphenated age/cash bands and title-cased
+genders. `app/campaigns/criteria.py` converts those storage values at the
+repository boundary; storage spellings are never added to the model-facing
+generation schema. Contact gender is a separate CRM field and retains its own
+representation.
 
 Alternative-generation responses additionally use optional
 `campaignDraftOptions` structured state. The options are scoped to the tenant,

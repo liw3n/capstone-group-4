@@ -14,6 +14,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from app import config
+from app.campaigns.criteria import criteria_from_storage
 from app.campaigns.repository import (
     DEMO_DATE,
     DEMO_TENANT,
@@ -64,6 +65,12 @@ def _number(value: Any) -> float | int | None:
 
 def _record(row: dict[str, Any]) -> dict[str, Any]:
     audience_criteria = row.get("audience_criteria") or {}
+    try:
+        canonical_criteria = criteria_from_storage(audience_criteria)
+    except ValueError as exc:
+        raise CampaignStorageUnavailable(
+            "Campaign targeting criteria are invalid"
+        ) from exc
     age_range = {"min": audience_criteria.get("ageCustomMin"), "max": audience_criteria.get("ageCustomMax")}
     cash_range = {"min": _number(audience_criteria.get("cashCustomMin")), "max": _number(audience_criteria.get("cashCustomMax"))}
     creator_id = str(row["created_by_user_id"])
@@ -82,9 +89,7 @@ def _record(row: dict[str, Any]) -> dict[str, Any]:
         "teamIds": [],
         "advisorIds": [],
         "criteria": {
-            "ageGroups": audience_criteria.get("ageGroups", []),
-            "genders": audience_criteria.get("genders", []),
-            "cashBands": audience_criteria.get("cashBands", []),
+            **canonical_criteria,
             "ageRange": age_range if any(value is not None for value in age_range.values()) else None,
             "cashRange": cash_range if any(value is not None for value in cash_range.values()) else None,
         },

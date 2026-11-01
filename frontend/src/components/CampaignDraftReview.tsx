@@ -19,7 +19,9 @@ import {
 import {
   CampaignDraftApiError,
   CampaignDraftChanges,
+  CampaignDraftPreview,
   getCampaignDraft,
+  previewCampaignDraft,
   regenerateCampaignDraft,
   updateCampaignDraft,
 } from '../services/campaignDraftApi';
@@ -184,49 +186,62 @@ function ReviewMetadata({ artifact }: { artifact: CampaignDraftArtifact }) {
 
 function DraftPreview({
   artifact,
+  preview,
   onBack,
   onCancel,
 }: {
   artifact: CampaignDraftArtifact;
+  preview: CampaignDraftPreview;
   onBack: () => void;
   onCancel: () => void;
 }) {
+  const previewArtifact: CampaignDraftArtifact = {
+    ...artifact,
+    draft: preview.draft,
+    validation: preview.validation,
+    revision: preview.revision,
+  };
   return (
     <div className="flex flex-col gap-5">
       <button onClick={onCancel} className="flex w-fit items-center gap-1.5 text-[13px] text-link hover:underline">
         <ArrowLeft size={15} /> Campaigns
       </button>
       <div>
-        <h1 className="text-xl font-semibold text-ink">Preview generated campaign</h1>
+        <h1 className="text-xl font-semibold text-ink">Server-verified campaign preview</h1>
         <p className="mt-1 text-[12px] text-muted">
-          Review-only preview of revision {artifact.revision}. No campaign has been created.
+          Review-only preview of revision {preview.revision}. No campaign has been created.
         </p>
       </div>
+      <div className="rounded-md border border-success/20 bg-success-soft px-4 py-3 text-[11px] text-success">
+        This exact draft and its policy checks were verified by the server. The preview expires at{' '}
+        {new Date(preview.expiresAt).toLocaleTimeString()}.
+      </div>
       <section className="rounded-lg border border-line bg-white p-5">
-        <h2 className="text-[18px] font-semibold text-ink">{artifact.draft.name}</h2>
+        <h2 className="text-[18px] font-semibold text-ink">{preview.draft.name}</h2>
         <p className="mt-3 whitespace-pre-wrap text-[13px] leading-relaxed text-body">
-          {artifact.draft.description}
+          {preview.draft.description}
         </p>
         <div className="mt-5 border-t border-line-soft pt-4">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-faint">Client message</p>
           <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-body">
-            {artifact.draft.clientMessage}
+            {preview.draft.clientMessage}
           </p>
         </div>
         <div className="mt-5 border-t border-line-soft pt-4">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-faint">Intended audience</p>
           <p className="mt-2 text-[13px] leading-relaxed text-body">
-            {artifact.draft.targetDemographicSummary}
+            {preview.draft.targetDemographicSummary}
           </p>
         </div>
       </section>
-      <ReviewMetadata artifact={artifact} />
+      <ReviewMetadata artifact={previewArtifact} />
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" onClick={onBack}>Back to editing</Button>
         <Button variant="secondary" onClick={onCancel}>Return to campaigns</Button>
       </div>
       <p className="text-[11px] text-muted">
-        Confirmation and campaign creation are intentionally unavailable in this review stage.
+        Stage 9 verifies explicit confirmation readiness on the server. Campaign creation remains
+        intentionally unavailable until the Stage 10 atomic creation workflow is implemented.
       </p>
     </div>
   );
@@ -245,7 +260,8 @@ export default function CampaignDraftReview({
   const [instruction, setInstruction] = useState('Make the selected sections clearer and more engaging while preserving the campaign objective.');
   const [saving, setSaving] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState<CampaignDraftPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [error, setError] = useState('');
   const request = useRef<AbortController | null>(null);
 
@@ -259,6 +275,7 @@ export default function CampaignDraftReview({
       setArtifact(initialDraft);
       setForm(formFromDraft(initialDraft));
       setSelectedFields([]);
+      setPreview(null);
       setError('');
     }
   }, [artifact.draftId, artifact.revision, initialDraft]);
@@ -273,6 +290,7 @@ export default function CampaignDraftReview({
     setArtifact(next);
     setForm(formFromDraft(next));
     setSelectedFields([]);
+    setPreview(null);
     setError('');
     onDraftUpdated(next);
   };
@@ -349,8 +367,40 @@ export default function CampaignDraftReview({
     }
   };
 
-  if (previewing) {
-    return <DraftPreview artifact={artifact} onBack={() => setPreviewing(false)} onCancel={onCancel} />;
+  const generatePreview = async () => {
+    if (dirty || saving || regenerating || previewLoading) return;
+    const controller = new AbortController();
+    request.current?.abort();
+    request.current = controller;
+    setPreviewLoading(true);
+    setError('');
+    try {
+      const verified = await previewCampaignDraft(
+        advisorId,
+        sessionId,
+        artifact,
+        controller.signal,
+      );
+      if (!controller.signal.aborted) setPreview(verified);
+    } catch (reason) {
+      await showError(reason, controller);
+    } finally {
+      if (request.current === controller) {
+        request.current = null;
+        setPreviewLoading(false);
+      }
+    }
+  };
+
+  if (preview) {
+    return (
+      <DraftPreview
+        artifact={artifact}
+        preview={preview}
+        onBack={() => setPreview(null)}
+        onCancel={onCancel}
+      />
+    );
   }
 
   return (
@@ -484,8 +534,8 @@ export default function CampaignDraftReview({
             <Button variant="primary" onClick={() => void saveDraft()} disabled={!dirty || invalid || saving || regenerating}>
               <Save size={14} /> {saving ? 'Saving…' : 'Save draft'}
             </Button>
-            <Button variant="secondary" onClick={() => setPreviewing(true)} disabled={dirty || saving || regenerating}>
-              <Eye size={14} /> Preview draft
+            <Button variant="secondary" onClick={() => void generatePreview()} disabled={dirty || saving || regenerating || previewLoading}>
+              <Eye size={14} /> {previewLoading ? 'Generating…' : 'Generate final preview'}
             </Button>
             <Button variant="secondary" onClick={onCancel}>Cancel</Button>
           </div>
