@@ -434,4 +434,5 @@ def get_campaign_contact_ranking(
 # 3. Run the Server
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    mcp.run(transport="http", host="0.0.0.0", port=8001)
+    from app.config import get_settings
+    mcp.run(transport="http", host="127.0.0.1" if get_settings().pulse_hosted_demo else "0.0.0.0", port=8001)

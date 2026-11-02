@@ -1,5 +1,24 @@
 # PULSE Chat API contract
 
+## Hosted demo access and health
+
+With `DEMO_AUTH_ENABLED=true`, assets and API routes (including direct and /api
+aliases, OpenAPI and /health) require shared HTTP Basic credentials. Missing or
+invalid credentials return 401 with WWW-Authenticate. Mutation requests require
+an Origin matching the public request origin; absent/cross-origin values return
+403. CLI clients must supply Origin too. This gate is not adviser identity.
+Authenticated responses use Cache-Control: no-store.
+
+`GET /live` is unauthenticated and returns `200 {"status":"ok"}`. `GET /ready`
+is unauthenticated and performs a bounded PostgreSQL query and MCP tool discovery:
+`200 {"status":"ok"}` or `503 {"status":"unavailable"}` within four seconds.
+Neither exposes credentials or invokes Groq. Example:
+`curl https://example.onrender.com/ready`.
+
+Hosted React shares the API origin. Unknown API paths and missing assets return
+404; browser navigation paths may fall back to index.html. Local authentication
+is disabled by default. See deployment.md for settings and the legacy email gap.
+
 All chat routes are also available with an `/api` prefix. Campaign routes
 likewise support both `/campaigns/...` and `/api/campaigns/...`.
 
@@ -15,6 +34,11 @@ Example response:
 ```
 
 ## Campaign catalogue and UI state
+
+Campaign status accepts `draft`, `active`, `inactive`, `paused`, and `completed`.
+`inactive` is preserved from the current synthetic seed; it is not treated as
+active by discovery/matching. This avoids rejecting the whole campaign list
+when an inactive row is present. Campaign confirmation still forces `draft`.
 
 These endpoints use the synthetic PostgreSQL campaign catalogue as the source
 of truth for both the CRM campaign screens and MCP campaign tools. They do not

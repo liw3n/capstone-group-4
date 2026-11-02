@@ -40,6 +40,14 @@ def campaign_payload(**updates):
     return payload
 
 
+@pytest.mark.parametrize("path", ["/campaigns", "/api/campaigns"])
+def test_list_accepts_inactive_seed_campaigns(monkeypatch, path):
+    monkeypatch.setattr(main, "list_campaign_records", lambda role, scope: [campaign_payload(status="inactive")])
+    response = client.get(path, params={"role": "advisor", "fa_id": "adv-demo"})
+    assert response.status_code == 200
+    assert response.json()[0]["status"] == "inactive"
+
+
 def test_list_alias_passes_adviser_scope_to_storage(monkeypatch):
     calls = []
     row = catalog._record({

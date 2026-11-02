@@ -106,7 +106,7 @@ app = FastAPI(title="PULSE Chat API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[] if get_settings().demo_auth_enabled else ["*"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
     allow_headers=["*"],
@@ -226,7 +226,7 @@ class CampaignPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: UUID
     name: str = Field(min_length=1, max_length=200)
-    status: Literal["draft", "active", "paused", "completed"] = "active"
+    status: Literal["draft", "active", "inactive", "paused", "completed"] = "active"
     startDate: date | None = None
     endDate: date | None = None
     description: str = Field(min_length=1, max_length=10_000)
@@ -1007,3 +1007,9 @@ def chat_query(
         campaignDraft=persisted_draft,
         campaignDraftOptions=persisted_options,
     )
+
+
+# Mount the frontend only after every API route has been registered.
+from app.hosting import install_hosting
+
+install_hosting(app)

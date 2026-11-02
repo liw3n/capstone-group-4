@@ -79,9 +79,12 @@ Terraform. Do not use it as a lightweight unit-test command.
 - Adviser identity is caller-supplied. There is no authentication or verified
   tenant middleware; current scope checks are prototype boundaries.
 - There is no production CRM adapter for `gwm_api/`.
-- There is no migrations framework, connection pool, structured logging,
-  tracing, or production readiness probe.
-- CORS allows every origin; acceptable for a local prototype, not production.
+- There is no general migration framework, connection pool, structured logging
+  or tracing. The hosted demo has a bounded checksum migration runner and
+  DB/MCP readiness probe; it is not a production readiness assessment.
+- Local CORS allows every origin; shared-auth hosted mode disables it.
+- The root Render image adds shared Basic access, health checks and locked
+  startup migrations. Follow docs/deployment.md; never add paid resources.
 - Production and development dependencies are not separated.
 - The optional ECS deployment applies infrastructure before the image
   build/push and may require Docker insecure-registry configuration; keep its

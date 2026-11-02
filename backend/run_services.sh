@@ -36,7 +36,7 @@ if [[ "$mcp_ready" != true ]]; then
     exit 1
 fi
 
-python -m uvicorn app.main:app --host 0.0.0.0 --port 4000 &
+python -m uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-4000}" &
 api_pid=$!
 while kill -0 "$mcp_pid" 2>/dev/null && kill -0 "$api_pid" 2>/dev/null; do
     sleep 1

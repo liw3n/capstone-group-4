@@ -3,6 +3,20 @@
 BT4103 Capstone Project (Team 4). PULSE combines an adviser CRM with a persistent
 AI assistant backed by FastAPI, FastMCP, PostgreSQL and Groq.
 
+## Free hosted demo
+
+The root Dockerfile, render.yaml and deploy/ support one Render Free web service
+serving React, FastAPI and internal FastMCP, with private Render Free PostgreSQL.
+Shared Basic credentials protect the demo; hosted email mode is limited to mock.
+Startup runs locked migrations and once-only synthetic seeding. Use Groq Free;
+do not enable paid services or billing upgrades.
+
+Follow the [deployment runbook](backend/docs/deployment.md) for configuration,
+local Compose rehearsal and rollout. Render acceptance is still pending. Free
+PostgreSQL expires after 30 days; the web service sleeps after 15 idle minutes.
+The legacy conversational email schema remains a separate compatibility gap.
+The Make workflow below remains the local development path.
+
 ## Team setup and development workflow
 
 Use the same workflow for every MCP feature:

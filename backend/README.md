@@ -1,5 +1,10 @@
 # PULSE Chat API
 
+For the free Render container and shared demo access, see the
+[deployment runbook](docs/deployment.md). The root image serves React and runs
+MCP on loopback; /live and /ready provide generic health checks. Startup performs
+locked migrations because Free services have no pre-deploy hooks or shells.
+
 FastAPI backend for the PULSE chat popup. The service calls Groq through its
 OpenAI-compatible API, discovers and invokes tools through FastMCP over HTTP,
 and persists sessions and messages in PostgreSQL.

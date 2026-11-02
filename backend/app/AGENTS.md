@@ -73,7 +73,8 @@ uv run uvicorn app.main:app --reload --port 4000
 - `QueryResponse.user` contains the adviser ID even though the response payload
   carries an assistant answer; preserve it until the API is intentionally
   versioned.
-- Synchronous PostgreSQL calls have no connection pool or explicit query
-  timeout. `/health` reports configuration but not dependency readiness.
+- Application PostgreSQL calls have no connection pool. `/health` reports
+  configuration; `/ready` performs bounded DB/MCP checks. `hosting.py` owns
+  shared demo access and production frontend mounting.
 - The API has no pagination, rate limiting, request correlation, audit trail,
   or data-retention policy.

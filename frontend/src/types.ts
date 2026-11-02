@@ -282,7 +282,7 @@ export interface Campaign {
   id: string;
   name: string;
   /** Backend lifecycle fields; PostgreSQL is authoritative. */
-  status?: 'draft' | 'active' | 'paused' | 'completed';
+  status?: 'draft' | 'active' | 'inactive' | 'paused' | 'completed';
   startDate?: string;
   endDate?: string;
   /** Marketing's internal brief — what the campaign is and who it is for. */

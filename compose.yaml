@@ -1,0 +1,39 @@
+# Local hosted-mode rehearsal; no cloud resources required.
+services:
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_USER: pulse
+      POSTGRES_DB: pulse
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - pulse_demo_db:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U pulse -d pulse"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:4000:10000"
+    environment:
+      PORT: "10000"
+      DATABASE_URL: postgresql://pulse@postgres:5432/pulse
+      DEMO_AUTH_ENABLED: "true"
+      DEMO_AUTH_USERNAME: tester
+      DEMO_AUTH_PASSWORD: ${DEMO_AUTH_PASSWORD:?Set a password of at least 20 characters}
+      DEMO_SEED_ON_START: "true"
+      GROQ_API_KEY: ${GROQ_API_KEY:-synthetic-local-smoke-key}
+      PULSE_CAMPAIGN_PREVIEW_SECRET: ${PULSE_CAMPAIGN_PREVIEW_SECRET:?Set a signing secret of at least 32 characters}
+      PULSE_CAMPAIGN_RETRIEVAL_SECRET: ${PULSE_CAMPAIGN_RETRIEVAL_SECRET:?Set a signing secret of at least 32 characters}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:10000/ready', timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 3
+volumes:
+  pulse_demo_db:
