@@ -6,14 +6,16 @@ AI assistant backed by FastAPI, FastMCP, PostgreSQL and Groq.
 ## Free hosted demo
 
 The root Dockerfile, render.yaml and deploy/ support one Render Free web service
-serving React, FastAPI and internal FastMCP, with private Render Free PostgreSQL.
+serving React, FastAPI and internal FastMCP, with Supabase Free PostgreSQL
+through its session pooler over public TLS (not Render's private network).
 Shared Basic credentials protect the demo; hosted email mode is limited to mock.
 Startup runs locked migrations and once-only synthetic seeding. Use Groq Free;
 do not enable paid services or billing upgrades.
 
 Follow the [deployment runbook](backend/docs/deployment.md) for configuration,
-local Compose rehearsal and rollout. Render acceptance is still pending. Free
-PostgreSQL expires after 30 days; the web service sleeps after 15 idle minutes.
+local Compose rehearsal and rollout. Render/Supabase acceptance is still pending.
+Supabase can pause after seven days of low activity; Render sleeps after 15 idle
+minutes. Supabase has no fixed 30-day expiry. Disable its Data API before seeding.
 The legacy conversational email schema remains a separate compatibility gap.
 The Make workflow below remains the local development path.
 

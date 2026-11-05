@@ -139,9 +139,9 @@
   <text x="440" y="1446" class="small">Groq Free inference; mock email enforced; no paid jobs or disks</text>
   <path d="M1080 1400 L1125 1400" class="arrow"/>
   <rect x="1130" y="1340" width="410" height="120" rx="10" fill="#eef2ff" stroke="#c7d2fe"/>
-  <text x="1150" y="1370" class="heading">Free managed PostgreSQL</text>
-  <text x="1150" y="1398" class="label">Private connection; Singapore region</text>
-  <text x="1150" y="1424" class="small">1 GB; expires after 30 days; no backups</text>
-  <text x="58" y="1496" class="label">Web sleeps after 15 idle minutes. External database access disabled. No company endpoints or real client data.</text>
-  <text x="58" y="1524" class="small">render.yaml selects Free plans; account billing and Groq Free eligibility must be checked by the operator.</text>
+  <text x="1150" y="1370" class="heading">Supabase Free PostgreSQL</text>
+  <text x="1150" y="1398" class="label">Public TLS; session pooler :5432</text>
+  <text x="1150" y="1424" class="small">500 MB; low-activity pause; Data API off</text>
+  <text x="58" y="1496" class="label">Render sleeps after 15 idle minutes. Supabase can pause after 7 low-activity days. Synthetic data only.</text>
+  <text x="58" y="1524" class="small">render.yaml creates only the Free web service. Operator supplies the Supabase URL privately; no paid add-ons.</text>
 </svg>

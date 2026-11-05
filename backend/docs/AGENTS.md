@@ -37,6 +37,7 @@ confidential infrastructure identifiers or PDPA examples into this directory.
   container rather than running as a separate ECS task.
 - The diagram is conceptual: Terraform defines no load balancer, service
   discovery, or stable browser-facing endpoint for the emulated ECS task.
-- The diagram also describes the root Render Free container and private database
-  topology. Follow deployment.md for startup migrations, shared access, expiry
+- The diagram also describes the root Render Free container and Supabase Free
+  database over public TLS/session pooling. Follow deployment.md for startup
+  migrations, disabling the Supabase Data API, shared access, inactivity pausing
   and hosted acceptance. No paid deployment features are permitted.

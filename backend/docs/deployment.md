@@ -1,13 +1,15 @@
-# Hosting PULSE on Render Free
+# Hosting PULSE on Render Free with Supabase Free PostgreSQL
 
 The repository supports a free, temporary shared demo. The image serves React
-from FastAPI and starts FastMCP on loopback. PostgreSQL uses Render's internal
-connection string. Hosted configuration requires shared authentication, stable
+from FastAPI and starts FastMCP on loopback. PostgreSQL uses Supabase's shared
+session pooler over the public internet with TLS, not Render's private network.
+Hosted configuration requires shared authentication, stable
 signing secrets and mock email. The normal local Make workflow is preserved.
 
-## Costs and expiry
+## Costs and inactivity
 
-Choose Free for both resources, use the included HTTPS `onrender.com` URL and a
+Choose a Render Free web service and a Supabase Free project, use the included
+HTTPS `onrender.com` URL and a
 Groq Free key. Do not enable paid resources or Groq Developer billing. A free
 Render workspace without a payment method avoids automatic overage charges;
 exhausted quotas can suspend service/builds instead. Check account billing
@@ -15,16 +17,23 @@ settings before rollout. Code cannot determine a provider key's billing plan.
 
 Render Free web services sleep after 15 idle minutes and take approximately a
 minute to wake. The workspace gets 750 free instance hours monthly. Free
-PostgreSQL has 1 GB storage, no backups and expires after 30 days. It is then
-inaccessible and is deleted after a further 14-day upgrade grace period. Keep
-the test window under 30 days. Do not use scheduled pings to evade idle sleep.
-Build minutes and bandwidth also have quotas. Private outbound connections to
-same-region databases are supported on Free.
+Supabase PostgreSQL has 500 MB database storage and no fixed 30-day expiry.
+Supabase can pause Free projects after seven days of low activity; check the
+dashboard and restore a paused project before testing. A paused DB makes PULSE
+unready, and bootstrap cannot complete until it is restored. Do not rely on
+health probes to prevent pausing or use scheduled pings to evade free-tier sleep.
+Plan operator-managed exports for data worth retaining, not paid backup add-ons.
+Build minutes, bandwidth and database connections also have quotas. No paid
+IPv4 add-on, Pro organization, PITR, custom domain or private networking is needed.
 
-Sources checked 2 November 2026: [Render free limits](https://render.com/docs/free),
+Sources checked 5 November 2026: [Render free limits](https://render.com/docs/free),
 [deployment lifecycle](https://render.com/docs/deploys),
 [Blueprint reference](https://render.com/docs/blueprint-spec),
-[Groq Free limits](https://console.groq.com/docs/rate-limits).
+[Groq Free limits](https://console.groq.com/docs/rate-limits),
+[Supabase Free limits](https://supabase.com/kb/faqs/platform/database-only-cost),
+[project pausing](https://supabase.com/docs/guides/platform/free-project-pausing),
+[PostgreSQL connections and SSL](https://supabase.com/docs/guides/database/connecting-to-postgres),
+[disabling the Data API](https://supabase.com/docs/guides/api/securing-your-api#disable-the-data-api).
 
 ## Runtime and database ownership
 
@@ -33,7 +42,7 @@ Browser -> Render HTTPS -> FastAPI 0.0.0.0:$PORT
                            |-- Basic Auth and same-origin mutation checks
                            |-- React assets and direct + /api routes
                            `-- FastMCP 127.0.0.1:8001/mcp
-Both backend processes -> managed PostgreSQL via private connection
+Both backend processes -> public TLS -> Supabase session pooler :5432 -> PostgreSQL
 API orchestration -> Groq Free over HTTPS
 ```
 
@@ -51,6 +60,8 @@ lock. Schema, enabled seeds and checksummed `pulse_deploy_migration` entries
 commit together. Failure rolls everything back and stops startup without logging
 connection details. Existing seed BEGIN/COMMIT wrappers are removed so the runner
 owns the transaction. Overlapping starts serialize with bounded lock waits.
+Timeouts are set with transaction-local SQL rather than connection startup
+options, keeping bootstrap and readiness compatible with managed poolers.
 
 `DEMO_SEED_ON_START=true` enables only checked-in synthetic records. Each seed
 file runs once per database. Restarts preserve edits and deleted rows. You can
@@ -68,7 +79,7 @@ official campaign and campaign_member schemas are unchanged.
 
 | Variable | Value or source |
 | --- | --- |
-| DATABASE_URL | Render-injected internal PostgreSQL connection string |
+| DATABASE_URL | Privately supplied Supabase session-pooler PostgreSQL URI, port 5432, with sslmode=require |
 | PULSE_HOSTED_DEMO | true |
 | FRONTEND_DIST | /app/frontend-dist, set in image |
 | DEMO_AUTH_ENABLED | true |
@@ -85,6 +96,37 @@ official campaign and campaign_member schemas are unchanged.
 Missing required settings stop startup. Never put secrets in Git, build args,
 screenshots or Vite variables. No GWM credentials are needed. Rotate shared
 credentials after testing. Rotating signing secrets invalidates outstanding tokens.
+
+## Supabase database setup (before starting Render)
+
+1. Create a dedicated project in a **Free** Supabase organization, preferably
+   Singapore near the Render service. Do not reuse a company or unrelated project.
+   Save the database password privately. This is separate from the tester login.
+2. In the dashboard's Data API integration settings, turn **Enable Data API off**
+   before creating/seeding PULSE tables. This is mandatory: our SQL schemas do
+   not implement Supabase Auth/RLS, and default public-schema grants can otherwise
+   expose tables through auto-generated APIs outside PULSE's Basic gate. Do not
+   enable Realtime publications or expose these tables through other services.
+3. In **Connect**, select **Session pooler**, not Transaction pooler or Direct.
+   Copy the PostgreSQL URI exactly as provided: the pooler hostname and username
+   are project-specific, the port is **5432**, and the database is **postgres**.
+   Keep the project suffix in the username. Insert the database password with
+   reserved URI characters percent-encoded; do not use a Supabase API key.
+4. Add `sslmode=require` (`?` for the first URI query option, otherwise `&`).
+   This refuses plaintext fallback. Enable SSL enforcement in Supabase as well.
+   `require` encrypts but does not verify server identity; `verify-full` additionally
+   needs the appropriate trusted CA supplied to the container via `sslrootcert`.
+   Do not claim certificate verification when using only `require`.
+5. Store the complete URI only as Render's secret `DATABASE_URL`. Never place it
+   in Git, frontend/Vite settings, screenshots or build arguments. No Supabase
+   JavaScript SDK, anon key, service-role key or Supabase Auth integration is used.
+
+The shared session pooler supports IPv4 without the paid IPv4 add-on and retains
+session semantics for the existing psycopg callers. Do not substitute transaction
+pooling (port 6543); it has different prepared-statement/session behavior.
+The dedicated project's database owner is used for startup DDL and runtime SQL
+in this bounded synthetic demo, not as a production least-privilege design.
+The official table definitions and local PostgreSQL workflow are unchanged.
 
 ## Local rehearsal
 
@@ -115,19 +157,25 @@ docker compose run --rm app python /app/deploy/database.py migrate
 ## Render rollout
 
 1. Push the reviewed implementation to the private team repository.
-2. Create a Blueprint using render.yaml in a free Render workspace. Check both
-   resources say Free, region Singapore, no disks or paid additions. Only one
-   free database is allowed per workspace; do not delete an existing unrelated
-   database if that limit is already reached.
-3. Enter demo username/password and a Groq Free key privately. Render generates
-   both signing secrets and supplies the internal database URL. The Blueprint
-   disables external database access with `ipAllowList: []`.
+2. Complete Supabase setup above, then create a Blueprint using render.yaml in a
+   free Render workspace. It creates **one web service only**, Free, Singapore,
+   with no Render database, disks or paid additions.
+3. Enter the Supabase `DATABASE_URL`, demo username/password and Groq Free key
+   privately. Render generates both signing secrets. Confirm Supabase's Data API
+   is disabled and its project is running before the first deployment.
 4. Let the first build migrate, seed and start. `/ready` checks PostgreSQL and an
    MCP tool discovery with a four-second total timeout. It never calls Groq.
 5. Complete acceptance below, then share the URL and credentials privately.
-   Record the deployed commit, environment owner, test window and DB expiry.
+   Record the deployed commit, environment owner, test window and pause/export
+   checks. Supabase resources are managed separately from the Render Blueprint.
 6. Release later changes manually after verification. No paid CI service is
    required. Do not bypass SQL checksum failures by deleting the ledger.
+
+If an earlier Render database was already provisioned, changing this Blueprint
+does not migrate its data. Do not delete it or assume that changing `DATABASE_URL`
+copies records. Obtain a separate approved export/restore plan if any state must
+be retained. For a fresh synthetic demo, the new empty Supabase database receives
+the checked-in seeds; existing chats and edits will not appear there automatically.
 
 ## Acceptance
 
@@ -148,8 +196,24 @@ server with CREATEDB permission. Never supply a hosted or company URL.
 - Check seed campaign schedules against the test window: discovery uses today's
   Singapore date; matching retains the fixed demo date.
 - Validate cold starts and Groq rate-limit behavior with the invited testers.
+- Confirm the running connection uses TLS (`pg_stat_ssl` for the current backend),
+  the session-pooler URL is selected, and Supabase's Data API is disabled. Verify
+  auto-generated REST endpoints cannot return PULSE tables, even with a project
+  publishable/anon key. Never publish credentials while recording these checks.
+- Check restore-from-pause and Render redeployment/recovery before a scheduled
+  demo. Retest bootstrap and readiness on the actual Supabase PostgreSQL version;
+  local PostgreSQL 16 tests are not proof of hosted pooler compatibility.
 
 ## Limitations and handoff
+
+Supabase revision verification on 5 November 2026: backend tests passed (335
+passed, 47 opt-in database tests skipped); frontend tests passed (24), as did
+type checking/build, Python compilation, shell syntax, Terraform format/validation
+and local Blueprint free-service/secret checks. Added unit regressions cover
+transaction-local timeout setup in bootstrap and readiness. Frontend tooling
+still reports existing bundle-size/import and test WebSocket-port warnings.
+The updated architecture SVG was rendered to PNG and visually checked. No live
+database migration, cloud provisioning or provider API call was performed.
 
 Local verification on 2 November 2026: Docker build, non-root/asset checks,
 PostgreSQL 16 bootstrap/rollback/checksum/concurrency tests, authenticated HTTP
@@ -162,7 +226,9 @@ The separately enabled existing `test_campaign_current_postgres.py` suite has
 five failures reproducible on an empty test database: three outdated seed-count
 expectations and two dictionary-style accesses on tuple rows. Those existing
 tests were not rewritten in this deployment change. Hosted acceptance, actual
-Groq Free model behavior and real Render resource provisioning remain unverified.
+Groq Free model behavior and real Render/Supabase provisioning remain unverified.
+The Supabase configuration revision has not been tested against a live project;
+the earlier Docker smoke results above used local PostgreSQL, not Supabase.
 
 The hosted smoke test also exercises fresh seed compatibility. The REST and
 frontend campaign contracts accept the seed's `inactive` status without
@@ -179,10 +245,10 @@ those selecting the same adviser share synthetic records. Basic credentials can
 remain browser-cached; closing the private window ends that browser session.
 CRM sign-out only clears role selection. This is not production authentication.
 
-Provide testers with scenarios, expiry date and these limits. An application
-rollback does not revert SQL or recover data. Before the database expires,
-decide whether an operator-managed export of synthetic state is needed; Free
-has no backups. Do not upgrade under this zero-cost scope. Remove only the
+Provide testers with scenarios, test window and these limits. An application
+rollback does not revert SQL or recover data. Assign an owner to check project
+pausing, quota usage and operator-managed exports of synthetic state. Do not
+upgrade under this zero-cost scope. Remove only the
 identified demo resources at the end after confirming retention needs, and
 revoke the demo provider key. Hosted acceptance remains pending until performed
 against an actual Render URL.

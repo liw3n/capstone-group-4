@@ -4,6 +4,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import uuid4
+from unittest.mock import MagicMock
 
 import psycopg
 from psycopg import sql
@@ -13,6 +14,24 @@ import pytest
 spec = importlib.util.spec_from_file_location("deploy_database", Path(__file__).parents[2] / "deploy/database.py")
 database = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(database)
+
+
+def test_bootstrap_sets_transaction_limits_without_startup_options(monkeypatch):
+    connection = MagicMock()
+    connect = MagicMock()
+    connect.return_value.__enter__.return_value = connection
+    monkeypatch.setattr(database.psycopg, "connect", connect)
+    monkeypatch.setattr(database, "SCHEMA", ())
+    database.run_database("postgresql://synthetic.invalid/postgres?sslmode=require")
+    connect.assert_called_once_with(
+        "postgresql://synthetic.invalid/postgres?sslmode=require", connect_timeout=10
+    )
+    statements = [call.args[0] for call in connection.execute.call_args_list]
+    assert statements[:3] == [
+        "SET LOCAL statement_timeout = '60s'",
+        "SET LOCAL lock_timeout = '30s'",
+        "SELECT pg_advisory_xact_lock(73421003)",
+    ]
 
 
 @pytest.fixture

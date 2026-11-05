@@ -22,7 +22,11 @@ SEEDS = ("mock_user_account.sql", "mock_contact.sql", "mock_campaign.sql", "mock
 def run_database(url, *, seed=False, root=BACKEND / "tables"):
     if not url:
         raise ValueError("DATABASE_URL is required")
-    with psycopg.connect(url, connect_timeout=10, options="-c statement_timeout=60000 -c lock_timeout=30000") as connection:
+    with psycopg.connect(url, connect_timeout=10) as connection:
+        # Set limits inside the transaction, not via startup options which
+        # managed poolers need not forward. Session pooling preserves SQL state.
+        connection.execute("SET LOCAL statement_timeout = '60s'")
+        connection.execute("SET LOCAL lock_timeout = '30s'")
         # Transaction-scoped lock serializes overlapping starts and releases on failure.
         connection.execute("SELECT pg_advisory_xact_lock(73421003)")
         connection.execute("""CREATE TABLE IF NOT EXISTS pulse_deploy_migration (

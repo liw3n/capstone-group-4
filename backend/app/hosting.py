@@ -50,8 +50,9 @@ class DemoAccessMiddleware(BaseHTTPMiddleware):
 
 async def check_dependencies(settings):
     async with await psycopg.AsyncConnection.connect(
-        settings.database_url, connect_timeout=2, options="-c statement_timeout=1000"
+        settings.database_url, connect_timeout=2
     ) as connection:
+        await connection.execute("SET LOCAL statement_timeout = '1s'")
         await connection.execute("SELECT 1")
     async with Client(settings.mcp_server_url, timeout=1.5) as client:
         # This FastMCP release does not expose the optional ping method.

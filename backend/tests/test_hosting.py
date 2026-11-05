@@ -1,4 +1,6 @@
 import pytest
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -7,6 +9,26 @@ from app.config import Settings
 from app import hosting
 
 PASSWORD = "synthetic-password-for-tests"
+
+
+def test_readiness_sets_transaction_timeout_without_startup_options(monkeypatch):
+    connection = AsyncMock()
+    context = AsyncMock()
+    context.__aenter__.return_value = connection
+    connect = AsyncMock(return_value=context)
+    monkeypatch.setattr(hosting.psycopg.AsyncConnection, "connect", connect)
+    mcp = AsyncMock()
+    mcp_context = AsyncMock()
+    mcp_context.__aenter__.return_value = mcp
+    monkeypatch.setattr(hosting, "Client", MagicMock(return_value=mcp_context))
+    settings = Settings(_env_file=None,
+                        database_url="postgresql://synthetic.invalid/postgres?sslmode=require")
+    asyncio.run(hosting.check_dependencies(settings))
+    connect.assert_awaited_once_with(settings.database_url, connect_timeout=2)
+    assert [call.args[0] for call in connection.execute.await_args_list] == [
+        "SET LOCAL statement_timeout = '1s'", "SELECT 1"
+    ]
+    mcp.list_tools.assert_awaited_once()
 
 
 def make_app(monkeypatch, tmp_path, *, authenticated=True):

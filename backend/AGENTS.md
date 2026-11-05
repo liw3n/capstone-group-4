@@ -84,7 +84,8 @@ Terraform. Do not use it as a lightweight unit-test command.
   DB/MCP readiness probe; it is not a production readiness assessment.
 - Local CORS allows every origin; shared-auth hosted mode disables it.
 - The root Render image adds shared Basic access, health checks and locked
-  startup migrations. Follow docs/deployment.md; never add paid resources.
+  startup migrations with Supabase Free PostgreSQL via its TLS session pooler.
+  Follow docs/deployment.md; disable Supabase Data API and never add paid resources.
 - Production and development dependencies are not separated.
 - The optional ECS deployment applies infrastructure before the image
   build/push and may require Docker insecure-registry configuration; keep its

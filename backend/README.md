@@ -1,6 +1,6 @@
 # PULSE Chat API
 
-For the free Render container and shared demo access, see the
+For the free Render container, Supabase PostgreSQL and shared demo access, see the
 [deployment runbook](docs/deployment.md). The root image serves React and runs
 MCP on loopback; /live and /ready provide generic health checks. Startup performs
 locked migrations because Free services have no pre-deploy hooks or shells.
