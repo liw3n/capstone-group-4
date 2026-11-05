@@ -72,3 +72,17 @@ test('saved conversations and history keep their existing scoped requests', asyn
     '/api/chat/history?session_id=synthetic-session',
   ]);
 });
+
+test('active campaign discovery sends the frontend directory adviser ID without overriding tenant or campaign context', async (t) => {
+  const { DEMO_ADVISOR } = await server.ssrLoadModule('/src/lib/directory.ts');
+  let payload;
+  t.mock.method(globalThis, 'fetch', async (_url, init) => {
+    payload = JSON.parse(init.body);
+    return new Response(JSON.stringify({ user: DEMO_ADVISOR.id, ai_answer: 'Campaign table',
+      timestamp: '2026-11-04T00:00:00Z' }), { status: 200 });
+  });
+  await api.sendChatMessage(DEMO_ADVISOR.id, 'session', 'what are the active campaigns');
+  assert.equal(payload.fa_id, DEMO_ADVISOR.id);
+  assert.equal('tenant_id' in payload, false);
+  assert.equal('campaign_id' in payload, false);
+});

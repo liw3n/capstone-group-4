@@ -29,6 +29,7 @@ from app.llm.orchestrator import (
 )
 from app.store import ChatHistoryItem
 from app.tools.registry import ToolDefinition, ToolRegistry
+from app.tools.discovery import ActiveCampaignArguments, execute_get_active_campaigns
 
 
 class CalculateSumArguments(BaseModel):
@@ -1472,3 +1473,37 @@ def test_prepare_error_gets_a_deterministic_safe_explanation():
     assert "The disclaimer is incomplete" in result
     assert "No campaign was created" in result
     assert len(client.calls) == 1
+
+
+def test_discovery_renders_full_tool_snapshot_without_another_model_round(monkeypatch):
+    from app.campaigns import repository
+    from campaign_fixtures import CAMPAIGNS, DEMO_FA
+    monkeypatch.setattr(repository, 'list_active_campaigns_for_discovery', lambda *args: CAMPAIGNS)
+    payload = execute_get_active_campaigns({}, {'pulse_scope': {'fa_id': DEMO_FA, 'tenant_id': 'pulse-demo'}})
+    registry = ToolRegistry([ToolDefinition(name='get_active_campaigns', description='Discover campaigns',
+        arguments_model=ActiveCampaignArguments, handler=lambda **kwargs: payload)])
+    # Match the actual MCP registry's structured JSON contract.
+    registry.execute = lambda name, arguments: json.dumps(payload)
+    client = FakeClient([completion(message(tool_calls=[tool_call('discover', 'get_active_campaigns', '{}')]))])
+    result = ChatOrchestrator(client, settings(), registry).run('what are the active campaigns', [])
+    assert len(client.calls) == 1
+    assert payload['table'] in result.answer
+    assert 'Current date:' in result.answer
+    assert '#active-campaigns-excel' in result.answer
+    assert 'Legacy Protection Refresh' in result.answer and 'First Home Starter Bundle' in result.answer
+
+
+@pytest.mark.parametrize('payload', [[], None, {'error': 'Campaign database is temporarily unavailable'}])
+def test_discovery_invalid_output_is_safe_and_tool_errors_are_not_a_fake_empty_table(payload):
+    registry = ToolRegistry([ToolDefinition(name='get_active_campaigns', description='Discover campaigns',
+        arguments_model=ActiveCampaignArguments, handler=lambda **kwargs: payload)])
+    # Match the actual MCP registry's structured JSON contract.
+    registry.execute = lambda name, arguments: json.dumps(payload)
+    client = FakeClient([completion(message(tool_calls=[tool_call('discover', 'get_active_campaigns', '{}')]))])
+    orchestrator = ChatOrchestrator(client, settings(), registry)
+    if isinstance(payload, dict):
+        result = orchestrator.run('what are the active campaigns', [])
+        assert 'Unable to retrieve' in result.answer and 'No active campaigns' not in result.answer
+    else:
+        with pytest.raises(LLMProviderError, match='invalid result'):
+            orchestrator.run('what are the active campaigns', [])

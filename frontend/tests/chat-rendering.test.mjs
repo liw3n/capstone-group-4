@@ -6,9 +6,11 @@ import { createServer } from 'vite';
 
 let server;
 let AssistantMessage;
+let campaignWorkbookBytes;
 before(async () => {
   server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' });
   ({ default: AssistantMessage } = await server.ssrLoadModule('/src/components/AssistantMessage.tsx'));
+  ({ campaignWorkbookBytes } = await server.ssrLoadModule('/src/lib/campaignExport.ts'));
 });
 after(async () => { await server?.close(); });
 const render = (content) => renderToStaticMarkup(createElement(AssistantMessage, { content }));
@@ -73,4 +75,35 @@ test('literal HTML in code and normal plain-text responses remain readable', () 
   assert.ok(!html.includes('<br/>'));
   assert.ok(html.includes('<strong>emphasis</strong>'));
   assert.ok(html.includes('A normal answer'));
+});
+
+test('restored campaign tables expose an Excel download beneath the exact displayed table', () => {
+  const content = '**Current date: 4 November 2026 (Singapore)**\n\n'
+    + '| Campaign Name | Campaign Code | Age Group | Cash Bands |\n'
+    + '| --- | --- | --- | --- |\n'
+    + '| A &#124; B | CMP-2026-003 | 40–55 | S$500,000–S$2,000,000 |\n\n'
+    + '[Download Excel (.xlsx)](#active-campaigns-excel)';
+  const html = render(content);
+  assert.ok(html.includes('Current date: 4 November 2026'));
+  assert.ok(html.includes('<td>A | B</td>'));
+  assert.ok(html.indexOf('</table>') < html.indexOf('Download Excel (.xlsx)'));
+  assert.ok(html.includes('href="#active-campaigns-excel"'));
+  assert.ok(!html.includes('data-campaign-export='));
+  assert.ok(render('[Download Excel (.xlsx)](#active-campaigns-excel)').includes('Excel download unavailable'));
+});
+
+test('Excel bytes preserve column order, text and custom ranges without creating formulas', async () => {
+  const XLSX = await import('xlsx');
+  const table = [
+    ['Campaign Name', 'Campaign Code', 'Age Group', 'Cash Bands'],
+    ['=1+1', 'CMP-2026-003', '40–55', 'S$500,000–S$2,000,000'],
+    ['A | B', 'CMP-2026-004', 'Under 35', 'Below S$50,000'],
+  ];
+  const workbook = XLSX.read(await campaignWorkbookBytes(table), { type: 'array' });
+  const sheet = workbook.Sheets['Active Campaigns'];
+  assert.deepEqual(XLSX.utils.sheet_to_json(sheet, { header: 1 }), table);
+  assert.equal(sheet.A2.t, 's');
+  assert.equal(sheet.A2.f, undefined);
+  const empty = XLSX.read(await campaignWorkbookBytes([table[0]]), { type: 'array' });
+  assert.deepEqual(XLSX.utils.sheet_to_json(empty.Sheets['Active Campaigns'], { header: 1 }), [table[0]]);
 });

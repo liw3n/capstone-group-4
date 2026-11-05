@@ -9,25 +9,29 @@ from fastmcp import Client
 import pytest
 
 from app.campaigns import repository
+from app.campaigns.repository import Criteria
 from app.tools import discovery
 from app.tools.mcp_registry import MCPToolRegistry
 from campaign_fixtures import CAMPAIGNS, DEMO_FA
 from test_campaign_mcp import server
 
 LIST_ACTIVE = repository.list_active_campaigns
+LIST_DISCOVERY = repository.list_active_campaigns_for_discovery
+DISCOVERY_CAMPAIGNS = tuple(replace(c, campaign_code=f"CMP-2026-00{i}",
+    description=f"Educational campaign {i}.") for i, c in enumerate(CAMPAIGNS, 1))
 
 
 @pytest.fixture(autouse=True)
 def data(monkeypatch, campaign_rows):
     monkeypatch.setattr(discovery, 'current_date', lambda: date(2026, 8, 26))
     def campaigns(scope, as_of, ids=None, names=None):
-        candidates = (*CAMPAIGNS, replace(CAMPAIGNS[0], campaign_id='paused', status='paused'),
-                      replace(CAMPAIGNS[0], campaign_id='future', start_date=date(2027, 1, 1)))
-        return tuple(c for c in candidates if c.tenant_id == scope.tenant_id
-                     and scope.fa_id in c.fa_ids and c.start_date <= as_of <= c.end_date
-                     and c.status == 'active' and (ids is None or c.campaign_id in ids)
+        if scope != repository.RequestScope(DEMO_FA):
+            return ()
+        candidates = (*DISCOVERY_CAMPAIGNS, replace(DISCOVERY_CAMPAIGNS[0], campaign_id='paused', status='paused'))
+        return tuple(c for c in candidates if c.status == 'active'
+                     and (ids is None or c.campaign_id in ids)
                      and (names is None or c.name.lower() in [n.lower() for n in names]))
-    monkeypatch.setattr(repository, 'list_active_campaigns', campaigns)
+    monkeypatch.setattr(repository, 'list_active_campaigns_for_discovery', campaigns)
 
 
 def call(tool, args=None, scope=None, campaign_id=None):
@@ -36,16 +40,18 @@ def call(tool, args=None, scope=None, campaign_id=None):
 
 
 @pytest.mark.parametrize('args', [{}, {'fields': None}])
-def test_defaults_include_campaign_ids_and_full_details(args):
+def test_defaults_include_code_description_and_readable_audience(args):
     result = call('get_active_campaigns', args, campaign_id='camp-1')
     assert result['total_count'] == 2  # Selection must not narrow general discovery.
     assert result['columns'] == discovery.DEFAULT_FIELDS
     assert result['rows'][0] == {
-        'campaign_id': 'camp-1', 'name': 'Legacy Protection Refresh',
+        'name': 'Legacy Protection Refresh', 'campaign_code': 'CMP-2026-001',
+        'description': 'Educational campaign 1.',
         'start_date': '2026-08-01', 'end_date': '2026-12-31',
-        'age_groups': ['55to64', '65plus'], 'genders': [], 'cash_bands': ['250kTo1m', 'above1m'],
+        'age_groups': '55–64 or 65 and above', 'genders': 'Any',
+        'cash_bands': 'S$250,000 to below S$1,000,000 or S$1,000,000 and above',
     }
-    assert result['table'].startswith('| Campaign ID | Name | Start Date | End Date | Age Groups |')
+    assert result['table'].startswith('| Campaign Name | Campaign Code | Description | Start Date | End Date | Age Group |')
     assert '_' not in result['table'].splitlines()[0]
 
 
@@ -79,7 +85,7 @@ def test_scope_validation_and_safe_failure(monkeypatch):
     assert 'context' in json.loads(MCPToolRegistry(server).execute(tool, '{}'))['error']
     def fail(*args):
         raise repository.CampaignStorageUnavailable('Campaign database is temporarily unavailable')
-    monkeypatch.setattr(repository, 'list_active_campaigns', fail)
+    monkeypatch.setattr(repository, 'list_active_campaigns_for_discovery', fail)
     result = call(tool)
     assert result['error_code'] == 'storage_unavailable' and 'rows' not in result
 
@@ -87,14 +93,14 @@ def test_scope_validation_and_safe_failure(monkeypatch):
 
 
 @pytest.mark.parametrize('as_of', [date(2026, 8, 1), date(2026, 12, 31)])
-def test_active_dates_are_inclusive(as_of, monkeypatch):
+def test_reporting_date_does_not_change_active_status(as_of, monkeypatch):
     monkeypatch.setattr(discovery, 'current_date', lambda: as_of)
     assert call('get_active_campaigns')['total_count'] == 2
 
 
-def test_expired_campaigns_and_empty_results(monkeypatch):
+def test_status_active_campaigns_remain_visible_after_schedule(monkeypatch):
     monkeypatch.setattr(discovery, 'current_date', lambda: date(2027, 2, 1))
-    assert call('get_active_campaigns')['rows'] == []
+    assert call('get_active_campaigns')['total_count'] == 2
 
 
 def test_empty_exact_name_filter_keeps_discovery_response_unchanged():
@@ -169,7 +175,7 @@ def test_handler_rejects_invalid_arguments_before_repository_access(arguments, m
     def unexpected_read(*args):
         pytest.fail("Invalid arguments must not reach the repository")
 
-    monkeypatch.setattr(repository, "list_active_campaigns", unexpected_read)
+    monkeypatch.setattr(repository, "list_active_campaigns_for_discovery", unexpected_read)
     metadata = {"pulse_scope": {"fa_id": DEMO_FA, "tenant_id": "pulse-demo"}}
     assert discovery.execute_get_active_campaigns(arguments, metadata) == {
         "data_source": "synthetic",
@@ -199,3 +205,110 @@ def test_display_notice_omits_demo_wording_and_preserves_source_metadata():
     assert "demo" not in result["disclaimer"].lower()
     assert "not a product suitability assessment or financial advice" in result["disclaimer"]
     assert "consent checks and confirmation" in result["disclaimer"]
+
+
+def test_discovery_query_uses_resolved_tenant_without_creator_or_schedule(monkeypatch):
+    captured = []
+    class Connection:
+        def execute(self, sql, parameters):
+            captured.append((sql, parameters))
+            return self
+        def fetchall(self):
+            return [{'campaign_id': 'camp-1', 'name': 'Example', 'campaign_code': 'CMP-A',
+                     'description': 'Education', 'status': 'active', 'start_date': None,
+                     'end_date': None, 'audience_criteria': {'ageGroups': ['35-44']}}]
+    @contextmanager
+    def connection():
+        yield Connection()
+    monkeypatch.setattr(repository, '_connection', connection)
+    adviser = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+    other_tenant = 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+    result = LIST_DISCOVERY(repository.RequestScope(adviser), date(2030, 1, 1), ['camp-1'], ["O'Reilly"])
+    sql, params = captured[-1]
+    assert params[0] == adviser
+    assert "c.status = 'active'" in sql and 'c.is_deleted = FALSE' in sql
+    assert all(term not in sql for term in ('COALESCE', 'created_by_user_id', 'start_date <=', 'end_date >='))
+    assert "O'Reilly" not in sql and params[-1] == ["o'reilly"]
+    assert result[0].campaign_code == 'CMP-A' and result[0].start_date is None
+    LIST_DISCOVERY(repository.RequestScope(adviser, other_tenant), date(2030, 1, 1))
+    assert captured[-1][1][0] == other_tenant
+
+
+def test_age_gender_cash_overlap_and_filtering_before_limit():
+    result = call('get_active_campaigns', {'filters': {'age_min': 41}, 'limit': 1})
+    assert result['total_count'] == 2 and result['truncated']
+    assert result['columns'] == discovery.DEFAULT_FIELDS
+    result = call('get_active_campaigns', {'filters': {'age_min': 45}, 'limit': 1})
+    assert result['total_count'] == 1 and not result['truncated']
+    assert result['rows'][0]['campaign_code'] == 'CMP-2026-001'
+    assert call('get_active_campaigns', {'filters': {'age_min': 45, 'cash_max': 49999}})['rows'] == []
+
+
+def test_custom_mixed_and_unrestricted_criteria(monkeypatch):
+    custom = replace(CAMPAIGNS[0], criteria=Criteria(age_min=40, age_max=55,
+        genders=('male', 'female'), cash_min=500000, cash_max=2000000), start_date=None, end_date=None)
+    monkeypatch.setattr(repository, 'list_active_campaigns_for_discovery', lambda *args: (custom,))
+    result = call('get_active_campaigns', {'filters': {'age_min': 41, 'genders': ['Female']}})
+    assert result['rows'][0]['age_groups'] == '40–55'
+    assert result['rows'][0]['cash_bands'] == 'S$500,000–S$2,000,000'
+    assert result['rows'][0]['genders'] == 'Male, Female'
+    assert result['rows'][0]['start_date'] is None
+    assert call('get_active_campaigns', {'filters': {'age_min': 56}})['rows'] == []
+    mixed = replace(custom, criteria=Criteria(age_groups=('under35',), age_min=40, age_max=45,
+        cash_bands=('under50k',), cash_min=900000, cash_max=1200000))
+    monkeypatch.setattr(repository, 'list_active_campaigns_for_discovery', lambda *args: (mixed,))
+    assert call('get_active_campaigns', {'filters': {'age_min': 41}})['rows'][0]['age_groups'] == 'Under 35 or 40–45'
+    assert call('get_active_campaigns', {'filters': {'age_min': 35, 'age_max': 39}})['rows'] == []
+    assert call('get_active_campaigns', {'filters': {'cash_min': 100000, 'cash_max': 200000}})['rows'] == []
+    unrestricted = replace(custom, criteria=Criteria())
+    monkeypatch.setattr(repository, 'list_active_campaigns_for_discovery', lambda *args: (unrestricted,))
+    assert call('get_active_campaigns', {'filters': {'genders': ['Male'], 'age_min': 90, 'cash_min': 2000000}})['total_count'] == 1
+
+
+def test_preset_cash_boundaries_and_inclusive_custom_endpoints(monkeypatch):
+    band = replace(CAMPAIGNS[0], criteria=Criteria(cash_bands=('under50k',)))
+    monkeypatch.setattr(repository, 'list_active_campaigns_for_discovery', lambda *args: (band,))
+    assert call('get_active_campaigns', {'filters': {'cash_min': 50000}})['rows'] == []
+    assert call('get_active_campaigns', {'filters': {'cash_min': 49999.99}})['total_count'] == 1
+    custom = replace(band, criteria=Criteria(cash_min=50000, cash_max=250000))
+    monkeypatch.setattr(repository, 'list_active_campaigns_for_discovery', lambda *args: (custom,))
+    assert call('get_active_campaigns', {'filters': {'cash_min': 250000}})['total_count'] == 1
+    assert call('get_active_campaigns', {'filters': {'cash_min': 250000, 'cash_min_exclusive': True}})['rows'] == []
+    assert call('get_active_campaigns', {'filters': {'cash_max': 50000, 'cash_max_exclusive': True}})['rows'] == []
+
+
+def test_text_code_date_filters_and_projection_are_independent():
+    for filters in ({'name_contains': 'LEGACY'}, {'description_contains': 'CAMPAIGN 1'},
+                    {'campaign_codes': ['cmp-2026-001']}):
+        result = call('get_active_campaigns', {'filters': filters})
+        assert result['total_count'] == 1 and result['columns'] == discovery.DEFAULT_FIELDS
+    assert call('get_active_campaigns', {'filters': {'campaign_codes': []}})['rows'] == []
+    assert call('get_active_campaigns', {'filters': {'start_date_from': '2026-09-01'}})['rows'] == []
+    assert call('get_active_campaigns', {'filters': {'end_date_to': '2026-12-31'}})['total_count'] == 2
+
+
+@pytest.mark.parametrize('filters', [
+    {'age_min': 41, 'age_max': 40}, {'age_min': True}, {'age_min': 40.5},
+    {'age_min': -1}, {'age_max': 131}, {'cash_min': -1}, {'cash_min': '100000'},
+    {'cash_min': 200, 'cash_max': 100}, {'genders': ['Unknown']},
+    {'cash_min_exclusive': True}, {'cash_min': 100, 'cash_max': 100, 'cash_max_exclusive': True},
+    {'start_date_from': '2026-12-31', 'start_date_to': '2026-01-01'},
+    {'campaign_codes': ['']}, {'status': 'inactive'}, {'tenant_id': 'other'},
+])
+def test_invalid_filters_rejected_before_read(filters, monkeypatch):
+    monkeypatch.setattr(repository, 'list_active_campaigns_for_discovery', lambda *args: pytest.fail('Unexpected read'))
+    assert discovery.execute_get_active_campaigns({'filters': filters}, {
+        'pulse_scope': {'fa_id': DEMO_FA, 'tenant_id': 'pulse-demo'},
+    })['error_code'] == 'invalid_arguments'
+
+
+def test_rendering_date_empty_result_truncation_and_excel_position():
+    result = call('get_active_campaigns', {'filters': {'age_min': 41}, 'limit': 1})
+    rendered = discovery.render_active_campaigns(result)
+    assert rendered.startswith('**Current date: 26 August 2026 (Singapore)**')
+    assert 'Age: 41 and above' in rendered and 'overlapping eligibility' in rendered
+    assert rendered.index(result['table']) < rendered.index('[Download Excel (.xlsx)]')
+    assert 'Showing 1 of 2' in rendered
+    empty = discovery.render_active_campaigns(call('get_active_campaigns', {'campaign_ids': []}))
+    assert 'No active campaigns match your filters.' in empty
+    assert 'Download Excel' in empty

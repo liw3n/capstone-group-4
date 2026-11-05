@@ -1,9 +1,12 @@
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { useState } from 'react';
+import { downloadCampaignTable } from '../lib/campaignExport';
 
 interface MarkdownNode {
   type: string;
   value?: string;
+  url?: string;
   children?: MarkdownNode[];
   data?: { hProperties?: Record<string, unknown> };
 }
@@ -15,8 +18,10 @@ function textOf(node: MarkdownNode): string {
 /** Preserve content while adapting client tables to a narrow chat panel. */
 function remarkChatFormatting() {
   return (tree: MarkdownNode) => {
+    let latestTable: string[][] | undefined;
     function walk(node: MarkdownNode) {
       if (node.type === 'table' && node.children?.length) {
+        latestTable = node.children.map((row) => row.children?.map(textOf) ?? []);
         const headers = node.children[0].children?.map(textOf) ?? [];
         const keys = headers.map((header) => header.toLowerCase().replace(/[^a-z]/g, ''));
         const clientTable = headers.length === 3
@@ -33,6 +38,11 @@ function remarkChatFormatting() {
           }
         }
       }
+      if (node.type === 'link' && node.url === '#active-campaigns-excel' && latestTable) {
+        node.data = { ...node.data, hProperties: {
+          ...node.data?.hProperties, 'data-campaign-export': JSON.stringify(latestTable),
+        } };
+      }
       node.children?.forEach((child, index) => {
         // Only recognize a line break; never enable arbitrary model-generated HTML.
         // Working on the parsed tree leaves <br> inside code examples untouched.
@@ -45,6 +55,35 @@ function remarkChatFormatting() {
     }
     walk(tree);
   };
+}
+
+function CampaignExcelLink({ table }: { table: string[][] }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
+  return (
+    <>
+      <a
+        href="#active-campaigns-excel"
+        aria-disabled={busy}
+        onClick={async (event) => {
+          event.preventDefault();
+          if (busy) return;
+          setBusy(true);
+          setError(false);
+          try {
+            await downloadCampaignTable(table);
+          } catch {
+            setError(true);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? 'Preparing Excel…' : 'Download Excel (.xlsx)'}
+      </a>
+      {error && <span role="alert"> Unable to download Excel. Please try again.</span>}
+    </>
+  );
 }
 
 export default function AssistantMessage({ content }: { content: string }) {
@@ -74,9 +113,16 @@ export default function AssistantMessage({ content }: { content: string }) {
               {children}
             </td>
           ),
-          a: ({ href, children }) => href ? (
-            <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
-          ) : <span>{children}</span>,
+          a: ({ node, href, children }) => {
+            const snapshot = node?.properties['data-campaign-export'];
+            if (href === '#active-campaigns-excel' && typeof snapshot === 'string') {
+              return <CampaignExcelLink table={JSON.parse(snapshot) as string[][]} />;
+            }
+            if (href === '#active-campaigns-excel') return <span>Excel download unavailable</span>;
+            return href ? (
+              <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+            ) : <span>{children}</span>;
+          },
         }}
       >
         {content}

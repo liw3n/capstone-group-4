@@ -42,6 +42,7 @@ from app.tools.campaign_draft import (
 )
 from app.tools.campaign_references import execute_find_campaign_references
 from app.tools.discovery import (
+    CampaignFilters,
     CampaignField,
     CampaignId,
     CampaignName,
@@ -332,15 +333,20 @@ def get_active_campaigns(
     ctx: Context,
     campaign_ids: Annotated[list[CampaignId] | None, Field(max_length=100)] = None,
     campaign_names: Annotated[list[CampaignName] | None, Field(max_length=100)] = None,
-    fields: Annotated[list[CampaignField] | None, Field(min_length=1, max_length=12)] = None,
+    fields: Annotated[list[CampaignField] | None, Field(min_length=1, max_length=14)] = None,
     limit: Annotated[int, Field(ge=1, le=1000, strict=True)] = 1000,
+    filters: CampaignFilters | None = None,
 ) -> dict:
-    """List accessible campaigns active today in Singapore as a table.
+    """List accessible campaigns with status exactly 'active' as a table.
 
     Optional exact IDs/names restrict campaigns (both filters intersect).
     Omit fields unless the user explicitly requests particular details. Defaults:
-    campaign_id, name, start_date, end_date, age_groups, genders, cash_bands.
+    name, campaign_code, description, start_date, end_date, age_groups, genders, cash_bands.
     Name is always included; campaign_id is an allowed output field.
+    Additional restrictions belong in filters, independently of output fields.
+    Audience filters find overlapping eligibility, combining age/gender/cash
+    with AND. Preset bands and custom ranges are OR within each dimension.
+    Dates do not determine active status. Report today's Singapore date.
     Active is a filter, not a request to show only status. User identity (fa_id)
     comes only from API metadata. Report empty results and truncation.
     """
@@ -351,6 +357,7 @@ def get_active_campaigns(
             "campaign_names": campaign_names,
             "fields": fields,
             "limit": limit,
+            "filters": filters.model_dump(mode="json") if filters is not None else None,
         },
         _request_metadata(ctx),
     )

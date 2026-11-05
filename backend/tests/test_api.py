@@ -1006,3 +1006,43 @@ def test_query_runs_real_mcp_recommendation_with_fake_provider_and_storage(monke
     assert tool_result["evaluated_count"] == 12
     assert '"campaign_id": "camp-1"' in provider.calls[0]["messages"][0]["content"]
     assert len(persisted) == 1
+
+
+@pytest.mark.parametrize('route', ['/chat/query', '/api/chat/query'])
+def test_discovery_carries_frontend_identity_through_api_mcp_and_tenant_query(monkeypatch, route):
+    from contextlib import contextmanager
+    from datetime import date
+    from app.campaigns import repository
+    from app.config import Settings
+    from app.llm.orchestrator import ChatOrchestrator
+    from app.tools.mcp_registry import MCPToolRegistry
+    from test_campaign_mcp import server
+    from test_orchestrator import FakeClient, completion, message, tool_call
+    frontend_id = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+    captured = []
+    class Connection:
+        def execute(self, sql, parameters):
+            captured.append((sql, parameters))
+            return self
+        def fetchall(self):
+            return [{'campaign_id':'b1111111-1111-1111-1111-111111111111', 'name':'Scoped campaign',
+                'campaign_code':'CMP-A', 'description':'Created by another tenant member', 'status':'active',
+                'start_date':date(2027,1,1), 'end_date':date(2027,12,31),
+                'audience_criteria':{'ageGroups':['35-44'], 'genders':['Male'], 'cashBands':['50k-250k']}}]
+    @contextmanager
+    def connection():
+        yield Connection()
+    monkeypatch.setattr(repository, '_connection', connection)
+    provider = FakeClient([completion(message(tool_calls=[tool_call('discover','get_active_campaigns','{}')]))])
+    orchestrator = ChatOrchestrator(provider, Settings(_env_file=None, groq_api_key='test-key'), MCPToolRegistry(server))
+    monkeypatch.setattr(main, 'get_orchestrator', lambda: orchestrator)
+    monkeypatch.setattr(main, 'latest_session', lambda fa_id: session(fa_id))
+    monkeypatch.setattr(main, 'get_history', lambda _: [])
+    monkeypatch.setattr(main, 'append_exchange', lambda *args: None)
+    response = client.post(route, json={'fa_id':frontend_id, 'message_content':'what are the active campaigns'})
+    assert response.status_code == 200
+    assert 'Scoped campaign' in response.json()['ai_answer']
+    assert '#active-campaigns-excel' in response.json()['ai_answer']
+    sql, parameters = captured[-1]
+    assert 'c.tenant_id = %s' in sql and parameters[0] == frontend_id
+    assert 'created_by_user_id' not in sql

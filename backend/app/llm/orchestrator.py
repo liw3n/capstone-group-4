@@ -37,6 +37,7 @@ from app.campaigns.repository import RequestScope
 from app.config import Settings
 from app.llm.errors import LLMProviderError, LLMToolLoopError
 from app.store import ChatHistoryItem
+from app.tools.discovery import render_active_campaigns
 
 
 SYSTEM_PROMPT = """You are PULSE, an assistant for financial advisers.
@@ -99,7 +100,6 @@ when one is provided. Otherwise use the campaign named in the current user
 message; if none is named, ask which campaign they mean rather than guessing.
 """
 
-# Add discovery guidance without replacing the recommendation/follow-up prompt.
 SYSTEM_PROMPT += """
 For active campaign discovery, call get_active_campaigns. This operation can list
 all accessible active campaigns without a selected campaign; the instructions above
@@ -107,12 +107,22 @@ requiring a named/selected campaign apply to recommendation and follow-up tools.
 Use exact campaign IDs/names only when the current user requests particular campaigns.
 Do not narrow a general listing to the currently selected campaign or old history.
 Set fields only when the latest user explicitly requests particular details;
-otherwise omit fields or use null for campaign_id, name, start_date, end_date,
-age_groups, genders, cash_bands. Active is a filter, not a status-only projection.
-Campaign discovery uses today's Singapore date for active status;
+otherwise omit fields or use null for name, campaign_code, description, start_date,
+end_date, age_groups, genders, cash_bands. Active means status exactly 'active',
+independently of schedule dates. Today's Singapore date is reporting context;
 the existing recommendation tool retains its fixed demo date.
+Put user-requested restrictions in filters, not fields. 'Active campaigns for
+people over 40' uses filters={"age_min":41}, with default columns. 'At least 40'
+uses age_min=40; 'under 40' uses age_max=39. Gender and cash filters can combine
+with age filters. For cash strictly above/below a value, set the corresponding
+cash_min_exclusive/cash_max_exclusive flag. Use campaign_codes, name_contains,
+description_contains and start/end date bounds when requested. Never infer
+filters from campaign names, old history or vague life-stage terms.
+Audience filters match overlapping eligibility, not exclusively targeted
+audiences; unrestricted campaigns can match. Keep original full criteria visible.
 Display the returned Markdown table in full, preserving its values and readable
-headers with spaces (Campaign ID, Name, Start Date, etc.).
+headers with spaces. State today's Singapore date above it and place the Excel
+download action below it. Never invent download URLs or alter returned cells.
 Campaign IDs are allowed in discovery output; names must also be shown. State
 empty results and disclose truncation. Present campaign discovery results directly,
 without routinely adding synthetic/demo-data notices. Keep data_source as provenance
@@ -1735,6 +1745,12 @@ class ChatOrchestrator:
                     tool_call.function.name,
                     tool_call.function.arguments,
                 )
+                if tool_call.function.name == "get_active_campaigns":
+                    try:
+                        discovery_payload = json.loads(result)
+                        return _answer(render_active_campaigns(discovery_payload))
+                    except (TypeError, KeyError, ValueError) as exc:
+                        raise LLMProviderError("Campaign discovery tool returned an invalid result") from exc
                 if tool_call.function.name == "prepare_campaign_draft":
                     artifact = _prepared_campaign_draft(result)
                     if artifact is not None:
