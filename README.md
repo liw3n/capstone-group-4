@@ -13,7 +13,9 @@ Startup runs locked migrations and once-only synthetic seeding. Use Groq Free;
 do not enable paid services or billing upgrades.
 
 Follow the [deployment runbook](backend/docs/deployment.md) for configuration,
-local Compose rehearsal and rollout. Render/Supabase acceptance is still pending.
+local Compose rehearsal and rollout. The demo was deployed on 5 November 2026:
+[PULSE demo](https://pulse-demo-nail.onrender.com). Startup and readiness passed;
+authenticated login and end-to-end hosted acceptance remain pending.
 Supabase can pause after seven days of low activity; Render sleeps after 15 idle
 minutes. Supabase has no fixed 30-day expiry. Disable its Data API before seeding.
 The legacy conversational email schema remains a separate compatibility gap.

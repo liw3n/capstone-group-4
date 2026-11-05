@@ -1,9 +1,13 @@
 # PULSE free Render + Supabase deployment implementation plan
 
-Status: repository implementation; hosted acceptance pending. This replaces the
+Status: deployed on 5 November 2026; startup/readiness passed, authenticated login
+and full hosted acceptance pending. This replaces the
 earlier paid-compute design and the expiring Render Free database plan.
 Revised 5 November 2026. All services must remain free.
 Operational instructions are in [deployment.md](deployment.md).
+
+Live demo: https://pulse-demo-nail.onrender.com, deployed from commit `2ab0408`.
+See the runbook's deployment record for verified results and outstanding checks.
 
 ## Agreed scope
 
@@ -49,9 +53,10 @@ working; mock mode alone does not fix persistence. No live email is permitted.
 Task/pipeline persistence, full outcome tracking and individual accounts remain
 separate product work. Official campaign schemas remain unchanged.
 
-No cloud resources have been created by this repository update. Render and
-Supabase Free accounts, a private repository connection, a Supabase session-pooler
-URI, demo credentials and a Groq Free key are required for rollout. Do not publish
+The operator has provisioned the Render Free service and Supabase Free project;
+bootstrap and readiness succeeded. Any new environment still needs Render and
+Supabase Free accounts, a repository connection, a Supabase session-pooler
+URI, demo credentials and a Groq Free key. Do not publish
 credentials in Git. Supabase is used only as PostgreSQL; no client SDK or Auth
 migration is needed. Local Compose keeps its isolated PostgreSQL 16 service.
 An existing database is not copied by changing the URL; retained state requires

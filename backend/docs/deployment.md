@@ -6,6 +6,35 @@ session pooler over the public internet with TLS, not Render's private network.
 Hosted configuration requires shared authentication, stable
 signing secrets and mock email. The normal local Make workflow is preserved.
 
+## Deployment record — 5 November 2026
+
+- Tester URL: https://pulse-demo-nail.onrender.com
+- Deployed source: `main`, commit `2ab0408015966126e791b8eb84afc72d0a3bfddd`.
+- Render: `pulse-demo`, Blueprint-managed Docker web service on Free.
+- Supabase: dedicated `pulse-demo` project in Singapore, Free organization.
+  Data API was disabled in the project creation form.
+- At approximately 22:42 Singapore time, Render reported **Deploy succeeded | Live**.
+  Logs showed all eight schema files and four synthetic seed files applied,
+  FastMCP started on loopback, and repeated `/ready` responses of HTTP 200.
+  An unauthenticated request to `/` returned HTTP 401, as intended.
+- The initial deployment failed with the generic bootstrap error. After the
+  operator increased `DEMO_AUTH_PASSWORD` to at least 20 characters and redeployed,
+  bootstrap and startup succeeded. Check this validation requirement when
+  troubleshooting; the generic message can also cover other configuration/SQL errors.
+
+This verifies provisioning and startup, not full hosted acceptance. The tester
+reported difficulty signing in; successful authenticated login has not yet been
+confirmed. Next, verify the shared login, contacts/campaigns, live Groq chat and
+the campaign review/confirmation flow. Restart persistence, pause recovery,
+TLS inspection and an independent Data API exposure check also remain pending.
+Do not mark the full acceptance checklist complete based on `/ready` alone.
+
+Tester credentials are the values of `DEMO_AUTH_USERNAME` and
+`DEMO_AUTH_PASSWORD` in Render, shared privately by the operator. No credential,
+database connection string or provider key is recorded here. A separate deployment
+attempt in the repository owner's workspace was reported; its current state is
+unverified. Do not delete or modify it without confirming ownership and retention.
+
 ## Costs and inactivity
 
 Choose a Render Free web service and a Supabase Free project, use the included
@@ -212,8 +241,9 @@ type checking/build, Python compilation, shell syntax, Terraform format/validati
 and local Blueprint free-service/secret checks. Added unit regressions cover
 transaction-local timeout setup in bootstrap and readiness. Frontend tooling
 still reports existing bundle-size/import and test WebSocket-port warnings.
-The updated architecture SVG was rendered to PNG and visually checked. No live
-database migration, cloud provisioning or provider API call was performed.
+The updated architecture SVG was rendered to PNG and visually checked. Those
+local checks did not provision cloud resources or call the model provider;
+subsequent hosted startup results are recorded above.
 
 Local verification on 2 November 2026: Docker build, non-root/asset checks,
 PostgreSQL 16 bootstrap/rollback/checksum/concurrency tests, authenticated HTTP
@@ -225,10 +255,10 @@ Python/shell checks and Terraform format/validation passed.
 The separately enabled existing `test_campaign_current_postgres.py` suite has
 five failures reproducible on an empty test database: three outdated seed-count
 expectations and two dictionary-style accesses on tuple rows. Those existing
-tests were not rewritten in this deployment change. Hosted acceptance, actual
-Groq Free model behavior and real Render/Supabase provisioning remain unverified.
-The Supabase configuration revision has not been tested against a live project;
-the earlier Docker smoke results above used local PostgreSQL, not Supabase.
+tests were not rewritten in this deployment change. Full hosted acceptance and
+actual Groq Free model behavior remain unverified. Render/Supabase provisioning
+and bootstrap have now succeeded as recorded above; the earlier Docker smoke
+results used local PostgreSQL, not Supabase.
 
 The hosted smoke test also exercises fresh seed compatibility. The REST and
 frontend campaign contracts accept the seed's `inactive` status without
@@ -250,5 +280,5 @@ rollback does not revert SQL or recover data. Assign an owner to check project
 pausing, quota usage and operator-managed exports of synthetic state. Do not
 upgrade under this zero-cost scope. Remove only the
 identified demo resources at the end after confirming retention needs, and
-revoke the demo provider key. Hosted acceptance remains pending until performed
-against an actual Render URL.
+revoke the demo provider key. Complete the remaining hosted acceptance checks
+against the deployed URL and record their results separately from startup checks.
