@@ -92,6 +92,30 @@ owns the transaction. Overlapping starts serialize with bounded lock waits.
 Timeouts are set with transaction-local SQL rather than connection startup
 options, keeping bootstrap and readiness compatible with managed poolers.
 
+After bootstrap exits, `run_services.sh` starts `service_runner.py`, which
+launches FastMCP and FastAPI concurrently with unbuffered output. Hosted mode
+disables FastMCP update checks (`FASTMCP_CHECK_FOR_UPDATES=off`). The supervisor
+checks MCP's loopback port and the API's `/ready` endpoint, reports waiting
+services approximately every 10 seconds, and exits unsuccessfully if startup
+takes longer than 120 seconds. Each HTTP probe allows up to five seconds (the
+endpoint has its own four-second dependency deadline). Local startup uses
+`/live` instead so it does not require a configured database. Either child
+exiting, even with code zero, stops its sibling; shutdown allows five seconds
+before forcefully terminating remaining child process groups.
+
+For a deployment stalled after `Database bootstrap committed successfully`,
+look for `Database bootstrap process exited successfully`, `Starting FastMCP`,
+`Starting FastAPI`, and finally `All services ready; startup complete`.
+The first message confirms the bootstrap process exited, not just that its
+transaction committed. A timeout identifies the service still waiting. Check
+the preceding child logs without sharing secrets; do not reset the database
+or reapply seeds to troubleshoot an application-startup stall.
+
+The 7 November deployment of `095fe02` committed its database changes but did
+not reach readiness and was cancelled. These startup changes add bounded
+supervision and diagnostics; the cause of that hosted stall remains unconfirmed
+and a new hosted rollout must verify the fix.
+
 `DEMO_SEED_ON_START=true` enables only checked-in synthetic records. Each seed
 file runs once per database. Restarts preserve edits and deleted rows. You can
 set it false after the first successful deployment. Schema-only `migrate` and

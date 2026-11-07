@@ -15,6 +15,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY app /app/app
 COPY mcp /app/mcp
 COPY run_services.sh /app/run_services.sh
+COPY service_runner.py /app/service_runner.py
 # Normalize Windows checkouts before running Bash in Linux.
 RUN sed -i 's/\r$//' /app/run_services.sh
 EXPOSE 4000 8001
