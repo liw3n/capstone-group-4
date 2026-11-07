@@ -31,15 +31,37 @@ from app.campaigns.models import (
     PersistedCampaignDraftArtifact,
     PersistedCampaignDraftOptionSet,
 )
-from app.campaigns.email import CONFIRMATION_PATTERN, render_campaign_email
-from app.campaigns.conversation_context import CampaignContextResolution
+from app.campaigns.email import (
+    CONFIRMATION_PATTERN,
+    latest_email_draft_context,
+    render_campaign_email,
+)
+from app.campaigns.conversation_context import (
+    CampaignContextResolution,
+    is_campaign_email_turn,
+    signoff_reply,
+)
 from app.campaigns.presentation import render_campaign_draft
-from app.campaigns.repository import RequestScope
+from app.campaigns.repository import RequestScope, get_campaign, require_active
 from app.config import Settings
 from app.llm.errors import LLMProviderError, LLMToolLoopError
 from app.store import ChatHistoryItem
 from app.tools.discovery import render_active_campaigns
 from app.tools.campaign import render_recommendation_download
+
+
+EMAIL_SYSTEM_PROMPT = """You are drafting or revising one campaign outreach email.
+Use only the supplied server-validated campaign and draft context. Return exactly
+one prepare_campaign_email tool call and no prose. For a new draft, provide a
+concise subject and educational body using {{client_name}} for optional
+personalisation. Do not promise outcomes or invent client facts. State that
+individual circumstances and suitability require adviser review. Do not add a
+signature; the server adds the adviser-provided sign-off. Do not provide
+recipient IDs; the server selects and validates consenting matches. For a
+revision, apply
+only the latest instruction and preserve the supplied draft's meaning. Omit
+unchanged fields when the instruction changes only one field. Never send email
+or request another tool."""
 
 
 SYSTEM_PROMPT = """You are PULSE, an assistant for financial advisers.
@@ -1463,6 +1485,92 @@ class ChatOrchestrator:
             requested_revision_fields=(field,),
         )
 
+    def _run_campaign_email(
+        self,
+        *,
+        registry: ToolExecutor,
+        scope: RequestScope,
+        campaign_id: str,
+        user_message: str,
+        signoff_name: str | None,
+        previous_draft: dict[str, str] | None,
+    ) -> OrchestratorResult:
+        """Generate or revise email with one compact, email-only model call."""
+        campaign = get_campaign(campaign_id, scope)
+        require_active(campaign)
+        context = {
+            "campaign": {
+                "campaign_id": campaign.campaign_id,
+                "name": campaign.name,
+                "campaign_code": campaign.campaign_code,
+                "description": campaign.description,
+                "start_date": campaign.start_date.isoformat()
+                if campaign.start_date else None,
+                "end_date": campaign.end_date.isoformat()
+                if campaign.end_date else None,
+                "audience_criteria": {
+                    "age_groups": list(campaign.criteria.age_groups),
+                    "genders": list(campaign.criteria.genders),
+                    "cash_bands": list(campaign.criteria.cash_bands),
+                    "age_min": campaign.criteria.age_min,
+                    "age_max": campaign.criteria.age_max,
+                    "cash_min": campaign.criteria.cash_min,
+                    "cash_max": campaign.criteria.cash_max,
+                },
+            },
+            "current_email_draft": previous_draft,
+            "adviser_signoff_name": signoff_name
+            or (previous_draft or {}).get("signoff_name"),
+        }
+        email_tool = next(
+            (
+                tool for tool in registry.schemas()
+                if tool.get("function", {}).get("name") == "prepare_campaign_email"
+            ),
+            None,
+        )
+        if email_tool is None:
+            raise LLMProviderError("Campaign email preparation schema is unavailable")
+        messages = [
+            {
+                "role": "system",
+                "content": EMAIL_SYSTEM_PROMPT + "\n\nContext: " + json.dumps(
+                    context, ensure_ascii=False, separators=(",", ":")
+                ),
+            },
+            {"role": "user", "content": user_message},
+        ]
+        completion = self.client.create_chat_completion(messages, [email_tool])
+        if not getattr(completion, "choices", None):
+            raise LLMProviderError("LLM provider returned no choices")
+        message = completion.choices[0].message
+        tool_calls = getattr(message, "tool_calls", None) or []
+        if len(tool_calls) != 1 or tool_calls[0].function.name != "prepare_campaign_email":
+            return _answer(
+                "I couldn't prepare the email preview in one safe generation step. "
+                "Please try the draft request again. No email was sent."
+            )
+        try:
+            arguments = json.loads(tool_calls[0].function.arguments)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise LLMProviderError("Campaign email tool arguments were invalid") from exc
+        if not isinstance(arguments, dict):
+            raise LLMProviderError("Campaign email tool arguments were invalid")
+        arguments["campaign_id"] = campaign_id
+        if signoff_name is not None:
+            arguments["signoff_name"] = signoff_name
+        result = registry.execute(
+            "prepare_campaign_email",
+            json.dumps(arguments, ensure_ascii=False),
+        )
+        try:
+            payload = json.loads(result)
+        except json.JSONDecodeError as exc:
+            raise LLMProviderError("Campaign email tool returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise LLMProviderError("Campaign email tool returned an invalid result")
+        return _answer(render_campaign_email(payload))
+
     def run(
         self,
         user_message: str,
@@ -1518,6 +1626,35 @@ class ChatOrchestrator:
                     "I could not find an accessible active campaign matching that "
                     "ID. Check the campaign name or ID and try again."
                 )
+        if (
+            scope is not None
+            and session_id is not None
+            and is_campaign_email_turn(user_message, history)
+        ):
+            if campaign_id is None:
+                return _answer(
+                    "I can help draft the campaign email. Which campaign would you "
+                    "like to use? Enter its name or ID."
+                )
+            previous_draft = latest_email_draft_context(
+                scope, session_id, campaign_id
+            )
+            signoff_name = signoff_reply(user_message, history)
+            if previous_draft is None and signoff_name is None:
+                campaign = get_campaign(campaign_id, scope)
+                require_active(campaign)
+                return _answer(
+                    f"I found **{campaign.name}**. What name would you like me to "
+                    "use in the email sign-off?"
+                )
+            return self._run_campaign_email(
+                registry=registry,
+                scope=scope,
+                campaign_id=campaign_id,
+                user_message=user_message,
+                signoff_name=signoff_name,
+                previous_draft=previous_draft,
+            )
         prompt = SYSTEM_PROMPT
         if scope is not None:
             prompt += "\nCurrent campaign context (server-validated): " + json.dumps(

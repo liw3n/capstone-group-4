@@ -1078,6 +1078,13 @@ recipient snapshot, excluded recipients, delivery mode, 15-minute expiry and an
 exact `CONFIRM EMAIL <code>` phrase. A newer preview for the same chat session
 and campaign supersedes its prior unconfirmed preview.
 
+The API resolves exact campaign names/IDs and short sign-off replies from stored
+chat history without an LLM request. Once those inputs exist, email generation
+uses one compact model request with validated campaign data, the latest stored
+email draft when revising, the latest instruction, and only the
+`prepare_campaign_email` schema. Other chat history and unrelated MCP schemas
+are not sent for this path.
+
 ### MCP: confirm_campaign_email
 
 This consequential tool has no model-facing arguments. The API-side orchestrator

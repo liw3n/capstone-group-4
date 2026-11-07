@@ -320,6 +320,13 @@ exact preview in `campaign_email_send` and
 returns its included and excluded recipients plus an expiring phrase such as
 `CONFIRM EMAIL ABC234`. Nothing is sent during preparation.
 
+Email turns use a bounded orchestration path. Python resolves a recent campaign
+and short replies to the sign-off question without calling the model. Drafting
+or revising uses one Groq request containing only validated campaign/current
+email context and the `prepare_campaign_email` schema; it does not send the
+shared system prompt, full chat history or unrelated tool schemas. Exact
+confirmation also bypasses the model.
+
 Only the exact phrase in the latest user message can invoke
 `confirm_campaign_email`. The server rechecks campaign access, matching and
 consent, then sends once per recipient through the configured transport. Local

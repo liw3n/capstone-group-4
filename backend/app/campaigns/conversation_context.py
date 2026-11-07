@@ -27,6 +27,17 @@ _EXPLICIT_CAMPAIGN_ID_PATTERN = re.compile(
     r"\bcampaign\s+(?:id|identifier)\s*(?::|is)?\s*[a-z0-9][a-z0-9_-]{2,}\b",
     re.IGNORECASE,
 )
+_SIGNOFF_QUESTION_PATTERN = re.compile(
+    r"(?:what|which)\s+name.*sign[ -]?off|name.*email.*signed|sign[ -]?off\s+name",
+    re.IGNORECASE,
+)
+_SIGNOFF_COMMAND_PATTERN = re.compile(
+    r"\b(?:draft|email|campaign|recipient|subject|message|body|edit|change|send)\b",
+    re.IGNORECASE,
+)
+_ADVISER_TITLE_PATTERN = re.compile(
+    r"^(?:financial\s+advis(?:e|o)r|fa)$", re.IGNORECASE
+)
 
 
 @dataclass(frozen=True)
@@ -54,6 +65,37 @@ def is_campaign_email_turn(
         and items[-1].user is False
         and _EMAIL_CONTEXT_PATTERN.search(items[-1].message_content)
     )
+
+
+def signoff_reply(
+    latest_message: str, history: Iterable[HistoryItem]
+) -> str | None:
+    """Extract a short adviser answer only after a server sign-off question."""
+    items = tuple(history)
+    if not (
+        items
+        and items[-1].user is False
+        and _SIGNOFF_QUESTION_PATTERN.search(items[-1].message_content)
+    ):
+        return None
+    lines = [" ".join(line.split()) for line in latest_message.splitlines()]
+    lines = [line for line in lines if line and not _ADVISER_TITLE_PATTERN.fullmatch(line)]
+    if not lines:
+        return None
+    candidate = re.sub(
+        r"^(?:please\s+)?(?:use|sign(?:\s+it)?\s+(?:as|by))\s+",
+        "",
+        lines[0],
+        flags=re.IGNORECASE,
+    ).strip(" .")
+    if (
+        not candidate
+        or len(candidate) > 100
+        or not any(character.isalpha() for character in candidate)
+        or _SIGNOFF_COMMAND_PATTERN.search(candidate)
+    ):
+        return None
+    return candidate
 
 
 def resolve_campaign_context(

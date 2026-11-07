@@ -1,4 +1,5 @@
 import json
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -8,10 +9,12 @@ from app.campaigns.email import (
     PrepareCampaignEmailArguments,
     render_campaign_email,
 )
-from app.campaigns.repository import DEMO_FA, RequestScope
+from app.campaigns.repository import Campaign, Criteria, DEMO_FA, RequestScope
 from app.config import Settings
 from app.integrations.gwm_email import GWMEmailTransport, MockEmailTransport, build_email_transport
 from app.llm.orchestrator import ChatOrchestrator, SYSTEM_PROMPT
+from app.store import ChatHistoryItem
+import app.llm.orchestrator as orchestrator_module
 
 
 def settings():
@@ -132,7 +135,10 @@ class PreviewRegistry:
 
     def execute(self, name, arguments_json):
         assert name == "prepare_campaign_email"
-        assert json.loads(arguments_json)["subject"] == "Protection review"
+        arguments = json.loads(arguments_json)
+        assert arguments["subject"] == "Protection review"
+        assert arguments["signoff_name"] == "Steven"
+        assert arguments["campaign_id"] == "camp-1"
         return json.dumps({
             "type": "campaign_email_preview",
             "delivery_mode": "mock",
@@ -153,9 +159,13 @@ class PreviewRegistry:
 class PreviewProvider:
     def __init__(self):
         self.calls = 0
+        self.messages = None
+        self.tools = None
 
     def create_chat_completion(self, messages, tools):
         self.calls += 1
+        self.messages = messages
+        self.tools = tools
         call = SimpleNamespace(
             id="email-preview-1",
             function=SimpleNamespace(
@@ -171,16 +181,68 @@ class PreviewProvider:
         )])
 
 
-def test_email_preview_is_rendered_directly_after_the_model_tool_call():
+def campaign():
+    return Campaign(
+        campaign_id="camp-1",
+        name="Legacy Protection Refresh",
+        criteria=Criteria(age_groups=("50-59",)),
+        status="active",
+        start_date=date(2026, 1, 1),
+        end_date=date(2027, 1, 1),
+        campaign_code="LEGACY",
+        description="Educational legacy-planning review.",
+    )
+
+
+def test_email_preview_uses_one_compact_model_call(monkeypatch):
+    monkeypatch.setattr(orchestrator_module, "get_campaign", lambda *_: campaign())
+    monkeypatch.setattr(
+        orchestrator_module, "latest_email_draft_context", lambda *_: None
+    )
     provider = PreviewProvider()
+    orchestrator = ChatOrchestrator(provider, settings(), PreviewRegistry())
+    history = [ChatHistoryItem(
+        "2026-11-01T00:00:00Z", False,
+        "What name would you like me to use in the email sign-off?",
+    )]
+    result = orchestrator.run(
+        "Steven\nFinancial Advisor", history, scope=RequestScope(DEMO_FA),
+        campaign_id="camp-1", session_id="session-1",
+    )
+    assert provider.calls == 1
+    assert len(provider.messages) == 2
+    assert [tool["function"]["name"] for tool in provider.tools] == [
+        "prepare_campaign_email"
+    ]
+    assert "Legacy Protection Refresh" in provider.messages[0]["content"]
+    assert "Financial Advisor" not in provider.messages[0]["content"]
+    assert "Review campaign email" in result
+    assert "CONFIRM EMAIL ABC234" in result
+
+
+def test_email_fast_path_asks_for_campaign_without_model_call():
+    provider = SimpleNamespace()
+    orchestrator = ChatOrchestrator(provider, settings(), PreviewRegistry())
+    result = orchestrator.run(
+        "Draft an email for clients", [], scope=RequestScope(DEMO_FA),
+        campaign_id=None, session_id="session-1",
+    )
+    assert "Which campaign" in result
+
+
+def test_email_fast_path_asks_for_signoff_without_model_call(monkeypatch):
+    monkeypatch.setattr(orchestrator_module, "get_campaign", lambda *_: campaign())
+    monkeypatch.setattr(
+        orchestrator_module, "latest_email_draft_context", lambda *_: None
+    )
+    provider = SimpleNamespace()
     orchestrator = ChatOrchestrator(provider, settings(), PreviewRegistry())
     result = orchestrator.run(
         "Draft an email", [], scope=RequestScope(DEMO_FA),
         campaign_id="camp-1", session_id="session-1",
     )
-    assert provider.calls == 1
-    assert "Review campaign email" in result
-    assert "CONFIRM EMAIL ABC234" in result
+    assert "What name" in result
+    assert "Legacy Protection Refresh" in result
 
 
 def test_prompt_requires_preview_consent_and_exact_confirmation():

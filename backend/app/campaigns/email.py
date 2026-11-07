@@ -148,6 +148,20 @@ def _latest_email_preview(scope: RequestScope, session_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def latest_email_draft_context(
+    scope: RequestScope, session_id: str, campaign_id: str
+) -> dict | None:
+    """Return the latest reviewed draft for one scoped campaign."""
+    preview = _latest_email_preview(scope, session_id)
+    if preview is None or str(preview["campaign_id"]) != campaign_id:
+        return None
+    return {
+        "subject": str(preview["subject"]),
+        "message_body": str(preview["message_body"] or preview["body_template"]),
+        "signoff_name": str(preview["signoff_name"]),
+    }
+
+
 def _campaign_required(scope: RequestScope) -> dict:
     campaigns = list_active_campaigns(scope, clock.current_date())
     return {

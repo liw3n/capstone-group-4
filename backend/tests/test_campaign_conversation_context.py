@@ -57,6 +57,26 @@ def test_short_reply_after_email_prompt_keeps_email_context():
     assert conversation_context.is_campaign_email_turn("Hello", []) is False
 
 
+def test_short_signoff_reply_is_extracted_without_the_adviser_title():
+    history = [ChatHistoryItem(
+        "2026-11-01T00:00:00Z", False,
+        "What name would you like me to use in the email sign-off?",
+    )]
+    assert conversation_context.signoff_reply(
+        "Steven\nFinancial Advisor", history
+    ) == "Steven"
+
+
+def test_non_name_reply_is_not_treated_as_a_signoff():
+    history = [ChatHistoryItem(
+        "2026-11-01T00:00:00Z", False,
+        "What name would you like me to use in the email sign-off?",
+    )]
+    assert conversation_context.signoff_reply(
+        "Draft the email for me", history
+    ) is None
+
+
 def test_campaign_id_in_latest_message_is_accepted(monkeypatch):
     monkeypatch.setattr(conversation_context, "list_active_campaigns", lambda *_: campaigns())
     resolution = conversation_context.resolve_campaign_context(
