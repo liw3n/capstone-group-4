@@ -1058,21 +1058,19 @@ email delivery.
 
 ### MCP: prepare_campaign_email
 
-The email preview/confirmation implementation below is a legacy contract. Its
-storage still depends on `campaign_email_send` and
-`mock_campaign_contact_event`, which a fresh setup no longer creates. It must be
-migrated separately before this flow can run with only `campaign` and
-`campaign_member`; its former event writes do not feed the performance tools.
-
 This tool prepares and persists an email preview; it does not send. Model-facing
-arguments are `subject` (1-200 characters), `body` (1-10,000 characters),
-optional `campaign_id`, and optional unique `recipient_ids` (1-100). When a
+arguments are optional `subject` (1-200 characters), optional `body`
+(1-10,000 characters), optional `signoff_name` (2-100 characters), optional
+`campaign_id`, and optional unique `recipient_ids` (1-100). Subject and body are
+required for the first preview; later sign-off-only revisions reuse the stored
+content. When a
 campaign is selected in the UI, trusted request metadata overrides the model's
 campaign value. Adviser ID, tenant ID, chat session ID and latest user message
 are supplied only through MCP metadata.
 
-The server verifies campaign assignment and active state, recalculates campaign
-criteria matches, then loads only adviser-owned contacts. Contacts that are not
+The server verifies campaign ownership and active state, recalculates campaign
+criteria matches, then loads official `contact` rows accessible because the
+adviser is their assignee or creator. Contacts that are not
 matches or lack `opt_in_email` are returned under `excluded_recipients`; they are
 never included in the stored batch. Omitting `recipient_ids` selects all matched,
 consenting contacts. A successful result contains the exact subject, body,
@@ -1089,11 +1087,12 @@ message from trusted metadata. General approval language cannot send an email.
 The server locks the latest batch, verifies its hashed phrase and expiry, and
 rechecks campaign access, criteria matching, ownership and email consent. It
 calls the configured transport once for each recipient and stores bounded
-per-recipient outcomes. Every successful outcome appends one
-`mock_campaign_contact_event` with `engagement_status=0`, `channel=email`, the
-delivery mode and `send_batch_id`. Failed or unknown outcomes do not create a
-contact event. Repeating a completed confirmation returns the stored result and
-does not send again. A deliberate resend requires a new preview and phrase.
+per-recipient outcomes. Every successful outcome creates or updates the official
+`campaign_member` row, sets `emailed_at`, and increments `email_send_count`.
+The campaign's `email_send_runs` is incremented once when a batch has at least
+one successful outcome. Failed or unknown outcomes do not update membership.
+Repeating a completed confirmation returns the stored result and does not send
+again. A deliberate resend requires a new preview and phrase.
 
 Local `EMAIL_DELIVERY_MODE=mock` results are explicitly simulated. Optional
 `gwm` mode uses the server-side GWM Core Email API adapter; credentials and

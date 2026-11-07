@@ -54,7 +54,7 @@ def test_schema_exposes_only_campaign_and_bounded_limit():
         if item["function"]["name"] == "prepare_campaign_email"
     )
     assert set(email_schema["properties"]) == {
-        "subject", "body", "campaign_id", "recipient_ids"
+            "subject", "body", "campaign_id", "recipient_ids", "signoff_name"
     }
     assert "fa_id" not in follow_up_schema.get("required", [])
     assert "before outreach" in tool_descriptions["recommend_clients_for_campaign"]

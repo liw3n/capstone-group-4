@@ -1,4 +1,4 @@
-"""Opt-in PostgreSQL test for email confirmation and contact-event persistence."""
+"""Opt-in PostgreSQL checks for confirmed email and member persistence."""
 
 from pathlib import Path
 import os
@@ -13,13 +13,15 @@ import pytest
 from app import config
 from app.campaigns import email as email_module
 from app.campaigns.email import PrepareCampaignEmailArguments
-from app.campaigns.repository import DEMO_FA, RequestScope
 from app.integrations.gwm_email import MockEmailTransport
 
 
 TABLES = Path(__file__).parents[1] / "tables"
 CREATE = TABLES / "create"
 MOCK = TABLES / "mock_data"
+ADVISER = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+CAMPAIGN = "b2222222-2222-2222-2222-222222222222"
+SESSION = "session-email-test"
 
 
 @pytest.fixture
@@ -35,20 +37,20 @@ def email_database(monkeypatch):
             with psycopg.connect(scoped_url, autocommit=True) as connection:
                 for filename in (
                     "create_campaign_chat_sessions.sql",
-                    "create_mock_campaign.sql",
-                    "create_mock_client.sql",
-                    "create_mock_campaign_advisor.sql",
+                    "create_mock_user_account.sql",
+                    "create_campaign.sql",
+                    "create_contact.sql",
+                    "create_campaign_member.sql",
                     "create_campaign_email_send.sql",
-                    "create_mock_campaign_contact_event.sql",
                 ):
                     connection.execute((CREATE / filename).read_text())
                 for filename in (
-                    "mock_campaign.sql", "mock_client.sql", "mock_campaign_advisor.sql"
+                    "mock_user_account.sql", "mock_contact.sql", "mock_campaign.sql"
                 ):
                     connection.execute((MOCK / filename).read_text())
                 connection.execute(
                     "INSERT INTO campaign_chat_sessions (fa_id, session_id) VALUES (%s, %s)",
-                    (DEMO_FA, "session-email-test"),
+                    (ADVISER, SESSION),
                 )
                 runtime_settings = SimpleNamespace(
                     database_url=scoped_url, email_delivery_mode="mock"
@@ -62,60 +64,66 @@ def email_database(monkeypatch):
 
 def metadata(message="Draft an email"):
     return {
-        "pulse_scope": {"fa_id": DEMO_FA, "tenant_id": "pulse-demo"},
-        "campaign_id": "camp-1",
-        "session_id": "session-email-test",
+        "pulse_scope": {"fa_id": ADVISER, "tenant_id": "pulse-demo"},
+        "campaign_id": CAMPAIGN,
+        "session_id": SESSION,
         "latest_user_message": message,
     }
 
 
-def test_confirmed_mock_email_records_each_recipient_once(email_database):
+def test_confirmed_mock_email_updates_members_and_campaign_once(email_database):
     preview = email_module.prepare_campaign_email(
         PrepareCampaignEmailArguments(
             subject="Legacy protection review",
             body="Hello {{client_name}}, this is educational information only. "
                  "Individual circumstances and suitability require adviser review.",
+            signoff_name="Steven Raynaldi",
         ),
         metadata(),
     )
     assert preview["prepared"] is True
-    assert [item["contact_id"] for item in preview["recipients"]] == [
-        "client-001", "client-003"
-    ]
-    assert {item["contact_id"] for item in preview["excluded_recipients"]} == {
-        "client-002", "client-012"
-    }
+    recipient_ids = [item["contact_id"] for item in preview["recipients"]]
+    assert recipient_ids
+    send_runs_before = email_database.execute(
+        "SELECT email_send_runs FROM campaign WHERE tenant_id = %s AND campaign_id = %s",
+        (ADVISER, CAMPAIGN),
+    ).fetchone()[0]
 
     confirmed = email_module.confirm_campaign_email(
         metadata(preview["confirmation_phrase"]), MockEmailTransport()
     )
     assert confirmed["status"] == "sent"
-    assert confirmed["successful_count"] == 2
-    assert confirmed["contact_events_recorded"] == 2
+    assert confirmed["successful_count"] == len(recipient_ids)
+    assert confirmed["campaign_members_updated"] == len(recipient_ids)
     rows = email_database.execute(
-        """
-        SELECT contact_id, engagement_status, channel, delivery_mode, send_batch_id
-        FROM mock_campaign_contact_event ORDER BY contact_id
-        """
+        """SELECT contact_id::text, email_send_count, emailed_at
+           FROM campaign_member
+           WHERE tenant_id = %s AND campaign_id = %s
+           ORDER BY contact_id""",
+        (ADVISER, CAMPAIGN),
     ).fetchall()
-    assert [(row[0], row[1], row[2], row[3]) for row in rows] == [
-        ("client-001", 0, "email", "mock"),
-        ("client-003", 0, "email", "mock"),
-    ]
-    assert all(row[4] == preview["send_batch_id"] for row in rows)
+    assert [row[0] for row in rows] == sorted(recipient_ids)
+    assert all(row[1] == 1 and row[2] is not None for row in rows)
+    assert email_database.execute(
+        "SELECT email_send_runs FROM campaign WHERE tenant_id = %s AND campaign_id = %s",
+        (ADVISER, CAMPAIGN),
+    ).fetchone()[0] == send_runs_before + 1
 
     repeated = email_module.confirm_campaign_email(
         metadata(preview["confirmation_phrase"]), MockEmailTransport()
     )
     assert repeated["repeated_confirmation"] is True
     assert email_database.execute(
-        "SELECT count(*) FROM mock_campaign_contact_event"
-    ).fetchone()[0] == 2
+        "SELECT sum(email_send_count) FROM campaign_member WHERE campaign_id = %s",
+        (CAMPAIGN,),
+    ).fetchone()[0] == len(recipient_ids)
 
 
 def test_confirmation_must_match_latest_preview_exactly(email_database):
     preview = email_module.prepare_campaign_email(
-        PrepareCampaignEmailArguments(subject="Review", body="Educational review."),
+        PrepareCampaignEmailArguments(
+            subject="Review", body="Educational review.", signoff_name="Steven Raynaldi"
+        ),
         metadata(),
     )
     result = email_module.confirm_campaign_email(
@@ -127,5 +135,5 @@ def test_confirmation_must_match_latest_preview_exactly(email_database):
         (preview["send_batch_id"],),
     ).fetchone()[0] == "prepared"
     assert email_database.execute(
-        "SELECT count(*) FROM mock_campaign_contact_event"
+        "SELECT count(*) FROM campaign_member"
     ).fetchone()[0] == 0

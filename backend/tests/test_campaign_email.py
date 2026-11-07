@@ -10,7 +10,7 @@ from app.campaigns.email import (
 )
 from app.campaigns.repository import DEMO_FA, RequestScope
 from app.config import Settings
-from app.integrations.gwm_email import MockEmailTransport, build_email_transport
+from app.integrations.gwm_email import GWMEmailTransport, MockEmailTransport, build_email_transport
 from app.llm.orchestrator import ChatOrchestrator, SYSTEM_PROMPT
 
 
@@ -63,7 +63,10 @@ def test_preview_renderer_shows_content_recipients_and_exact_confirmation():
     })
     assert "Protection review" in rendered
     assert "Demo Client A" in rendered
-    assert "client-002" in rendered
+    assert "Client 2" in rendered
+    assert "client-001" not in rendered
+    assert "client-002" not in rendered
+    assert "demo.client.a@example.test" not in rendered
     assert "CONFIRM EMAIL ABC234" in rendered
     assert "simulated" in rendered
 
@@ -95,7 +98,7 @@ class ConfirmationRegistry:
                 "success": True, "message": "Simulated delivery accepted",
             }],
             "repeated_confirmation": False,
-            "contact_events_recorded": 1,
+            "campaign_members_updated": 1,
         })
 
 
@@ -110,7 +113,7 @@ def test_exact_confirmation_is_server_routed_without_an_llm_call():
     assert registry.bound[3] == "CONFIRM EMAIL ABC234"
     assert registry.executed == [("confirm_campaign_email", {})]
     assert "Campaign email result" in result
-    assert "Contact events recorded:** 1" in result
+    assert "Campaign members updated:** 1" in result
 
 
 class PreviewRegistry:
@@ -184,3 +187,51 @@ def test_prompt_requires_preview_consent_and_exact_confirmation():
     assert "prepare_campaign_email" in SYSTEM_PROMPT
     assert "exact confirmation phrase" in SYSTEM_PROMPT
     assert "email consent" in SYSTEM_PROMPT
+    assert "ask what name the adviser wants in the sign-off" in SYSTEM_PROMPT
+    assert "Never infer a sign-off" in SYSTEM_PROMPT
+
+
+def test_gwm_transport_matches_supplied_send_email_contract(monkeypatch):
+    captured = {}
+
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def read(self, limit):
+            assert limit == 64_000
+            return b"Email accepted"
+
+    def urlopen(outbound, timeout):
+        captured["request"] = outbound
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr("app.integrations.gwm_email.request.urlopen", urlopen)
+    transport = GWMEmailTransport(Settings(
+        _env_file=None,
+        email_delivery_mode="gwm",
+        gwm_email_base_url="https://email.example.test",
+        gwm_email_sender="advisor@example.test",
+        gwm_email_timeout_seconds=12,
+    ))
+    result = transport.send(
+        recipient="client@example.test",
+        subject="Your campaign update",
+        message="<p>Dear Client,</p>",
+    )
+    outbound = captured["request"]
+    headers = {name.lower(): value for name, value in outbound.header_items()}
+    assert outbound.full_url.endswith("/EmailNotification/SendEmail")
+    assert headers["accept"] == "text/plain"
+    assert json.loads(outbound.data) == {
+        "senderEmail": "advisor@example.test",
+        "recipientEmail": "client@example.test",
+        "subject": "Your campaign update",
+        "message": "<p>Dear Client,</p>",
+        "base64Attachment": "",
+        "contentIDs": [""],
+        "cc": "",
+    }
+    assert captured["timeout"] == 12
+    assert result.success is True

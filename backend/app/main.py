@@ -33,6 +33,10 @@ from app.campaigns.models import (
     campaign_revision_changed_fields,
 )
 from app.campaigns.clarification import PostgresCampaignClarificationStore
+from app.campaigns.conversation_context import (
+    is_campaign_email_turn,
+    resolve_campaign_context,
+)
 from app.campaigns.draft_repository import (
     CampaignDraftConfirmationConflict,
     CampaignDraftNotFound,
@@ -854,6 +858,16 @@ def chat_query(
     if history is None:
         raise HTTPException(status_code=404, detail="chat session not found")
 
+    campaign_context_id = payload.campaign_id
+    campaign_context_issue = None
+    if campaign_context_id is None and is_campaign_email_turn(message_content, history):
+        campaign_resolution = resolve_campaign_context(
+            history, scope, latest_message=message_content
+        )
+        campaign_context_id = campaign_resolution.campaign_id
+        if campaign_resolution.status in {"ambiguous", "not_found"}:
+            campaign_context_issue = campaign_resolution
+
     campaign_turn_candidate = is_campaign_turn_candidate(message_content)
     active_campaign_turn_candidate = is_active_campaign_turn_candidate(
         message_content
@@ -889,9 +903,11 @@ def chat_query(
     try:
         orchestration_context = {
             "scope": scope,
-            "campaign_id": payload.campaign_id,
+            "campaign_id": campaign_context_id,
             "session_id": session.session_id,
         }
+        if campaign_context_issue is not None:
+            orchestration_context["campaign_context_issue"] = campaign_context_issue
         if revision_context_checked:
             orchestration_context.update({
                 "current_draft": current_draft,

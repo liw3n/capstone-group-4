@@ -313,7 +313,10 @@ supplied, so this prototype does not provide production authentication.
 The adviser can ask PULSE to draft or revise an email for a selected campaign.
 The model supplies draft subject/body text to `prepare_campaign_email`; the
 server recalculates criteria matches and filters them by tenant, adviser ownership
-and `opt_in_email`. It stores the exact preview in `campaign_email_send` and
+and `opt_in_email`. Campaign names and IDs are resolved from the current turn or
+recent adviser-authored chat context. The adviser supplies the sign-off name;
+PULSE does not infer a name from an adviser identifier. The server stores the
+exact preview in `campaign_email_send` and
 returns its included and excluded recipients plus an expiring phrase such as
 `CONFIRM EMAIL ABC234`. Nothing is sent during preparation.
 
@@ -321,12 +324,12 @@ Only the exact phrase in the latest user message can invoke
 `confirm_campaign_email`. The server rechecks campaign access, matching and
 consent, then sends once per recipient through the configured transport. Local
 development defaults to `EMAIL_DELIVERY_MODE=mock`, which simulates accepted
-delivery without network access. The legacy confirmation implementation still
-depends on `campaign_email_send` and writes `mock_campaign_contact_event`; it
-needs a separate migration before it can run against a fresh setup using the
-new campaign tables. The performance tools read stored
-`campaign_member.email_send_count` values and do not claim that they prove
-delivery.
+delivery without network access. Successful outcomes create or update the
+corresponding `campaign_member`, set `emailed_at`, increment
+`email_send_count`, and increment the campaign's `email_send_runs` once for the
+batch. `campaign_email_send` retains the reviewed content, recipient snapshot,
+approval evidence and provider outcomes. The performance tools read stored
+member counts and do not claim that they prove delivery.
 
 `EMAIL_DELIVERY_MODE=gwm` selects the server-side GWM Core Email API adapter.
 Its base URL, sender and any API key must remain in backend environment settings.
@@ -337,6 +340,6 @@ owner.
 
 The schema follows the repository's rebuild convention rather than an in-place
 migration. After pulling this change into an environment that already has the
-old contact-event table, run `terraform destroy` from `backend/terraform`, then
+old email table, run `terraform destroy` from `backend/terraform`, then
 run `make provision` from the repository root. This recreates the local tables
-with email batch/channel fields and reloads the checked-in synthetic seed data.
+with the official UUID relationships and reloads the checked-in synthetic data.

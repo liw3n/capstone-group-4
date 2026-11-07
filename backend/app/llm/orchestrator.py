@@ -32,6 +32,7 @@ from app.campaigns.models import (
     PersistedCampaignDraftOptionSet,
 )
 from app.campaigns.email import CONFIRMATION_PATTERN, render_campaign_email
+from app.campaigns.conversation_context import CampaignContextResolution
 from app.campaigns.presentation import render_campaign_draft
 from app.campaigns.repository import RequestScope
 from app.config import Settings
@@ -150,14 +151,21 @@ that individual circumstances and suitability require adviser review. Use
 {{client_name}} for optional name personalisation. Supply recipient_ids only
 when the adviser explicitly selected a subset; otherwise let the server use all
 consenting criteria matches. The tool creates a reviewable preview and never
-sends. Present the server-rendered recipients, exclusions, content and exact
+sends. Before the first preview, ask what name the adviser wants in the sign-off
+unless they already supplied one in this conversation. Never infer a sign-off
+name from an adviser ID or invent one. Do not include a sign-off in body; pass
+the adviser's answer as signoff_name. For a sign-off-only revision, omit
+unchanged subject and body so the server reuses the latest stored preview.
+Resolve an accessible campaign from either its name or an ID supplied by the
+adviser. Never require the adviser to look up an internal campaign ID when a
+campaign name was supplied. Present the server-rendered recipients, exclusions, content and exact
 confirmation phrase without alteration. A revision requires a new preview.
 
 Email sending requires the adviser to enter the exact confirmation phrase from
 the latest preview. Never infer approval from words such as approve, proceed or
 send it, and never place a confirmation phrase in tool arguments. The server
 reads the latest user message, revalidates campaign ownership, matching and
-email consent, then records successful recipients as campaign contact events.
+email consent, then updates campaign membership email counts and the email audit.
 """
 
 CAMPAIGN_INTENT_EXTRACTION_PROMPT = """Extract only campaign intent explicitly
@@ -1466,6 +1474,7 @@ class ChatOrchestrator:
         current_draft: PersistedCampaignDraftArtifact | None = None,
         pending_draft_options: PersistedCampaignDraftOptionSet | None = None,
         revision_context_checked: bool = False,
+        campaign_context_issue: CampaignContextResolution | None = None,
     ) -> OrchestratorResult:
         if scope is not None:
             try:
@@ -1492,6 +1501,23 @@ class ChatOrchestrator:
             if not isinstance(payload, dict):
                 raise LLMProviderError("Campaign email tool returned an invalid result")
             return _answer(render_campaign_email(payload))
+        if campaign_context_issue is not None:
+            if campaign_context_issue.status == "ambiguous":
+                choices = "\n".join(
+                    f"- {name}" for name in campaign_context_issue.candidates
+                )
+                return _answer(
+                    "## Which campaign do you mean?\n\n"
+                    "I found more than one accessible active campaign in your "
+                    f"request:\n\n{choices}\n\n"
+                    "Reply with the campaign name or campaign ID."
+                )
+            if campaign_context_issue.status == "not_found":
+                return _answer(
+                    "## Campaign not found\n\n"
+                    "I could not find an accessible active campaign matching that "
+                    "ID. Check the campaign name or ID and try again."
+                )
         prompt = SYSTEM_PROMPT
         if scope is not None:
             prompt += "\nCurrent campaign context (server-validated): " + json.dumps(

@@ -194,11 +194,12 @@ def _request_metadata(ctx: Context) -> dict | None:
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False})
 def prepare_campaign_email(
-    subject: Annotated[str, Field(min_length=1, max_length=200)],
-    body: Annotated[str, Field(min_length=1, max_length=10_000)],
     ctx: Context,
     campaign_id: Annotated[str | None, Field(pattern=CAMPAIGN_ID_PATTERN, max_length=69)] = None,
     recipient_ids: Annotated[list[str] | None, Field(min_length=1, max_length=100)] = None,
+    subject: Annotated[str | None, Field(min_length=1, max_length=200)] = None,
+    body: Annotated[str | None, Field(min_length=1, max_length=10_000)] = None,
+    signoff_name: Annotated[str | None, Field(min_length=2, max_length=100)] = None,
 ) -> dict:
     """Prepare an expiring campaign-email preview for adviser review.
 
@@ -213,6 +214,7 @@ def prepare_campaign_email(
         recipient_ids=recipient_ids,
         subject=subject,
         body=body,
+        signoff_name=signoff_name,
     )
     return execute_prepare_campaign_email(arguments, _request_metadata(ctx))
 

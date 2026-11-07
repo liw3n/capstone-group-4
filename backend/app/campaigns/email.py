@@ -7,16 +7,19 @@ import json
 import re
 import secrets
 from typing import Any, Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.campaigns import clock
 from app.campaigns.matching import recommend_clients_for_campaign
 from app.campaigns.repository import (
     CAMPAIGN_ID_PATTERN,
     CampaignStorageUnavailable,
     RequestScope,
+    _storage_tenant_id,
     get_campaign,
+    list_active_campaigns,
     require_active,
 )
 from app.config import get_settings
@@ -33,8 +36,9 @@ class StrictModel(BaseModel):
 class PrepareCampaignEmailArguments(StrictModel):
     campaign_id: str | None = Field(default=None, pattern=CAMPAIGN_ID_PATTERN, max_length=69)
     recipient_ids: list[str] | None = Field(default=None, min_length=1, max_length=100)
-    subject: str = Field(min_length=1, max_length=200)
-    body: str = Field(min_length=1, max_length=10_000)
+    subject: str | None = Field(default=None, min_length=1, max_length=200)
+    body: str | None = Field(default=None, min_length=1, max_length=10_000)
+    signoff_name: str | None = Field(default=None, min_length=2, max_length=100)
 
     @field_validator("recipient_ids")
     @classmethod
@@ -50,11 +54,31 @@ class PrepareCampaignEmailArguments(StrictModel):
 
     @field_validator("subject", "body")
     @classmethod
-    def strip_content(cls, value: str) -> str:
+    def strip_content(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         value = value.strip()
         if not value:
             raise ValueError("email content must not be blank")
         return value
+
+    @field_validator("signoff_name")
+    @classmethod
+    def validate_signoff_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if any(character in "<>\r\n" or ord(character) < 32 for character in value):
+            raise ValueError("sign-off name contains unsupported characters")
+        value = " ".join(value.split())
+        if not any(character.isalpha() for character in value):
+            raise ValueError("sign-off name must contain a letter")
+        return value
+
+    @model_validator(mode="after")
+    def require_draft_change(self):
+        if self.subject is None and self.body is None and self.signoff_name is None:
+            raise ValueError("email content or a sign-off change is required")
+        return self
 
 
 class ConfirmCampaignEmailArguments(StrictModel):
@@ -96,12 +120,76 @@ def _context(metadata: dict | None) -> tuple[RequestScope, str, str | None]:
     return RequestScope(fa_id.strip(), tenant_id.strip()), session_id.strip(), latest_message
 
 
-def _campaign_id(arguments: PrepareCampaignEmailArguments, metadata: dict | None) -> str:
+def _campaign_id(
+    arguments: PrepareCampaignEmailArguments, metadata: dict | None
+) -> str | None:
     selected = metadata.get("campaign_id") if isinstance(metadata, dict) else None
     campaign_id = selected or arguments.campaign_id
+    if campaign_id is None:
+        return None
     if not isinstance(campaign_id, str) or re.fullmatch(CAMPAIGN_ID_PATTERN, campaign_id) is None:
-        raise ValueError("A selected campaign or valid campaign ID is required")
+        raise ValueError("A valid campaign ID is required")
     return campaign_id
+
+
+def _latest_email_preview(scope: RequestScope, session_id: str) -> dict | None:
+    with _write_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT campaign_id, subject, body_template, message_body, signoff_name
+            FROM campaign_email_send
+            WHERE tenant_id = %s AND fa_id = %s AND session_id = %s
+              AND status IN ('prepared', 'superseded', 'sent', 'partial', 'failed')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (_storage_tenant_id(scope), scope.fa_id, session_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _campaign_required(scope: RequestScope) -> dict:
+    campaigns = list_active_campaigns(scope, clock.current_date())
+    return {
+        "type": "campaign_email_clarification",
+        "prepared": False,
+        "error_code": "campaign_required",
+        "message": (
+            "Which campaign should I use for this email? Tell me its name or ID, "
+            "and I can prepare a reviewable email preview."
+        ),
+        "campaign_suggestions": [campaign.name for campaign in campaigns[:5]],
+    }
+
+
+def _with_adviser_signoff(body: str, signoff_name: str) -> tuple[str, str]:
+    """Return unsigned content and the server-managed reviewed body."""
+    resolved = (
+        body.strip()
+        .replace("{{advisor_name}}", signoff_name)
+        .replace("{advisor_name}", signoff_name)
+        .replace("{{advisor_email}}", "")
+        .replace("{advisor_email}", "")
+    )
+    trailing_names = (
+        r"(?:your\s+financial\s+adviser|your\s+financial\s+advisor|"
+        + re.escape(signoff_name)
+        + r")"
+    )
+    message_body = re.sub(
+        r"(?:\n\s*)+(?:(?:(?:kind|warm|best)\s+regards|regards|best|sincerely)"
+        r",?\s*(?:\n\s*)+)?"
+        + trailing_names
+        + r"(?:\s*\n\s*(?:financial\s+adviser|financial\s+advisor))?\s*$",
+        "",
+        resolved,
+        flags=re.IGNORECASE,
+    ).rstrip()
+    reviewed_body = (
+        f"{message_body}\n\nKind regards,\n\n"
+        f"{signoff_name}\nFinancial Adviser"
+    )
+    return message_body, reviewed_body
 
 
 def _confirmation_hash(batch_id: str, code: str) -> str:
@@ -124,33 +212,80 @@ def _load_recipients(
     requested_ids: list[str],
     eligible_ids: set[str],
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    valid_ids: list[str] = []
+    canonical_ids: dict[str, str] = {}
+    for contact_id in requested_ids:
+        try:
+            canonical = str(UUID(contact_id))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        canonical_ids[contact_id] = canonical
+        valid_ids.append(canonical)
+
     rows = connection.execute(
         """
-        SELECT contact_id, name, email, opt_in_email
-        FROM mock_client
-        WHERE tenant_id = %s AND fa_id = %s AND contact_id = ANY(%s::text[])
+        SELECT contact_id, full_name, email, opt_in_email,
+               assigned_to_user_id, created_by_user_id, is_deleted
+        FROM contact
+        WHERE tenant_id = %s AND contact_id = ANY(%s::uuid[])
         ORDER BY contact_id
         """,
-        (scope.tenant_id, scope.fa_id, requested_ids),
+        (_storage_tenant_id(scope), valid_ids),
     ).fetchall()
-    by_id = {row["contact_id"]: row for row in rows}
+    by_id = {str(row["contact_id"]): row for row in rows}
     included: list[dict[str, str]] = []
     excluded: list[dict[str, str]] = []
     for contact_id in requested_ids:
-        row = by_id.get(contact_id)
+        canonical = canonical_ids.get(contact_id)
+        row = by_id.get(canonical) if canonical else None
         if row is None:
             excluded.append({"contact_id": contact_id, "reason": "not accessible to this adviser"})
-        elif contact_id not in eligible_ids:
-            excluded.append({"contact_id": contact_id, "reason": "does not match campaign criteria"})
+        elif row["is_deleted"] or not (
+            str(row["assigned_to_user_id"] or "") == scope.fa_id
+            or str(row["created_by_user_id"]) == scope.fa_id
+        ):
+            excluded.append({"contact_id": contact_id, "reason": "not accessible to this adviser"})
+        elif canonical not in eligible_ids:
+            excluded.append({
+                "contact_id": contact_id,
+                "name": row["full_name"],
+                "reason": "does not match campaign criteria",
+            })
         elif not row["opt_in_email"]:
-            excluded.append({"contact_id": contact_id, "name": row["name"], "reason": "email consent is not recorded"})
+            excluded.append({
+                "contact_id": contact_id,
+                "name": row["full_name"],
+                "reason": "email consent is not recorded",
+            })
+        elif not row["email"] or not str(row["email"]).strip():
+            excluded.append({
+                "contact_id": contact_id,
+                "name": row["full_name"],
+                "reason": "email address is missing",
+            })
         else:
             included.append({
-                "contact_id": contact_id,
-                "name": row["name"],
-                "email": row["email"],
+                "contact_id": canonical,
+                "name": row["full_name"],
+                "email": str(row["email"]),
             })
     return included, excluded
+
+
+_SYNTHETIC_CLIENT_ID_PATTERN = re.compile(r"^client[-_]?0*(\d+)$", re.IGNORECASE)
+
+
+def _recipient_display_name(item: dict) -> str:
+    """Return an adviser-safe name without exposing raw contact identifiers."""
+    name = item.get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    contact_id = item.get("contact_id")
+    if isinstance(contact_id, str):
+        match = _SYNTHETIC_CLIENT_ID_PATTERN.fullmatch(contact_id.strip())
+        if match:
+            return f"Client {int(match.group(1))}"
+    return "Unavailable recipient"
 
 
 def prepare_campaign_email(
@@ -158,16 +293,68 @@ def prepare_campaign_email(
     metadata: dict | None,
 ) -> dict:
     scope, session_id, _ = _context(metadata)
+    previous = _latest_email_preview(scope, session_id)
     campaign_id = _campaign_id(arguments, metadata)
+    if campaign_id is None and previous is not None:
+        campaign_id = str(previous["campaign_id"])
+    if campaign_id is None:
+        return _campaign_required(scope)
     campaign = get_campaign(campaign_id, scope)
     require_active(campaign)
+    previous_for_campaign = (
+        previous
+        if previous is not None and str(previous["campaign_id"]) == campaign_id
+        else None
+    )
+    subject = arguments.subject or (
+        str(previous_for_campaign["subject"]) if previous_for_campaign else None
+    )
+    message_body = arguments.body or (
+        str(previous_for_campaign["message_body"] or previous_for_campaign["body_template"])
+        if previous_for_campaign
+        else None
+    )
+    if subject is None or message_body is None:
+        return {
+            "type": "campaign_email_clarification",
+            "prepared": False,
+            "error_code": "email_content_required",
+            "message": (
+                "Please provide both the email subject and message before I prepare "
+                "the first reviewable preview for this campaign."
+            ),
+            "campaign_suggestions": [],
+        }
+    signoff_name = arguments.signoff_name or (
+        str(previous_for_campaign["signoff_name"])
+        if previous_for_campaign and previous_for_campaign["signoff_name"]
+        else None
+    )
+    if signoff_name is None:
+        return {
+            "type": "campaign_email_clarification",
+            "prepared": False,
+            "error_code": "signoff_name_required",
+            "message": "What name would you like me to use in the email sign-off?",
+            "campaign_suggestions": [],
+        }
+    message_body, reviewed_body = _with_adviser_signoff(message_body, signoff_name)
+    if not message_body:
+        return {
+            "type": "campaign_email_clarification",
+            "prepared": False,
+            "error_code": "email_message_required",
+            "message": "Please provide an email message before I prepare the preview.",
+            "campaign_suggestions": [],
+        }
     eligible_ids = _eligible_recipient_ids(campaign_id, scope)
     requested_ids = arguments.recipient_ids or sorted(eligible_ids)
-    batch_id = "email-" + uuid4().hex
+    batch_id = str(uuid4())
     code = _confirmation_code()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
 
     with _write_connection() as connection:
+        tenant_id = _storage_tenant_id(scope)
         included, excluded = _load_recipients(
             connection, scope, requested_ids, eligible_ids
         )
@@ -187,19 +374,20 @@ def prepare_campaign_email(
             WHERE tenant_id = %s AND fa_id = %s AND session_id = %s
               AND campaign_id = %s AND status = 'prepared'
             """,
-            (scope.tenant_id, scope.fa_id, session_id, campaign_id),
+            (tenant_id, scope.fa_id, session_id, campaign_id),
         )
         connection.execute(
             """
             INSERT INTO campaign_email_send (
                 tenant_id, send_batch_id, campaign_id, fa_id, session_id,
-                subject, body_template, recipient_ids, recipient_snapshot,
+                subject, message_body, signoff_name, body_template,
+                recipient_ids, recipient_snapshot,
                 confirmation_hash, expires_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
             """,
             (
-                scope.tenant_id, batch_id, campaign_id, scope.fa_id, session_id,
-                arguments.subject, arguments.body,
+                tenant_id, batch_id, campaign_id, scope.fa_id, session_id,
+                subject, message_body, signoff_name, reviewed_body,
                 [item["contact_id"] for item in included], json.dumps(included),
                 _confirmation_hash(batch_id, code), expires_at,
             ),
@@ -212,8 +400,9 @@ def prepare_campaign_email(
         "send_batch_id": batch_id,
         "campaign_id": campaign_id,
         "campaign_name": campaign.name,
-        "subject": arguments.subject,
-        "body": arguments.body,
+        "subject": subject,
+        "body": reviewed_body,
+        "signoff_name": signoff_name,
         "recipients": included,
         "excluded_recipients": excluded,
         "confirmation_phrase": f"CONFIRM EMAIL {code}",
@@ -243,6 +432,7 @@ def confirm_campaign_email(
     code = match.group(1)
     now = datetime.now(timezone.utc)
     with _write_connection() as connection:
+        tenant_id = _storage_tenant_id(scope)
         batch = connection.execute(
             """
             SELECT * FROM campaign_email_send
@@ -252,7 +442,7 @@ def confirm_campaign_email(
             LIMIT 1
             FOR UPDATE
             """,
-            (scope.tenant_id, scope.fa_id, session_id),
+            (tenant_id, scope.fa_id, session_id),
         ).fetchone()
         if batch is None or not secrets.compare_digest(
             batch["confirmation_hash"], _confirmation_hash(batch["send_batch_id"], code)
@@ -275,7 +465,7 @@ def confirm_campaign_email(
         if batch["expires_at"] <= now:
             connection.execute(
                 "UPDATE campaign_email_send SET status = 'invalidated' WHERE tenant_id = %s AND send_batch_id = %s",
-                (scope.tenant_id, batch["send_batch_id"]),
+                (tenant_id, batch["send_batch_id"]),
             )
             return {
                 "type": "campaign_email_result",
@@ -284,16 +474,19 @@ def confirm_campaign_email(
                 "error": "The email preview expired; prepare and review a new preview",
             }
 
-        campaign = get_campaign(batch["campaign_id"], scope)
+        campaign_id = str(batch["campaign_id"])
+        campaign = get_campaign(campaign_id, scope)
         require_active(campaign)
-        eligible_ids = _eligible_recipient_ids(batch["campaign_id"], scope)
+        eligible_ids = _eligible_recipient_ids(campaign_id, scope)
         recipients, excluded = _load_recipients(
-            connection, scope, list(batch["recipient_ids"]), eligible_ids
+            connection, scope,
+            [str(contact_id) for contact_id in batch["recipient_ids"]],
+            eligible_ids,
         )
         if excluded or len(recipients) != len(batch["recipient_ids"]):
             connection.execute(
                 "UPDATE campaign_email_send SET status = 'invalidated' WHERE tenant_id = %s AND send_batch_id = %s",
-                (scope.tenant_id, batch["send_batch_id"]),
+                (tenant_id, batch["send_batch_id"]),
             )
             return {
                 "type": "campaign_email_result",
@@ -304,7 +497,7 @@ def confirm_campaign_email(
             }
         connection.execute(
             "UPDATE campaign_email_send SET status = 'sending' WHERE tenant_id = %s AND send_batch_id = %s",
-            (scope.tenant_id, batch["send_batch_id"]),
+            (tenant_id, batch["send_batch_id"]),
         )
         sender = transport or build_email_transport(get_settings())
         results = []
@@ -330,17 +523,30 @@ def confirm_campaign_email(
         for result in successful:
             connection.execute(
                 """
-                INSERT INTO mock_campaign_contact_event (
-                    tenant_id, contact_event_id, campaign_id, fa_id, contact_id,
-                    contacted_at, engagement_status, send_batch_id, channel, delivery_mode
-                ) VALUES (%s, %s, %s, %s, %s, %s, 0, %s, 'email', %s)
-                ON CONFLICT (tenant_id, send_batch_id, contact_id) DO NOTHING
+                INSERT INTO campaign_member (
+                    tenant_id, campaign_id, contact_id, added_by_user_id,
+                    emailed_at, email_send_count
+                ) VALUES (%s, %s, %s, %s, %s, 1)
+                ON CONFLICT (tenant_id, campaign_id, contact_id)
+                    WHERE is_deleted = FALSE
+                DO UPDATE SET
+                    emailed_at = EXCLUDED.emailed_at,
+                    email_send_count = campaign_member.email_send_count + 1
                 """,
                 (
-                    scope.tenant_id, "email-event-" + uuid4().hex,
-                    batch["campaign_id"], scope.fa_id, result["contact_id"], now,
-                    batch["send_batch_id"], sender.delivery_mode,
+                    tenant_id, batch["campaign_id"], result["contact_id"],
+                    scope.fa_id, now,
                 ),
+            )
+        if successful:
+            connection.execute(
+                """
+                UPDATE campaign
+                SET email_send_runs = email_send_runs + 1
+                WHERE tenant_id = %s AND campaign_id = %s
+                  AND created_by_user_id = %s AND is_deleted = FALSE
+                """,
+                (tenant_id, batch["campaign_id"], scope.fa_id),
             )
         connection.execute(
             """
@@ -348,7 +554,7 @@ def confirm_campaign_email(
             SET status = %s, provider_results = %s::jsonb, sent_at = %s
             WHERE tenant_id = %s AND send_batch_id = %s
             """,
-            (status, json.dumps(results), now, scope.tenant_id, batch["send_batch_id"]),
+            (status, json.dumps(results), now, tenant_id, batch["send_batch_id"]),
         )
         batch = {**batch, "status": status, "sent_at": now}
         return _result_payload(batch, results)
@@ -360,19 +566,19 @@ def _result_payload(batch: dict, results: list[dict], repeated: bool = False) ->
     return {
         "type": "campaign_email_result",
         "data_source": "synthetic",
-        "send_batch_id": batch["send_batch_id"],
-        "campaign_id": batch["campaign_id"],
+        "send_batch_id": str(batch["send_batch_id"]),
+        "campaign_id": str(batch["campaign_id"]),
         "status": batch["status"],
         "sent": bool(successful),
         "successful_count": len(successful),
         "failed_count": len(failed),
         "results": results,
         "repeated_confirmation": repeated,
-        "contact_events_recorded": len(successful),
+        "campaign_members_updated": len(successful),
     }
 
 
-def render_campaign_email(payload: dict) -> str:
+def _legacy_render_campaign_email(payload: dict) -> str:
     if payload.get("error"):
         excluded = payload.get("excluded_recipients", [])
         detail = "".join(
@@ -417,5 +623,59 @@ def render_campaign_email(payload: dict) -> str:
         f"**Successful:** {payload['successful_count']}  \n"
         f"**Failed:** {payload['failed_count']}  \n"
         f"**Contact events recorded:** {payload['contact_events_recorded']}\n\n"
+        f"{lines}{repeated}"
+    )
+
+
+def render_campaign_email(payload: dict) -> str:
+    """Render email results without exposing internal contact identifiers."""
+    if payload.get("type") == "campaign_email_clarification":
+        suggestions = payload.get("campaign_suggestions", [])
+        choices = "".join(f"\n- {name}" for name in suggestions)
+        suggestion_text = f"\n\nAvailable campaigns include:{choices}" if choices else ""
+        return "## More information needed\n\n" + payload["message"] + suggestion_text
+    if payload.get("error"):
+        detail = "".join(
+            f"\n- {_recipient_display_name(item)}: {item['reason']}"
+            for item in payload.get("excluded_recipients", [])
+        )
+        return f"## Campaign email not sent\n\n{payload['error']}{detail}"
+    if payload.get("type") == "campaign_email_preview":
+        recipients = "\n".join(f"- {item['name']}" for item in payload["recipients"])
+        excluded = "\n".join(
+            f"- {_recipient_display_name(item)} — {item['reason']}"
+            for item in payload.get("excluded_recipients", [])
+        )
+        excluded_section = f"\n\n### Excluded recipients\n\n{excluded}" if excluded else ""
+        mode = "simulated" if payload["delivery_mode"] == "mock" else "GWM Core Email API"
+        return (
+            "## Review campaign email\n\n"
+            f"**Campaign:** {payload['campaign_name']}\n\n"
+            f"**Delivery:** {mode}\n\n"
+            f"**Subject:** {payload['subject']}\n\n"
+            "### Message\n\n"
+            f"{payload['body']}\n\n"
+            f"### Recipients ({len(payload['recipients'])})\n\n{recipients}"
+            f"{excluded_section}\n\n"
+            "Review the subject, message, and recipients. Ask me for any edits, or "
+            "proceed to the final confirmation step by entering:\n\n"
+            f"`{payload['confirmation_phrase']}`\n\n"
+            f"This confirmation expires at {payload['expires_at']}."
+        )
+    results = payload.get("results", [])
+    lines = "\n".join(
+        f"- {item['name']}: {'sent' if item['success'] else 'failed'} — {item['message']}"
+        for item in results
+    )
+    repeated = (
+        " This is the saved result; no email was sent again."
+        if payload.get("repeated_confirmation") else ""
+    )
+    return (
+        "## Campaign email result\n\n"
+        f"**Status:** {payload['status']}\n\n"
+        f"**Successful:** {payload['successful_count']}  \n"
+        f"**Failed:** {payload['failed_count']}  \n"
+        f"**Campaign members updated:** {payload['campaign_members_updated']}\n\n"
         f"{lines}{repeated}"
     )
