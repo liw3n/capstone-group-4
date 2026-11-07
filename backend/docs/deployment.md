@@ -100,6 +100,48 @@ append a new migration file to the manifest for changes. This is a small demo
 runner, not a general production migration framework. Keep migrations compatible
 with the prior app version while Render rolls out a new image.
 
+### Seed-history repair — 7 November 2026
+
+The baseline `mock_contact.sql` and `mock_campaign_member.sql` are restored
+byte-for-byte to deployed commit `2ab0408`. Editing those already-applied files
+caused checksum rejection when deploying the recommendation feature. Never
+delete or rewrite `pulse_deploy_migration` entries to bypass that protection.
+
+Two new immutable files in `tables/mock_data/`, listed in `SEED_UPDATES` in
+`deploy/database.py`, carry the changes:
+
+- `20261107_add_demo_contacts.sql`: adds synthetic clients 37–100 without
+  overwriting existing IDs; fills Demo Client J's missing birth date only when
+  the guarded baseline fields and creation/update timestamps remain unchanged.
+- `20261107_add_demo_members.sql`: adds the two intended memberships only if
+  parents are present/not deleted and no prior membership (even soft-deleted)
+  exists. No outreach is sent.
+
+Fresh demos run baseline seeds followed by these updates. Existing databases
+with all baseline seed ledger entries receive updates even with
+`DEMO_SEED_ON_START=false`; unseeded databases do not receive synthetic data.
+Each update is checksummed and runs once under the existing transaction/lock.
+`Staged` log lines precede commit; only `Database bootstrap committed successfully`
+confirms persistence. Failure rolls back the whole attempt, including new tables.
+Errors now distinguish settings, unavailable DB operations, changed manifest files
+and SQL execution failures without printing raw provider errors or credentials.
+
+Local `setup.sh` includes the new idempotent SQL after baseline seeds, but remains
+the separate reprovisioning workflow (not the hosted once-only ledger workflow).
+For future data changes, append another `SEED_UPDATES` entry rather than editing
+any applied file, and test both an empty database and an existing seeded database.
+This repair has not yet been deployed to Render. Commit/push it and manually
+deploy the reviewed commit, then check commit confirmation and `/ready`.
+Do not reset Supabase. Databases initialized from a different edited baseline
+require separate reconciliation; this repair targets the original deployed ledger.
+
+Repair verification: 393 backend tests passed, 47 unrelated opt-in tests skipped;
+14 deployment tests include PostgreSQL 16 fresh setup, original-ledger upgrades,
+once-only updates, edit/deletion preservation, rollback and checksum/redaction
+checks. All 32 frontend tests, type checking/build, Python compilation, shell
+syntax and Terraform format/validation passed. Existing frontend bundle and
+test WebSocket-port warnings remain. Only a disposable local DB was used.
+
 Do not run backend/setup.sh on Render or point bootstrap at company/unrelated
 databases. No reset endpoint or destructive reset command is provided. The
 official campaign and campaign_member schemas are unchanged.

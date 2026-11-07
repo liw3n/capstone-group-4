@@ -39,6 +39,10 @@ shell access are unavailable. Seeding is an explicit Blueprint setting with
 once-only database bookkeeping. An application rollback does not roll back SQL.
 Changes to already applied SQL fail checksum validation and require a new
 explicit migration file; do not delete the ledger to bypass the check.
+The 7 November seed-history repair restores the original deployed seed files and
+adds two versioned `SEED_UPDATES` for additional synthetic contacts/members.
+Existing fully seeded databases receive these once-only updates even when initial
+seeding is disabled. See deployment.md for guarded edits and rollout instructions.
 
 Both retrieval and campaign-preview signing secrets are stable and generated
 through Render. `/live` and `/ready` alone bypass shared authentication so Render
