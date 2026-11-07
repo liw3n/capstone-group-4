@@ -65,6 +65,9 @@ from app.campaigns.repository import (
     RequestScope, get_campaign, require_active,
 )
 from app.campaigns.validation import CampaignDraftPolicyError
+from app.campaigns.recommendation_lists import (
+    RecommendationListExpired, RecommendationListNotFound, load_list,
+)
 from app.contacts.catalog import (
     ContactStorageUnavailable,
     create_contact,
@@ -321,6 +324,21 @@ def _contact_scope(fa_id: str) -> RequestScope:
     if not advisor_id:
         raise HTTPException(status_code=400, detail="fa_id is required for contacts")
     return RequestScope(advisor_id)
+
+
+@app.get("/chat/recommendation-lists/{list_id}")
+@app.get("/api/chat/recommendation-lists/{list_id}")
+def recommendation_list_download(
+    list_id: UUID, fa_id: str = Query(min_length=1),
+) -> JSONResponse:
+    try:
+        payload = load_list(_contact_scope(fa_id), list_id)
+    except RecommendationListNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RecommendationListExpired as exc:
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
+    # The browser builds XLSX directly from this snapshot; this route never calls Groq.
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/contacts", response_model=list[ContactPayload])

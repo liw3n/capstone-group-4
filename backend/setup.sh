@@ -148,13 +148,21 @@ printf 'DATABASE_URL=%s\n' "$database_url" >> "$env_temp_file"
 mv "$env_temp_file" "$env_file"
 
 run_sql_file() {
-    PGPASSWORD=testpassword psql \
-        --host "$rds_host" \
-        --port "$rds_port" \
-        --username postgres \
-        --dbname pulse \
-        -v ON_ERROR_STOP=1 \
-        --file "$1"
+    local psql_args=(
+        --host "$rds_host"
+        --port "$rds_port"
+        --username postgres
+        --dbname pulse
+        -v ON_ERROR_STOP=1
+    )
+    if [[ "$1" == "$BACKEND_DIR/tables/create/create_campaign_member.sql" ]]; then
+        # Keep the supplied CRM definition unchanged, but make its index safe
+        # to reapply. pipefail and ON_ERROR_STOP still propagate real SQL errors.
+        sed 's/^CREATE UNIQUE INDEX ux_campaign_member_tenant_campaign_contact[[:space:]]*$/CREATE UNIQUE INDEX IF NOT EXISTS ux_campaign_member_tenant_campaign_contact/' \
+            "$1" | PGPASSWORD=testpassword psql "${psql_args[@]}"
+    else
+        PGPASSWORD=testpassword psql "${psql_args[@]}" --file "$1"
+    fi
 }
 
 ##### Create tables before dependent tables #####
@@ -168,6 +176,7 @@ create_scripts=(
     create_campaign.sql
     create_contact.sql
     create_campaign_member.sql
+    create_campaign_recommendation_lists.sql
 )
 for table_script in "${create_scripts[@]}"; do
     if [[ ! -f "$create_dir/$table_script" ]]; then

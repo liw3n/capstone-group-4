@@ -6,6 +6,29 @@ let server;
 let api;
 const originalWindow = globalThis.window;
 
+test('full client download uses a separate adviser-scoped request with no chat/provider call', async (t) => {
+  const listId = '66666666-6666-4666-8666-666666666666';
+  const requests = [];
+  const controller = new AbortController();
+  const snapshot = { clients: Array.from({ length: 150 }, (_, i) => ({ contact_id: String(i) })) };
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    requests.push({ url, options });
+    return new Response(JSON.stringify(snapshot), { status: 200 });
+  });
+  assert.deepEqual(await api.getRecommendationList(listId, 'adviser-a', controller.signal), snapshot);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, `/api/chat/recommendation-lists/${listId}?fa_id=adviser-a`);
+  assert.equal(requests[0].options.signal, controller.signal);
+  assert.equal(requests[0].options.body, undefined);
+});
+
+test('expired client download reports the backend recovery message', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response(
+    JSON.stringify({ detail: 'This list has expired. Request recommendations again.' }), { status: 410 }));
+  await assert.rejects(api.getRecommendationList('list', 'adviser-a'),
+    (error) => error.status === 410 && error.message.includes('expired'));
+});
+
 before(async () => {
   globalThis.window = { location: { origin: 'http://localhost:3000' } };
   server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' });

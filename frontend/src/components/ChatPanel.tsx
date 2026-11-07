@@ -414,7 +414,7 @@ export default function ChatPanel({
                         }`}
                       >
                         {fromAssistant ? (
-                          <AssistantMessage content={message.message_content} />
+                          <AssistantMessage content={message.message_content} advisorId={advisorId} />
                         ) : (
                           <p className="whitespace-pre-wrap break-words">{message.message_content}</p>
                         )}

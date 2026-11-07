@@ -1,5 +1,53 @@
 # PULSE Chat API contract
 
+## Recommendation previews and full-result downloads
+
+`recommend_clients_for_campaign` keeps model-selected tool routing unchanged.
+Its MCP result has uncapped `evaluated_count`, `matched_count`,
+`incomplete_count`, `excluded_count`, and at most 10 `clients` and 10
+`incomplete_clients`. The optional `limit` defaults to 10; legacy integers
+1–100 remain valid but values above 10 are clamped. `returned_count`,
+`truncated`, `incomplete_truncated` and `preview_limit` describe the preview.
+The counts reflect the whole evaluation, including matches beyond 100.
+
+If either preview is truncated, the full result is stored in the project-owned
+`campaign_recommendation_lists` table. The tool returns its UUID `list_id` and
+UTC `expires_at`; otherwise both fields are null. Full arrays never enter the
+model prompt or saved chat history. Groq writes the visible summary and preview.
+The backend preserves its answer and appends only the verified download action,
+`#recommendation-excel-{list_id}`, and an expiry note when available. It does not
+append another client table or require JSON commentary. Downloads are deduplicated
+per campaign; an already-present correct download link is not appended twice.
+The browser handles this marker as a download action, not an external URL.
+Snapshot storage failure returns a safe `storage_unavailable` tool error.
+
+`GET /chat/recommendation-lists/{list_id}` and
+`GET /api/chat/recommendation-lists/{list_id}` require a UUID path parameter and
+nonblank `fa_id` query parameter. The API derives its existing prototype tenant
+scope; it accepts no tenant override. Example:
+
+```text
+GET /api/chat/recommendation-lists/66666666-6666-4666-8666-666666666666?fa_id=synthetic-adviser
+```
+
+Success returns `200`, `Cache-Control: no-store`, and the full original
+recommendation JSON with `list_id` and `expires_at`. It contains every matching
+and incomplete profile with ID, name and reasons/missing fields; no email
+addresses, raw birth dates or portfolio records are added. The browser uses
+this response to generate an XLSX with Summary, Matched clients and Incomplete
+profiles sheets. It never calls the LLM to download or generate Excel.
+
+Responses: `404` for unknown/cross-scope IDs or inaccessible campaigns; `410`
+for expired snapshots or contacts that are no longer accessible; `422` for
+invalid UUID/missing adviser; `503` for unavailable snapshot/CRM storage.
+Snapshots expire after 24 hours and are not a durable saved-audience feature.
+Current adviser/campaign/contact access is rechecked before download. Eligibility
+and consent must be freshly reviewed before any later outreach. Existing shared
+demo authentication also gates this route, but `fa_id` still is not verified
+individual identity. Local `make provision` and the hosted bootstrap both
+include the additive table script. A direct SQL alternative for an already
+running local database is documented in `campaign_recommendations.md`.
+
 ## Hosted demo access and health
 
 With `DEMO_AUTH_ENABLED=true`, assets and API routes (including direct and /api
@@ -398,7 +446,8 @@ caller-supplied and the tenant is fixed to `pulse-demo`; this is not authenticat
 
 ### MCP: recommend_clients_for_campaign
 
-Arguments: `campaign_id` (required) and `limit` (strict integer, 1-100, default 100).
+Arguments: `campaign_id` (required) and `limit` (strict integer, 1-100, default 10;
+values above 10 remain accepted for compatibility but the preview is capped at 10).
 Context is injected by FastMCP and absent from the model-facing schema. This is
 the pre-contact audience tool: use it to find or filter potential clients who
 meet campaign eligibility criteria. It returns synthetic criteria matches,
@@ -407,8 +456,11 @@ without ranking, checking reply status, sending outreach or changing CRM data.
 Result keys: `data_source`, `campaign_id`, `campaign_name`, `as_of_date`,
 `evaluated_count`, `matched_count`, `clients` (contact_id, name, reasons),
 `returned_count`, `truncated`, `incomplete_count`, `incomplete_clients`
-(contact_id, name, missing_fields), `incomplete_truncated`, `excluded_count`
-and `disclaimer`. Counts refer only to that adviser's tenant-scoped book.
+(contact_id, name, missing_fields), `incomplete_truncated`, `excluded_count`,
+`preview_limit`, nullable `list_id`/`expires_at` and `disclaimer`. Counts refer
+only to that adviser's tenant-scoped book. Both client arrays are bounded at
+10 before the MCP result reaches the model. Truncated results create a private
+backend snapshot for the download route described above; CRM rows are unchanged.
 
 Domain failures return `data_source: synthetic`, `error` and `error_code`
 (`missing_context`, `campaign_unavailable`, `campaign_inactive`, or

@@ -15,6 +15,15 @@ before(async () => {
 after(async () => { await server?.close(); });
 const render = (content) => renderToStaticMarkup(createElement(AssistantMessage, { content }));
 
+test('recommendation download renders with adviser context without embedding the full list', () => {
+  const content = '[Download full results (.xlsx)](#recommendation-excel-66666666-6666-4666-8666-666666666666)';
+  const html = renderToStaticMarkup(createElement(AssistantMessage, { content, advisorId: 'adviser-a' }));
+  assert.ok(html.includes('Download full results (.xlsx)'));
+  assert.ok(html.includes('#recommendation-excel-66666666-6666-4666-8666-666666666666'));
+  assert.ok(!html.includes('data-campaign-export'));
+  assert.ok(render(content).includes('Sign in as an adviser'));
+});
+
 const recommendation = `**Recommended clients for Legacy Protection Refresh**
 
 | Contact ID | Client name | Reasons for match |

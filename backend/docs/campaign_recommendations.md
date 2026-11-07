@@ -1,5 +1,84 @@
 # Synthetic campaign recommendation prototype
 
+## Large results and Excel downloads (7 November 2026)
+
+The model still chooses `resolve_campaign` and `recommend_clients_for_campaign`.
+Matching evaluates the complete accessible contact book, without the legacy
+100-row output cap. Before the recommendation result leaves MCP, the handler
+keeps the full matching and incomplete lists in PostgreSQL when a preview is
+truncated. Groq receives only counts, at most 10 matching clients and 10
+incomplete profiles, plus an opaque list ID and expiry. A legacy `limit` up to
+100 is accepted but cannot enlarge either model-facing preview beyond 10.
+Repeated calls do not provide an offset for enumerating the full book.
+
+The orchestrator continues the normal model tool loop. Groq writes the visible
+answer, including counts, bounded client previews, reasons and incomplete-profile
+details. The backend keeps that answer and appends only the verified download
+action and expiry note; it does not add its own summary or client tables. This
+prevents two versions of the same preview appearing. Repeated calls for the same
+campaign produce at most one download footer. No separate commentary-generation
+call or JSON commentary format is required. Other requested feature answers
+remain in Groq's reply. Full results are never added to chat history. This bounds
+the recommendation payload; it does not impose a global token limit on
+accumulated conversation history.
+
+The download fetches the snapshot directly through FastAPI, independently of
+Groq. The browser uses the existing XLSX library to create Summary, Matched
+clients and Incomplete profiles worksheets. It exports all stored rows,
+including rows beyond 100; it does not reconstruct results from chat Markdown.
+Names and reasons are stored as spreadsheet text, not formulas. Counts describe
+the snapshot's original evaluation date, not a fresh eligibility assessment.
+
+The project-owned `campaign_recommendation_lists` table stores synthetic JSON
+results scoped by tenant and adviser, plus optional chat session, campaign ID,
+creation time and expiry. This is an application cache, not a change to official
+CRM tables or a durable audience-selection workflow. Results expire after 24
+hours and expired rows are cleaned up when that adviser stores another list.
+Downloads check adviser/tenant scope and current campaign/contact access;
+expiry or contact reassignment requires a fresh recommendation. A copied list
+ID alone does not bypass those checks. Existing caller-supplied adviser IDs
+remain a prototype mechanism, not real authentication.
+
+For local working copies, `make provision` now creates the snapshot table
+automatically in its ordered table-creation phase, before loading mock data.
+Fresh and existing databases use the same command. Its campaign-member SQL
+adapter adds `IF NOT EXISTS` only to the supplied unique-index statement at
+execution time, leaving the checked-in CRM definition unchanged. Other SQL
+errors still stop provisioning, and reruns preserve existing rows and snapshots.
+
+If the database is already running and only this additive table is needed, the
+direct SQL command remains an optional alternative:
+
+```bash
+(
+  cd backend
+  set -a
+  source .env
+  set +a
+  psql "$DATABASE_URL" --no-psqlrc -v ON_ERROR_STOP=1 \
+    -f tables/create/create_campaign_recommendation_lists.sql
+)
+```
+
+The hosted migration runner includes the new script automatically; existing
+applied SQL files are unchanged by this feature. If snapshot persistence fails,
+the tool returns an explicit storage error instead of presenting a partial list
+as complete. Small, untruncated results do not require snapshot storage.
+Email preparation still has its own criteria/consent/confirmation checks; this
+phase does not add email-list reuse, a saved-audience screen or automatic sends.
+
+Automated checks cover 0/1/10/150 matches, more than 10 incomplete profiles,
+bounded results through real MCP into a fake provider, both download route
+forms, ownership and expiry, formula-safe XLSX contents and rows beyond 100.
+`test_recommendation_lists_postgres.py` additionally exercises disposable real
+PostgreSQL schemas when `PULSE_RECOMMENDATION_TEST_DATABASE_URL` is set.
+`test_local_provision.py` checks table ordering, index guarding and failure
+propagation. Its opt-in PostgreSQL check runs setup's complete SQL phase twice
+in a disposable schema, verifies snapshots and adviser edits survive, and checks
+that the existing unique index is retained rather than dropped/recreated.
+Set `PULSE_PROVISION_TEST_DATABASE_URL` to a disposable local `pulse` database
+to enable that check. It does not run Terraform/FakeCloud or write `.env`.
+
 ## Runtime dates (7 November 2026)
 
 Campaign name lookup, recommendation activity checks and client ages now use
@@ -224,8 +303,10 @@ arguments can remain unchanged.
   incomplete list. Missing-first behavior matches `targeting.ts`.
 - Results use stable contact-ID order, with explanations for each active matched
   dimension. No financial suitability score is invented.
-- Default limit is 100, returning all current eligible seeded clients. Both
-  lists are bounded; total counts remain uncapped and truncation flags are explicit.
+- The MCP chat preview defaults to 10 per group. Total counts remain uncapped
+  and truncation flags are explicit. Full truncated results are downloadable
+  through an adviser-scoped backend snapshot; the internal legacy helper's
+  100-row default is not the chat/export data source.
 - Evaluated = matched + incomplete + excluded; excluded counts refer only to
   in-scope clients that failed the criteria.
 

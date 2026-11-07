@@ -161,6 +161,27 @@ export function listChatSessions(faId: string, signal?: AbortSignal): Promise<Ch
   return request<ChatSession[]>(apiUrl('/api/chat/sessions', { fa_id: faId }), { signal });
 }
 
+export interface RecommendationList {
+  list_id: string;
+  campaign_name: string;
+  as_of_date: string;
+  evaluated_count: number;
+  matched_count: number;
+  incomplete_count: number;
+  excluded_count: number;
+  expires_at: string;
+  disclaimer: string;
+  clients: Array<{ contact_id: string; name: string; reasons: string[] }>;
+  incomplete_clients: Array<{ contact_id: string; name: string; missing_fields: string[] }>;
+}
+
+export function getRecommendationList(listId: string, faId: string, signal?: AbortSignal): Promise<RecommendationList> {
+  return request<RecommendationList>(
+    apiUrl(`/api/chat/recommendation-lists/${encodeURIComponent(listId)}`, { fa_id: faId }),
+    { signal },
+  );
+}
+
 export async function createChatSession(
   faId: string,
   signal?: AbortSignal,

@@ -9,6 +9,13 @@ FastAPI backend for the PULSE chat popup. The service calls Groq through its
 OpenAI-compatible API, discovers and invokes tools through FastMCP over HTTP,
 and persists sessions and messages in PostgreSQL.
 
+Large recommendation results now stay in an adviser-scoped PostgreSQL snapshot;
+chat/Groq receives at most 10 matches and 10 incomplete profiles, while Excel
+downloads contain all results. `make provision` creates the snapshot table for
+local copies; see [the recommendation guide](docs/campaign_recommendations.md#large-results-and-excel-downloads-7-november-2026).
+Provisioning safely reapplies the existing campaign-member index without editing
+the supplied CRM definitions or clearing data.
+
 ## Shared application setup
 
 Follow the [team setup guide](../README.md#team-setup-and-development-workflow).

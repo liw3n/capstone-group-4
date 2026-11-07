@@ -38,6 +38,7 @@ from app.config import Settings
 from app.llm.errors import LLMProviderError, LLMToolLoopError
 from app.store import ChatHistoryItem
 from app.tools.discovery import render_active_campaigns
+from app.tools.campaign import render_recommendation_download
 
 
 SYSTEM_PROMPT = """You are PULSE, an assistant for financial advisers.
@@ -62,9 +63,17 @@ after-contact no-reply list. Call both only when the adviser explicitly requests
 both stages.
 
 For recommendations, base names, counts and eligibility explanations only on
-recommend_clients_for_campaign output. Return all matches by default, without
-inventing a suitability ranking. Report missing information and exclusions
-separately. If results are truncated, say so. Campaign selection in the CRM is
+recommend_clients_for_campaign output. It contains totals, at most 10 matching
+and 10 incomplete preview rows, and a list_id when full results are stored in
+the backend. Never request repeated recommendation calls to enumerate the full
+list or infer missing rows. Write the recommendation reply yourself: give the
+evaluated/matched/incomplete/excluded totals, explain the returned clients using
+their eligibility reasons, and identify missing fields separately. If truncated,
+say how many preview clients are shown out of the total; list only the returned
+preview rows, never invent the hidden rows. Do not print list_id, internal URLs
+or download links: the backend appends the verified Excel download action when
+available, without adding another client table. Use normal readable Markdown,
+not a JSON commentary object. Do not invent a suitability ranking. Campaign selection in the CRM is
 not sent by the PULSE web chat. Use the campaign named in the adviser's message
 or clearly identified in the conversation. If no campaign is identified, ask
 the adviser for its name; do not ask them to select a campaign in the CRM.
@@ -1704,6 +1713,7 @@ class ChatOrchestrator:
                 schedule_lock=generation_schedule_lock,
             )
         performance_report_returned = False
+        recommendation_downloads = {}
         for _ in range(self.settings.llm_max_tool_rounds):
             completion = self.client.create_chat_completion(messages, tools)
             if not getattr(completion, "choices", None):
@@ -1729,6 +1739,9 @@ class ChatOrchestrator:
                     )
                 if performance_report_returned:
                     content = _without_performance_appendix(content)
+                for list_id, download in recommendation_downloads.values():
+                    if f"(#recommendation-excel-{list_id})" not in content:
+                        content += "\n\n" + download
                 return _answer(content)
 
             # A model response cannot expand the set of tools offered on this
@@ -1766,6 +1779,17 @@ class ChatOrchestrator:
                     tool_call.function.name,
                     tool_call.function.arguments,
                 )
+                if tool_call.function.name == "recommend_clients_for_campaign":
+                    try:
+                        recommendation = json.loads(result)
+                        if recommendation.get("preview_limit") == 10 and "error_code" not in recommendation:
+                            download = render_recommendation_download(recommendation)
+                            if download:
+                                recommendation_downloads[recommendation["campaign_id"]] = (
+                                    recommendation["list_id"], download,
+                                )
+                    except (TypeError, KeyError, ValueError, AttributeError) as exc:
+                        raise LLMProviderError("Recommendation tool returned an invalid result") from exc
                 if tool_call.function.name == "get_campaign_contact_performance":
                     try:
                         performance_report_returned = "error_code" not in json.loads(result)

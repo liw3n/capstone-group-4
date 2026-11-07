@@ -109,6 +109,11 @@ def explain_match(client: Client, criteria: Criteria, as_of: date | None = None)
 def recommend_clients_for_campaign(campaign_id: str, scope: RequestScope, limit: int = MAX_RESULTS) -> dict:
     if type(limit) is not int or not 1 <= limit <= MAX_RESULTS:
         raise ValueError(f"limit must be an integer from 1 to {MAX_RESULTS}")
+    return recommendation_preview(collect_campaign_recommendations(campaign_id, scope), limit)
+
+
+def collect_campaign_recommendations(campaign_id: str, scope: RequestScope) -> dict:
+    """Evaluate the whole scoped book; full results must stay behind the tool boundary."""
     as_of = clock.current_date()
     campaign = get_campaign(campaign_id, scope)
     require_active(campaign, as_of)
@@ -134,12 +139,23 @@ def recommend_clients_for_campaign(campaign_id: str, scope: RequestScope, limit:
         "as_of_date": as_of.isoformat(),
         "evaluated_count": len(clients),
         "matched_count": len(matched),
-        "clients": matched[:limit],
-        "returned_count": min(len(matched), limit),
-        "truncated": len(matched) > limit,
+        "clients": matched,
+        "returned_count": len(matched),
+        "truncated": False,
         "incomplete_count": len(incomplete),
-        "incomplete_clients": incomplete[:limit],
-        "incomplete_truncated": len(incomplete) > limit,
+        "incomplete_clients": incomplete,
+        "incomplete_truncated": False,
         "excluded_count": excluded_count,
         "disclaimer": "Synthetic campaign criteria matches for adviser review, not a product suitability assessment or financial advice. Outreach requires separate consent checks and confirmation.",
+    }
+
+
+def recommendation_preview(result: dict, limit: int) -> dict:
+    return {
+        **result,
+        "clients": result["clients"][:limit],
+        "returned_count": min(result["matched_count"], limit),
+        "truncated": result["matched_count"] > limit,
+        "incomplete_clients": result["incomplete_clients"][:limit],
+        "incomplete_truncated": result["incomplete_count"] > limit,
     }

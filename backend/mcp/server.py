@@ -56,21 +56,27 @@ mcp = FastMCP(name="FastMCP Server")
 logger = logging.getLogger(__name__)
 
 
-@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False})
 def recommend_clients_for_campaign(
     campaign_id: Annotated[str, Field(pattern=CAMPAIGN_ID_PATTERN, max_length=69)],
     ctx: Context,
-    limit: Annotated[int, Field(ge=1, le=100, strict=True)] = 100,
+    limit: Annotated[int, Field(ge=1, le=100, strict=True)] = 10,
 ) -> dict:
     """Find the pre-contact campaign audience: synthetic clients who meet the
     campaign's eligibility criteria, with reasons and missing-data gaps. Use
     this to find or filter potential clients before outreach. It does not identify
     clients already contacted or track replies; use campaign_follow_up for that.
-    Read-only; no ranking or product suitability assessment. Adviser and tenant
+    CRM records are read-only; large results create a temporary private snapshot.
+    No ranking or product suitability assessment. Adviser and tenant
     scope come from API request metadata, never from model arguments.
     campaign_id must identify the requested campaign: use a known ID from current
     context or resolve the adviser's campaign name with resolve_campaign.
     Do not ask the adviser for an internal ID that the lookup tool can retrieve.
+    Returns uncapped totals but at most 10 matching and 10 incomplete preview
+    clients, even if a larger legacy limit is requested. Full results remain in
+    an adviser-scoped backend snapshot referenced by list_id when truncated.
+    Explain only these preview rows; do not invent further clients. The app
+    appends the Excel download action separately, without another client table.
     """
     logger.info("MCP tool called: recommend_clients_for_campaign")
     request = ctx.request_context
