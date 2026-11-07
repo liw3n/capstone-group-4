@@ -1080,10 +1080,13 @@ and campaign supersedes its prior unconfirmed preview.
 
 The API resolves exact campaign names/IDs and short sign-off replies from stored
 chat history without an LLM request. Once those inputs exist, email generation
-uses one compact model request with validated campaign data, the latest stored
-email draft when revising, the latest instruction, and only the
-`prepare_campaign_email` schema. Other chat history and unrelated MCP schemas
-are not sent for this path.
+uses one compact structured request with validated campaign data, only the
+relevant fields from the latest stored email draft, the latest instruction, and
+a nullable subject/body schema. Other chat history and MCP schemas are not sent
+for this path. Exact subject, body and sign-off replacements are applied without
+the model. Identical model-backed requests within 30 seconds are collapsed by
+an adviser/session-scoped in-process cache; this is retry protection, not a
+cross-instance durable idempotency guarantee.
 
 ### MCP: confirm_campaign_email
 

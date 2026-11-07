@@ -120,6 +120,9 @@ def test_exact_confirmation_is_server_routed_without_an_llm_call():
 
 
 class PreviewRegistry:
+    def __init__(self):
+        self.execute_count = 0
+
     def bind_scope(self, scope, campaign_id=None, session_id=None, latest_user_message=None):
         return self
 
@@ -134,6 +137,7 @@ class PreviewRegistry:
         }]
 
     def execute(self, name, arguments_json):
+        self.execute_count += 1
         assert name == "prepare_campaign_email"
         arguments = json.loads(arguments_json)
         assert arguments["subject"] == "Protection review"
@@ -157,27 +161,23 @@ class PreviewRegistry:
 
 
 class PreviewProvider:
-    def __init__(self):
+    def __init__(self, content=None):
         self.calls = 0
         self.messages = None
-        self.tools = None
+        self.schema = None
+        self.schema_name = None
+        self.content = content or {
+            "subject": "Protection review",
+            "body": "Educational information only.",
+        }
 
-    def create_chat_completion(self, messages, tools):
+    def create_structured_completion(self, messages, schema, schema_name):
         self.calls += 1
         self.messages = messages
-        self.tools = tools
-        call = SimpleNamespace(
-            id="email-preview-1",
-            function=SimpleNamespace(
-                name="prepare_campaign_email",
-                arguments=json.dumps({
-                    "subject": "Protection review",
-                    "body": "Educational information only.",
-                }),
-            ),
-        )
+        self.schema = schema
+        self.schema_name = schema_name
         return SimpleNamespace(choices=[SimpleNamespace(
-            message=SimpleNamespace(content=None, tool_calls=[call])
+            message=SimpleNamespace(content=json.dumps(self.content))
         )])
 
 
@@ -211,13 +211,127 @@ def test_email_preview_uses_one_compact_model_call(monkeypatch):
     )
     assert provider.calls == 1
     assert len(provider.messages) == 2
-    assert [tool["function"]["name"] for tool in provider.tools] == [
-        "prepare_campaign_email"
-    ]
+    assert set(provider.schema["properties"]) == {"subject", "body"}
+    assert provider.schema_name == "campaign_email_content"
     assert "Legacy Protection Refresh" in provider.messages[0]["content"]
     assert "Financial Advisor" not in provider.messages[0]["content"]
     assert "Review campaign email" in result
     assert "CONFIRM EMAIL ABC234" in result
+
+
+def test_identical_email_request_reuses_short_lived_result(monkeypatch):
+    monkeypatch.setattr(orchestrator_module, "get_campaign", lambda *_: campaign())
+    monkeypatch.setattr(
+        orchestrator_module, "latest_email_draft_context", lambda *_: None
+    )
+    provider = PreviewProvider()
+    registry = PreviewRegistry()
+    orchestrator = ChatOrchestrator(provider, settings(), registry)
+    history = [ChatHistoryItem(
+        "2026-11-01T00:00:00Z", False,
+        "What name would you like me to use in the email sign-off?",
+    )]
+
+    first = orchestrator.run(
+        "Steven", history, scope=RequestScope(DEMO_FA),
+        campaign_id="camp-1", session_id="session-1",
+    )
+    second = orchestrator.run(
+        "Steven", history, scope=RequestScope(DEMO_FA),
+        campaign_id="camp-1", session_id="session-1",
+    )
+
+    assert first == second
+    assert provider.calls == 1
+    assert registry.execute_count == 1
+
+
+class EditRegistry:
+    def __init__(self):
+        self.arguments = []
+
+    def bind_scope(self, *_args):
+        return self
+
+    def execute(self, name, arguments_json):
+        assert name == "prepare_campaign_email"
+        self.arguments.append(json.loads(arguments_json))
+        return json.dumps({
+            "type": "campaign_email_preview",
+            "delivery_mode": "mock",
+            "campaign_name": "Legacy Protection Refresh",
+            "campaign_id": "camp-1",
+            "subject": self.arguments[-1].get("subject", "Protection review"),
+            "body": self.arguments[-1].get("body", "Educational information only."),
+            "recipients": [],
+            "excluded_recipients": [],
+            "confirmation_phrase": "CONFIRM EMAIL ABC234",
+            "expires_at": "2026-11-07T12:00:00Z",
+        })
+
+
+def previous_email_draft():
+    return {
+        "subject": "Protection review",
+        "message_body": "Educational information only.",
+        "signoff_name": "Steven",
+    }
+
+
+@pytest.mark.parametrize(
+    ("instruction", "expected"),
+    [
+        ("Change the subject to Updated protection review", {"subject": "Updated protection review"}),
+        ("Change the sign-off to Steven Tan", {"signoff_name": "Steven Tan"}),
+        ("Replace the message with Please join our educational review.", {"body": "Please join our educational review."}),
+    ],
+)
+def test_exact_email_replacements_bypass_the_model(
+    monkeypatch, instruction, expected
+):
+    monkeypatch.setattr(
+        orchestrator_module, "latest_email_draft_context",
+        lambda *_: previous_email_draft(),
+    )
+    registry = EditRegistry()
+    orchestrator = ChatOrchestrator(SimpleNamespace(), settings(), registry)
+    history = [ChatHistoryItem(
+        "2026-11-01T00:00:00Z", False, "## Review campaign email",
+    )]
+
+    orchestrator.run(
+        instruction, history, scope=RequestScope(DEMO_FA),
+        campaign_id="camp-1", session_id="session-1",
+    )
+
+    assert registry.arguments == [{"campaign_id": "camp-1", **expected}]
+
+
+def test_subject_revision_sends_only_subject_context(monkeypatch):
+    monkeypatch.setattr(orchestrator_module, "get_campaign", lambda *_: campaign())
+    monkeypatch.setattr(
+        orchestrator_module, "latest_email_draft_context",
+        lambda *_: previous_email_draft(),
+    )
+    provider = PreviewProvider({"subject": "A shorter subject", "body": None})
+    registry = EditRegistry()
+    orchestrator = ChatOrchestrator(provider, settings(), registry)
+    history = [ChatHistoryItem(
+        "2026-11-01T00:00:00Z", False, "## Review campaign email",
+    )]
+
+    orchestrator.run(
+        "Make the subject more concise", history, scope=RequestScope(DEMO_FA),
+        campaign_id="camp-1", session_id="session-subject-revision",
+    )
+
+    context = provider.messages[0]["content"]
+    assert "Protection review" in context
+    assert "Educational information only" not in context
+    assert "audience_criteria" not in context
+    assert registry.arguments == [{
+        "subject": "A shorter subject", "campaign_id": "camp-1"
+    }]
 
 
 def test_email_fast_path_asks_for_campaign_without_model_call():
