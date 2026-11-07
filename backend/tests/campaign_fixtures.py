@@ -2,7 +2,7 @@
 from contextlib import contextmanager
 from unittest.mock import patch
 
-from app.campaigns.repository import Campaign, Client, Criteria, DEMO_FA
+from app.campaigns.repository import Campaign, Client, Criteria, DEMO_DATE, DEMO_FA
 
 # IDs, names and criteria mirror the frontend seeds. Narrative in the campaign
 # brief is NOT treated as extra suitability criteria.
@@ -43,6 +43,7 @@ def fixture_repository():
         return tuple(client for client in CLIENTS
                      if client.tenant_id == scope.tenant_id and client.fa_id == scope.fa_id)
 
-    with patch("app.campaigns.repository._load_campaign", side_effect=load_campaign), \
+    with patch("app.campaigns.clock.current_date", return_value=DEMO_DATE), \
+         patch("app.campaigns.repository._load_campaign", side_effect=load_campaign), \
          patch("app.campaigns.repository._load_clients", side_effect=load_clients):
         yield

@@ -9,11 +9,11 @@ import pytest
 
 from app.campaigns import repository
 from app.campaigns import matching
+from app.campaigns import clock
 from app.campaigns.matching import recommend_clients_for_campaign
 from app.campaigns.repository import CampaignStorageUnavailable, RequestScope
 from app.contacts import catalog as contacts
 from app.llm.orchestrator import ChatOrchestrator
-from app.tools import discovery
 from app.tools.mcp_registry import MCPToolRegistry
 from app.store import ChatHistoryItem
 from test_campaign_mcp import server
@@ -22,6 +22,11 @@ from test_orchestrator import FakeClient, completion, message, settings, tool_ca
 ADVISER = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
 CAMPAIGN_ID = 'b2222222-2222-2222-2222-222222222222'
 OTHER_TENANT = 'e0000000-0000-0000-0000-000000000001'
+
+
+@pytest.fixture(autouse=True)
+def current_campaign_date(monkeypatch):
+    monkeypatch.setattr(clock, 'current_date', lambda: date(2026, 11, 7))
 
 
 def campaign_row(**updates):
@@ -121,9 +126,13 @@ def test_current_contacts_use_same_synthetic_portfolio_values_as_crm(monkeypatch
 @pytest.mark.parametrize('history', [[], [
     ChatHistoryItem('2026-10-28T00:00:00Z', False, 'Please supply the campaign ID.'),
 ]])
-def test_model_requested_lookup_then_matching_runs_through_real_mcp(monkeypatch, history):
-    calls = fake_database(monkeypatch, [campaign_row()])
-    monkeypatch.setattr(discovery, 'current_date', lambda: date(2026, 10, 28))
+@pytest.mark.parametrize('as_of, start_date', [
+    (date(2026, 10, 28), date(2026, 8, 1)),
+    (date(2026, 11, 7), date(2026, 9, 1)),
+])
+def test_model_requested_lookup_then_matching_runs_through_real_mcp(monkeypatch, history, as_of, start_date):
+    calls = fake_database(monkeypatch, [campaign_row(start_date=start_date)])
+    monkeypatch.setattr(clock, 'current_date', lambda: as_of)
     monkeypatch.setattr(repository, '_load_clients', lambda scope: (
         repository.Client('synthetic-client', scope.fa_id, 'Synthetic Client',
                           '1996-03-26', 'Female', 45000, scope.tenant_id),
@@ -148,6 +157,7 @@ def test_model_requested_lookup_then_matching_runs_through_real_mcp(monkeypatch,
     assert 'table' not in lookup_result and 'criteria' not in lookup_result
     matching_result = json.loads(provider.calls[-1]['messages'][-1]['content'])
     assert matching_result['matched_count'] == 1
+    assert matching_result['as_of_date'] == lookup_result['as_of_date'] == as_of.isoformat()
     assert len(calls) == 2
 
 

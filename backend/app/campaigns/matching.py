@@ -2,8 +2,9 @@
 from datetime import date
 from math import isfinite
 
+from app.campaigns import clock
 from app.campaigns.repository import (
-    Client, Criteria, DEMO_DATE, RequestScope, get_campaign, list_clients_for_fa,
+    Client, Criteria, RequestScope, get_campaign, list_clients_for_fa,
     require_active,
 )
 
@@ -18,7 +19,9 @@ CASH_LABELS = {
 }
 
 
-def age_from_dob(dob: str | None, as_of: date = DEMO_DATE) -> int | None:
+def age_from_dob(dob: str | None, as_of: date | None = None) -> int | None:
+    if as_of is None:
+        as_of = clock.current_date()
     try:
         born = date.fromisoformat(dob or "")
         if born.isoformat() != dob:
@@ -57,7 +60,7 @@ def in_range(value, minimum, maximum) -> bool:
             and (maximum is None or value <= maximum))
 
 
-def explain_match(client: Client, criteria: Criteria, as_of: date = DEMO_DATE) -> dict:
+def explain_match(client: Client, criteria: Criteria, as_of: date | None = None) -> dict:
     age_filter = bool(criteria.age_groups) or range_active(criteria.age_min, criteria.age_max)
     cash_filter = bool(criteria.cash_bands) or range_active(criteria.cash_min, criteria.cash_max)
     gender = client.gender.strip().lower() if isinstance(client.gender, str) else None
@@ -106,13 +109,14 @@ def explain_match(client: Client, criteria: Criteria, as_of: date = DEMO_DATE) -
 def recommend_clients_for_campaign(campaign_id: str, scope: RequestScope, limit: int = MAX_RESULTS) -> dict:
     if type(limit) is not int or not 1 <= limit <= MAX_RESULTS:
         raise ValueError(f"limit must be an integer from 1 to {MAX_RESULTS}")
+    as_of = clock.current_date()
     campaign = get_campaign(campaign_id, scope)
-    require_active(campaign)
+    require_active(campaign, as_of)
     clients = list_clients_for_fa(scope)
     matched, incomplete = [], []
     excluded_count = 0
     for client in clients:
-        result = explain_match(client, campaign.criteria)
+        result = explain_match(client, campaign.criteria, as_of)
         entry = {"contact_id": client.contact_id, "name": client.name}
         if result["status"] == "matched":
             matched.append({**entry, "reasons": result["reasons"]})
@@ -127,7 +131,7 @@ def recommend_clients_for_campaign(campaign_id: str, scope: RequestScope, limit:
         "data_source": "synthetic",
         "campaign_id": campaign.campaign_id,
         "campaign_name": campaign.name,
-        "as_of_date": DEMO_DATE.isoformat(),
+        "as_of_date": as_of.isoformat(),
         "evaluated_count": len(clients),
         "matched_count": len(matched),
         "clients": matched[:limit],

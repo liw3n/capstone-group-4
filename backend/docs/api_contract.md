@@ -384,7 +384,8 @@ field. Explicit API-client example:
 
 Omitting it preserves existing chat behavior. An invalid ID returns `422`;
 an unknown/inaccessible campaign returns `404`; a campaign that is not active
-on the fixed demo date returns `409`. Campaign validation happens before session
+on today's Asia/Singapore date returns `409`. Start/end dates are inclusive and
+status must be `active`. Campaign validation happens before session
 creation/provider calls. The backend retrieves criteria from its synthetic
 PostgreSQL repository; the request never supplies campaign criteria. Missing
 database configuration, tables or database availability return `503` during
@@ -834,7 +835,9 @@ boundary, not authentication.
 Active status is independent of the schedule. Future, expired or undated active
 rows remain discoverable; null, inactive, draft, paused and deleted rows are
 excluded. Today's actual Asia/Singapore date is reporting context only. This
-change does not alter the fixed demo date or calendar rules in other tools.
+does not change recommendation eligibility. Campaign name lookup and matching
+both use today's Singapore date for schedule checks; matching uses one captured
+date for activity, client ages and the returned `as_of_date`.
 
 Arguments:
 

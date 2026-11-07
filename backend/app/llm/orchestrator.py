@@ -110,7 +110,8 @@ Set fields only when the latest user explicitly requests particular details;
 otherwise omit fields or use null for name, campaign_code, description, start_date,
 end_date, age_groups, genders, cash_bands. Active means status exactly 'active',
 independently of schedule dates. Today's Singapore date is reporting context;
-the existing recommendation tool retains its fixed demo date.
+campaign name lookup and recommendations use the current Singapore date for
+schedule checks, and recommendations also calculate client ages on that date.
 Put user-requested restrictions in filters, not fields. 'Active campaigns for
 people over 40' uses filters={"age_min":41}, with default columns. 'At least 40'
 uses age_min=40; 'under 40' uses age_max=39. Gender and cash filters can combine

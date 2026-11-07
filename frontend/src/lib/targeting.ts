@@ -8,7 +8,6 @@ import {
   Gender,
   NumericRange,
 } from '../types';
-import { TODAY_ISO } from '../data/seed';
 
 /**
  * ============================================================================
@@ -17,7 +16,7 @@ import { TODAY_ISO } from '../data/seed';
  * Which clients a campaign reaches is decided here, by rules, not by the model
  * in services/ai.ts. Selection has to be reproducible and explainable: an
  * advisor asking "why was this client on the list" gets the same answer every
- * time, and the same criteria always produce the same audience.
+ * time, and the same criteria and evaluation date produce the same audience.
  *
  * The AI layer sits on top of this output and only ever reorders it and writes
  * about it. It never adds or removes a client.
@@ -139,16 +138,22 @@ function inRange(value: number, range: NumericRange | undefined): boolean {
   return true;
 }
 
-/** Age against the prototype's fixed "today", not the wall clock. */
+const singaporeDate = new Intl.DateTimeFormat('en', {
+  timeZone: 'Asia/Singapore', year: 'numeric', month: 'numeric', day: 'numeric',
+});
+
+/** Age on today's Singapore date, matching backend campaign recommendations. */
 export function ageFromDob(dob: string | null | undefined): number | undefined {
   if (!dob) return undefined;
   const born = new Date(`${dob}T00:00:00`);
   if (Number.isNaN(born.getTime())) return undefined;
 
-  const today = new Date(`${TODAY_ISO}T00:00:00`);
-  let age = today.getFullYear() - born.getFullYear();
-  const monthDelta = today.getMonth() - born.getMonth();
-  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < born.getDate())) age--;
+  const today = Object.fromEntries(
+    singaporeDate.formatToParts(new Date()).map(({ type, value }) => [type, Number(value)]),
+  );
+  let age = today.year - born.getFullYear();
+  const monthDelta = today.month - (born.getMonth() + 1);
+  if (monthDelta < 0 || (monthDelta === 0 && today.day < born.getDate())) age--;
 
   return age >= 0 && age < 130 ? age : undefined;
 }

@@ -1,19 +1,16 @@
 """Shared handler for read-only, request-scoped campaign discovery."""
-from datetime import date, datetime
+from datetime import date
 from typing import Annotated, Literal
-from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.campaigns import repository
+from app.campaigns import clock, repository
 from app.campaigns.discovery_filters import CampaignFilters, matches_filters
 from app.campaigns.repository import (
     CAMPAIGN_ID_PATTERN,
     CampaignStorageUnavailable,
     RequestScope,
 )
-
-SINGAPORE = ZoneInfo("Asia/Singapore")
 
 CampaignField = Literal[
     "campaign_id", "name", "campaign_code", "description", "start_date", "end_date", "age_groups", "genders",
@@ -50,7 +47,7 @@ class ActiveCampaignArguments(BaseModel):
 
 
 def current_date() -> date:
-    return datetime.now(SINGAPORE).date()
+    return clock.current_date()
 
 
 def _markdown_text(value: object) -> str:

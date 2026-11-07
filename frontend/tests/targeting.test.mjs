@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict';
-import { after, before, test } from 'node:test';
+import { after, before, mock, test } from 'node:test';
 import { createServer } from 'vite';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 let server;
 let resolveAudience;
+let ageFromDob;
 let CriteriaSummary;
 let CriteriaPicker;
 
 before(async () => {
+  mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-08-26T04:00:00Z') });
   server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' });
-  ({ resolveAudience } = await server.ssrLoadModule('/src/lib/targeting.ts'));
+  ({ resolveAudience, ageFromDob } = await server.ssrLoadModule('/src/lib/targeting.ts'));
   ({ CriteriaSummary, CriteriaPicker } = await server.ssrLoadModule('/src/components/CampaignCriteria.tsx'));
 });
 
@@ -56,7 +58,27 @@ test('canonical frontend criteria retain their existing labels and custom ranges
 });
 
 after(async () => {
+  mock.timers.reset();
   await server?.close();
+});
+
+test('client ages and targeting advance at Singapore midnight', () => {
+  try {
+    const contact = { id: 'birthday', dob: '1991-11-07', name: 'Birthday Client' };
+    const audience = {
+      audienceSource: 'contacts',
+      criteria: { ageGroups: ['under35'], genders: [], cashBands: [] },
+      includeIds: [], excludeIds: [], leadIds: [],
+    };
+    mock.timers.setTime(Date.parse('2026-11-06T15:59:59Z'));
+    assert.equal(ageFromDob(contact.dob), 34);
+    assert.equal(resolveAudience(audience, [contact]).matched.length, 1);
+    mock.timers.setTime(Date.parse('2026-11-06T16:00:00Z'));
+    assert.equal(ageFromDob(contact.dob), 35);
+    assert.equal(resolveAudience(audience, [contact]).matched.length, 0);
+  } finally {
+    mock.timers.setTime(Date.parse('2026-08-26T04:00:00Z'));
+  }
 });
 
 const campaign = {

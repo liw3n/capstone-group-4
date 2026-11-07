@@ -222,8 +222,9 @@ server with CREATEDB permission. Never supply a hosted or company URL.
   persist through application restart.
 - Discovery, matching, clarification, revision, signed preview and explicit
   draft campaign creation work. Stale revisions fail; retries do not duplicate.
-- Check seed campaign schedules against the test window: discovery uses today's
-  Singapore date; matching retains the fixed demo date.
+- Check seed campaign schedules against the test window: lookup and matching use
+  today's Singapore date with inclusive bounds; discovery uses status-only
+  eligibility and reports today's date as context.
 - Validate cold starts and Groq rate-limit behavior with the invited testers.
 - Confirm the running connection uses TLS (`pg_stat_ssl` for the current backend),
   the session-pooler URL is selected, and Supabase's Data API is disabled. Verify

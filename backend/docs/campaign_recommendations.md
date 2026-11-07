@@ -1,5 +1,25 @@
 # Synthetic campaign recommendation prototype
 
+## Runtime dates (7 November 2026)
+
+Campaign name lookup, recommendation activity checks and client ages now use
+the current Asia/Singapore date rather than the fixed August seed date. The
+date is read at runtime, so a running service advances at Singapore midnight.
+Each recommendation captures one date for its activity check, all client ages
+and returned `as_of_date`. Start and end dates are inclusive, and status must
+still be `active`. A campaign scheduled from 1 September to 31 December 2026
+is therefore eligible on 7 November 2026, subject to existing ownership checks.
+The shared activity validator also applies this rule to explicit-ID chat
+validation and email preparation/confirmation. CRM age targeting uses the same
+Singapore calendar. No SQL, seed schedules, access predicates, tool schemas or
+model-selected tool sequence changed.
+
+The discovery catalogue continues to use status-only eligibility; it can list
+active-status records regardless of schedule or creator. Name lookup and
+recommendations retain their adviser ownership and schedule restrictions.
+The historical fixture results below freeze the clock at 26 August 2026 in
+tests; live results depend on the current date and database contents.
+
 ## Current name-based workflow (28 October 2026)
 
 The web chat is independent of the campaign currently open in the CRM. Advisers
@@ -26,16 +46,18 @@ with only `campaign_name` as its model-supplied argument. It returns a compact
 or `not_found`. Exact normalised names take precedence; punctuation/case,
 conversational "the"/"campaign" words and whole-word partial names are supported.
 The tool does not choose between ambiguous campaigns and never invokes matching.
-Both tools share the same scoped, active-campaign repository query. No lookup
-guidance or intermediate lookup behaviour is added to the discovery response.
+Lookup uses an adviser-owned, schedule-filtered query; catalogue discovery uses
+its separate tenant/status query. No intermediate lookup behaviour is added to
+the discovery response.
 
 Discovery and recommendation now read `campaign` and `contact` with UUID IDs.
 Campaign criteria come from `audience_criteria` JSON, including custom bounds;
 stored age/cash label variants and gender case are normalised for matching.
 Missing or invalid criteria fail closed instead of silently removing filters.
 Nullable campaign status means active for the current synthetic seed, while
-explicit inactive states and deleted records are excluded. Discovery uses the
-current Singapore date; recommendations retain the fixed 2026-08-26 demo date.
+explicit inactive states and deleted records are excluded from recommendations.
+Lookup and recommendations use today's Singapore date for schedule checks;
+catalogue discovery uses it only as reporting context.
 
 The CRM prototype stores the adviser UUID as `tenant_id`; legacy chat metadata
 still calls its namespace `pulse-demo`. The adapter maps that namespace to the
@@ -46,10 +68,10 @@ authentication or a production tenancy design.
 
 Gender and available cash are not columns of the new contact table. Matching
 uses the existing, explicitly synthetic portfolio mock used by the contact API.
-Its current cash values are much lower than the old fixtures: the current seed
-matches F/G/H for First Home Starter Bundle and no clients for Legacy Protection
-Refresh. Counts and IDs in the historical description below are not current
-seed expectations. No email/SMS consent is implied by a criteria match.
+Its cash values are generated from the scoped contact list rather than supplied
+as real financial data. Live counts depend on loaded contacts, campaign criteria
+and today's date. Counts and IDs in the historical description below are not
+current seed expectations. No email/SMS consent is implied by a criteria match.
 
 Verification: `test_campaign_lookup.py` covers lookup input validation, matching,
 ambiguity, bounded candidates, scope and safe failures through MCP.
@@ -111,7 +133,7 @@ script. Demonstrate the tool in PULSE at **http://localhost:3000**. No standalon
 feature demo program is needed. `matching.py` and `repository.py` are runtime
 implementation modules imported by the MCP tool, not separate demo applications.
 
-Expected untouched seed results on the fixed demo date **2026-08-26**:
+Historical unit-fixture results with the test clock fixed at **2026-08-26**:
 
 | Campaign | Evaluated | Matched | Incomplete | Excluded |
 | --- | ---: | ---: | ---: | ---: |
@@ -195,7 +217,8 @@ arguments can remain unchanged.
 - OR within age groups, genders and cash bands; AND across the dimensions.
 - A custom numeric range is inclusive and OR'd with its dimension's bands.
 - Empty dimensions do not filter.
-- Age uses 2026-08-26, matching the frontend demo date, including birthday boundaries.
+- Age uses today's Singapore date, including birthday boundaries. Unit fixtures
+  explicitly freeze their clock for repeatable historical expectations.
 - Cash bands are [0, 50k), [50k, 250k), [250k, 1m), [1m, infinity).
 - A missing/invalid field required by an active filter puts a client in the
   incomplete list. Missing-first behavior matches `targeting.ts`.

@@ -6,9 +6,10 @@ import re
 from math import isfinite
 from uuid import UUID
 
+from app.campaigns import clock
 from app.campaigns.criteria import criteria_from_storage
 
-DEMO_DATE = date(2026, 8, 26)  # Same as frontend/data/seed.ts.
+DEMO_DATE = date(2026, 8, 26)  # Legacy fixture/creation default, not the runtime clock.
 DEMO_TENANT = "pulse-demo"
 DEMO_FA = "adv-steven-raynaldi"
 CAMPAIGN_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,68}$"
@@ -319,10 +320,12 @@ def rank_campaigns_by_member_metric(
     return tuple(rows)
 
 
-def require_active(campaign: Campaign, as_of: date = DEMO_DATE) -> None:
+def require_active(campaign: Campaign, as_of: date | None = None) -> None:
+    if as_of is None:
+        as_of = clock.current_date()
     if (campaign.status != "active" or campaign.start_date is None or campaign.end_date is None
             or not campaign.start_date <= as_of <= campaign.end_date):
-        raise CampaignInactive("Campaign is not active on the demo date")
+        raise CampaignInactive(f"Campaign is not active on {as_of.isoformat()} (Asia/Singapore)")
 
 
 def _load_clients(scope: RequestScope) -> tuple[Client, ...]:
