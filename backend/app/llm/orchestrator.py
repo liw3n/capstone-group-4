@@ -175,6 +175,10 @@ member additions or the cumulative email count as a weekly contact count.
 
 For one campaign's performance call get_campaign_contact_performance (legacy tool
 name) directly with the campaign name; it resolves accessible campaigns itself.
+For a successful performance summary, present the requested figures directly.
+Do not add Notes, Key Points, Key Takeaways, or another explanatory appendix
+after the figures. Do not repeat metric definitions. If the requested metric is
+unavailable, say so in the main answer.
 Do not call resolve_campaign first for a performance question. For "last week"
 set period=last_week, for "this week" use this_week,
 and for a named week set specific_week and week_of to the YYYY-MM-DD date the
@@ -316,6 +320,19 @@ def _answer(
         requested_revision_fields,
         creation,
     )
+
+
+def _without_performance_appendix(content: str) -> str:
+    """Remove model-added explanatory appendices from a performance answer."""
+    appendix_heading = re.compile(
+        r"(?im)^\s*(?:#{1,6}\s+)?(?:\*\*)?"
+        r"(?:Notes|Key Points|Key Takeaways)(?:\*\*)?:?\s*$"
+    )
+    while heading := appendix_heading.search(content):
+        next_heading = re.search(r"(?m)^#{1,6}\s+\S", content[heading.end():])
+        end = heading.end() + next_heading.start() if next_heading else len(content)
+        content = (content[:heading.start()].rstrip() + content[end:]).strip()
+    return content
 
 
 def _prepared_campaign_draft(result: str) -> CampaignDraftArtifact | None:
@@ -1685,6 +1702,7 @@ class ChatOrchestrator:
                 targeting_lock=generation_targeting_lock,
                 schedule_lock=generation_schedule_lock,
             )
+        performance_report_returned = False
         for _ in range(self.settings.llm_max_tool_rounds):
             completion = self.client.create_chat_completion(messages, tools)
             if not getattr(completion, "choices", None):
@@ -1708,6 +1726,8 @@ class ChatOrchestrator:
                         "Name the fields to revise, such as age groups, cash bands, "
                         "description or client message. No draft fields were changed."
                     )
+                if performance_report_returned:
+                    content = _without_performance_appendix(content)
                 return _answer(content)
 
             # A model response cannot expand the set of tools offered on this
@@ -1745,6 +1765,11 @@ class ChatOrchestrator:
                     tool_call.function.name,
                     tool_call.function.arguments,
                 )
+                if tool_call.function.name == "get_campaign_contact_performance":
+                    try:
+                        performance_report_returned = "error_code" not in json.loads(result)
+                    except (TypeError, ValueError):
+                        performance_report_returned = False
                 if tool_call.function.name == "get_active_campaigns":
                     try:
                         discovery_payload = json.loads(result)

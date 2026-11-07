@@ -30,6 +30,7 @@ from app.llm.orchestrator import (
 from app.store import ChatHistoryItem
 from app.tools.registry import ToolDefinition, ToolRegistry
 from app.tools.discovery import ActiveCampaignArguments, execute_get_active_campaigns
+from app.tools.performance import ContactPerformanceArguments
 
 
 class CalculateSumArguments(BaseModel):
@@ -386,6 +387,38 @@ def test_executes_tool_and_returns_follow_up_answer():
     assert follow_up_messages[-1]["role"] == "tool"
     assert follow_up_messages[-1]["tool_call_id"] == "call-1"
     assert '"result": 5.0' in follow_up_messages[-1]["content"]
+
+
+@pytest.mark.parametrize("appendix_heading", ["Notes", "Key Points", "Key Takeaways"])
+def test_performance_answer_omits_appendix_but_keeps_figures(appendix_heading):
+    registry = ToolRegistry([ToolDefinition(
+        name="get_campaign_contact_performance",
+        description="Report campaign performance",
+        arguments_model=ContactPerformanceArguments,
+        handler=lambda **kwargs: {},
+    )])
+    registry.execute = lambda name, arguments: json.dumps({
+        "campaign_members_total": 8,
+        "clients_emailed_total": 6,
+        "email_coverage_percent": 75,
+    })
+    client = FakeClient([
+        completion(message(tool_calls=[tool_call(
+            "performance-1", "get_campaign_contact_performance",
+            '{"campaign":"Legacy Protection Refresh"}',
+        )])),
+        completion(message(content=(
+            "## Performance summary\n\n8 members; 6 emailed (75%).\n\n"
+            f"## {appendix_heading}\n\n- Repeated metric definitions."
+        ))),
+    ])
+
+    result = ChatOrchestrator(client, settings(), registry).run(
+        "Summarise Legacy Protection Refresh", []
+    )
+
+    assert result.answer == "## Performance summary\n\n8 members; 6 emailed (75%)."
+    assert len(client.calls) == 2
 
 
 def test_unoffered_tool_call_is_blocked_before_execution():
