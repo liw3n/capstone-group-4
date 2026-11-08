@@ -8,7 +8,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.campaigns.catalog import (
-    create_campaign as create_campaign_record,
     get_campaign_record,
     list_campaigns as list_campaign_records,
     update_campaign_state,
