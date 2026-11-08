@@ -423,25 +423,6 @@ def campaign_detail(
         raise HTTPException(status_code=404, detail="campaign not found")
     return CampaignPayload.model_validate(row)
 
-
-@app.post("/campaigns", response_model=CampaignPayload, status_code=201)
-@app.post("/api/campaigns", response_model=CampaignPayload, status_code=201)
-def campaign_create(
-    payload: CampaignPayload,
-    role: Literal["advisor", "marketing"] = Query(),
-    fa_id: str | None = Query(default=None, min_length=1),
-) -> CampaignPayload:
-    scope = _campaign_scope(role, fa_id)
-    expected_origin = "advisor" if role == "advisor" else "marketing"
-    if payload.origin != expected_origin:
-        raise HTTPException(status_code=400, detail="campaign origin does not match current role")
-    try:
-        row = create_campaign_record(role, scope, payload.model_dump())
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return CampaignPayload.model_validate(row)
-
-
 @app.patch("/campaigns/{campaign_id}/state", response_model=CampaignPayload)
 @app.patch("/api/campaigns/{campaign_id}/state", response_model=CampaignPayload)
 def campaign_state_update(
