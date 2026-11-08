@@ -1,3 +1,4 @@
+import { toCriteriaPayload } from '../lib/targeting';
 import { Campaign, Contact, Session } from '../types';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
@@ -42,7 +43,11 @@ export function createCampaign(
 ): Promise<Campaign> {
   return request<Campaign>(apiUrl('/api/campaigns', session), {
     method: 'POST',
-    body: JSON.stringify({ ...campaign, leadContacts }),
+    body: JSON.stringify({
+      ...campaign,
+      criteria: toCriteriaPayload(campaign.criteria),
+      leadContacts,
+    }),
   });
 }
 

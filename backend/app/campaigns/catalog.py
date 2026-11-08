@@ -152,17 +152,20 @@ def create_campaign(role: CampaignRole, scope: RequestScope | None,
 
     with _connection() as connection:
         existing = connection.execute(
-            "SELECT 1 FROM mock_campaign WHERE tenant_id = %s AND campaign_id = %s",
-            (tenant_id, campaign_id),
+            "SELECT 1 FROM campaign WHERE tenant_id = %s AND campaign_id = %s",
+            (fa_id, campaign_id),
         ).fetchone()
         if existing:
             raise ValueError("Campaign ID already exists")
         connection.execute(
             """
-            INSERT INTO mock_campaign (
-                tenant_id, campaign_id, name, status, start_date, end_date,
+            INSERT INTO campaign (
+                tenant_id, campaign_id, name, description, client_messaging,
+                
+                
+                status, start_date, end_date,
                 age_groups, genders, cash_bands, age_min, age_max, cash_min, cash_max,
-                description, client_message, banner_data_url, origin, audience_source,
+                banner_data_url, origin, audience_source,
                 channel, team_ids, advisor_ids, created_by_advisor_id, created_by,
                 include_ids, exclude_ids, lead_ids,
                 lead_stats_uploaded, lead_stats_added, lead_stats_removed,

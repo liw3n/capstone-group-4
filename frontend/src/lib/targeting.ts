@@ -131,6 +131,62 @@ function cashRangeOf(criteria: CampaignCriteria): NumericRange | undefined {
   return criteria.cashRange;
 }
 
+export type CriteriaPayloadAgeGroup = 'under35' | '35-44' | '45-54' | '55-64' | '65plus';
+export type CriteriaPayloadCashBand = 'under50k' | '50k-250k' | '250k-1m' | 'above1m';
+
+/** Criteria as sent to the campaign API. Custom bounds appear only when set. */
+export interface CampaignCriteriaPayload {
+  ageGroups: CriteriaPayloadAgeGroup[];
+  ageCustomMin?: number;
+  ageCustomMax?: number;
+  genders: CampaignGender[];
+  cashBands: CriteriaPayloadCashBand[];
+  cashCustomMin?: number;
+  cashCustomMax?: number;
+}
+
+const AGE_GROUP_PAYLOAD: Record<AgeGroup, CriteriaPayloadAgeGroup> = {
+  under35: 'under35',
+  '35to44': '35-44',
+  '45to54': '45-54',
+  '55to64': '55-64',
+  '65plus': '65plus',
+};
+
+const CASH_BAND_PAYLOAD: Record<CashBand, CriteriaPayloadCashBand> = {
+  under50k: 'under50k',
+  '50kTo250k': '50k-250k',
+  '250kTo1m': '250k-1m',
+  above1m: 'above1m',
+};
+
+/**
+ * Selected age bands win over a custom age range, matching resolveAudience.
+ * Cash bands and a custom cash range are additive, so both are sent when set.
+ */
+export function toCriteriaPayload(stored: CampaignCriteria): CampaignCriteriaPayload {
+  const criteria = normalizeCampaignCriteria(stored);
+  const payload: CampaignCriteriaPayload = {
+    ageGroups: criteria.ageGroups.map((value) => AGE_GROUP_PAYLOAD[value]),
+    genders: [...criteria.genders],
+    cashBands: criteria.cashBands.map((value) => CASH_BAND_PAYLOAD[value]),
+  };
+
+  const ageRange = ageRangeOf(criteria);
+  if (criteria.ageGroups.length === 0 && hasRange(ageRange)) {
+    if (ageRange!.min !== undefined) payload.ageCustomMin = ageRange!.min;
+    if (ageRange!.max !== undefined) payload.ageCustomMax = ageRange!.max;
+  }
+
+  const cashRange = cashRangeOf(criteria);
+  if (hasRange(cashRange)) {
+    if (cashRange!.min !== undefined) payload.cashCustomMin = cashRange!.min;
+    if (cashRange!.max !== undefined) payload.cashCustomMax = cashRange!.max;
+  }
+
+  return payload;
+}
+
 function inRange(value: number, range: NumericRange | undefined): boolean {
   if (!hasRange(range)) return false;
   if (range!.min !== undefined && value < range!.min) return false;

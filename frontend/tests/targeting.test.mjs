@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 let server;
 let resolveAudience;
+let toCriteriaPayload;
 let ageFromDob;
 let CriteriaSummary;
 let CriteriaPicker;
@@ -13,7 +14,7 @@ let CriteriaPicker;
 before(async () => {
   mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-08-26T04:00:00Z') });
   server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' });
-  ({ resolveAudience, ageFromDob } = await server.ssrLoadModule('/src/lib/targeting.ts'));
+  ({ resolveAudience, ageFromDob, toCriteriaPayload } = await server.ssrLoadModule('/src/lib/targeting.ts'));
   ({ CriteriaSummary, CriteriaPicker } = await server.ssrLoadModule('/src/components/CampaignCriteria.tsx'));
 });
 
@@ -199,4 +200,44 @@ test('selected age groups exclude contacts admitted only by a stale custom range
 
   assert.deepEqual(result.matched.map((contact) => contact.id), ['under-35']);
   assert.deepEqual(result.incomplete, []);
+});
+
+test('criteria payload sends selected age bands and drops the ignored custom age range', () => {
+  const payload = toCriteriaPayload({
+    ageGroups: ['35to44', '55to64'], ageRange: { min: 40, max: 50 },
+    genders: ['Female'], cashBands: ['50kTo250k', '250kTo1m'],
+  });
+  assert.deepEqual(payload, {
+    ageGroups: ['35-44', '55-64'], genders: ['Female'], cashBands: ['50k-250k', '250k-1m'],
+  });
+});
+
+test('criteria payload sends custom age and cash ranges as flat bounds', () => {
+  const payload = toCriteriaPayload({
+    ageGroups: [], ageRange: { min: 42, max: 47 },
+    genders: ['Male', 'Female'], cashBands: [], cashRange: { min: 100000, max: 300000 },
+  });
+  assert.deepEqual(payload, {
+    ageGroups: [], ageCustomMin: 42, ageCustomMax: 47,
+    genders: ['Male', 'Female'], cashBands: [], cashCustomMin: 100000, cashCustomMax: 300000,
+  });
+  assert.ok(!('ageRange' in payload) && !('cashRange' in payload));
+});
+
+test('criteria payload keeps open-ended ranges and additive cash bands', () => {
+  const payload = toCriteriaPayload({
+    ageGroups: [], ageRange: { min: 60 },
+    genders: [], cashBands: ['above1m'], cashRange: { max: 20000 },
+  });
+  assert.deepEqual(payload, {
+    ageGroups: [], ageCustomMin: 60, genders: [],
+    cashBands: ['above1m'], cashCustomMax: 20000,
+  });
+});
+
+test('criteria payload with nothing selected leaves every dimension unfiltered', () => {
+  assert.deepEqual(
+    toCriteriaPayload({ ageGroups: [], genders: [], cashBands: [] }),
+    { ageGroups: [], genders: [], cashBands: [] },
+  );
 });
