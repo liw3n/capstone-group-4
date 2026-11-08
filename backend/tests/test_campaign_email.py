@@ -338,7 +338,7 @@ def test_email_fast_path_asks_for_campaign_without_model_call():
     provider = SimpleNamespace()
     orchestrator = ChatOrchestrator(provider, settings(), PreviewRegistry())
     result = orchestrator.run(
-        "Draft an email for clients", [], scope=RequestScope(DEMO_FA),
+        "Draft emails for clients", [], scope=RequestScope(DEMO_FA),
         campaign_id=None, session_id="session-1",
     )
     assert "Which campaign" in result

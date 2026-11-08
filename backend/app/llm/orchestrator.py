@@ -518,7 +518,7 @@ def _campaign_reference_failure(result: str) -> str:
 
 def _is_campaign_generation_request(message: str) -> bool:
     normalized = " ".join(message.casefold().split())
-    if re.search(r"\b(?:email|mail|outreach)\b", normalized):
+    if re.search(r"\b(?:emails?|mails?|outreach)\b", normalized):
         return False
     return bool(
         re.search(
@@ -653,7 +653,7 @@ def _is_explicit_new_campaign_request(message: str) -> bool:
 def _is_email_campaign_request(message: str) -> bool:
     normalized = " ".join(message.casefold().split())
     return bool(
-        re.search(r"\b(?:email|mail|outreach)\b", normalized)
+        re.search(r"\b(?:emails?|mails?|outreach)\b", normalized)
         and re.search(r"\b(?:draft|write|prepare|revise|send|campaign)\b", normalized)
     )
 

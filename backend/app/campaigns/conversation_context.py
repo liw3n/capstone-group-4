@@ -15,7 +15,7 @@ class HistoryItem(Protocol):
 
 
 _EMAIL_CONTEXT_PATTERN = re.compile(
-    r"\b(?:e[ -]?mail|mail|outreach|sign[ -]?off)\b", re.IGNORECASE
+    r"\b(?:e[ -]?mails?|mails?|outreach|sign[ -]?off)\b", re.IGNORECASE
 )
 _UUID_PATTERN = re.compile(
     r"(?<![0-9a-f])"

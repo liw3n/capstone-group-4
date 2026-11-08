@@ -57,6 +57,12 @@ def test_short_reply_after_email_prompt_keeps_email_context():
     assert conversation_context.is_campaign_email_turn("Hello", []) is False
 
 
+def test_plural_email_request_uses_email_context():
+    assert conversation_context.is_campaign_email_turn(
+        "Draft emails for clients", []
+    ) is True
+
+
 def test_short_signoff_reply_is_extracted_without_the_adviser_title():
     history = [ChatHistoryItem(
         "2026-11-01T00:00:00Z", False,
