@@ -541,6 +541,15 @@ export default function App() {
           ? 'campaign-detail'
           : activeTab;
 
+  // Only an opened, active campaign scopes chat; the API rejects inactive ones.
+  const chatScopedCampaign =
+    activeTab === 'campaigns' &&
+    !campaignDraftReview &&
+    !buildingCampaign &&
+    selectedCampaign?.status === 'active'
+      ? { id: selectedCampaign.id, name: selectedCampaign.name }
+      : null;
+
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       <TopBar session={session} onSignOut={handleSignOut} />
@@ -778,6 +787,7 @@ export default function App() {
         <ChatPanel
           key={session.advisorId}
           advisorId={session.advisorId}
+          scopedCampaign={chatScopedCampaign}
           onReviewCampaignDraft={(draft, sessionId) => {
             setActiveTab('campaigns');
             setSelectedCampaignId(null);

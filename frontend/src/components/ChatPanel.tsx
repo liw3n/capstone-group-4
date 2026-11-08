@@ -39,6 +39,8 @@ import { getCampaignDraft } from '../services/campaignDraftApi';
 
 interface ChatPanelProps {
   advisorId: string;
+  /** The active campaign the adviser has opened, used to scope chat tools. */
+  scopedCampaign?: { id: string; name: string } | null;
   onReviewCampaignDraft?: (draft: CampaignDraftArtifact, sessionId: string) => void;
 }
 
@@ -99,6 +101,7 @@ function titleFromMessage(message: string): string {
 
 export default function ChatPanel({
   advisorId,
+  scopedCampaign = null,
   onReviewCampaignDraft,
 }: ChatPanelProps) {
   const [open, setOpen] = useState(false);
@@ -355,6 +358,7 @@ export default function ChatPanel({
         sessionId,
         content,
         controller.signal,
+        scopedCampaign?.id,
       );
       if (controller.signal.aborted) return;
       setSessions((current) =>
@@ -473,11 +477,14 @@ export default function ChatPanel({
               </div>
             </header>
 
-            <div className="border-b border-line-soft bg-link-soft px-3 py-2 text-[12px] text-body">
-              <p className="font-medium">
-                Name a campaign in chat to request client recommendations.
-              </p>
-            </div>
+            {scopedCampaign && (
+              <div className="border-b border-line-soft bg-link-soft px-3 py-2 text-[12px] text-body">
+                <p className="font-medium">
+                  Scoped to <span className="font-semibold">{scopedCampaign.name}</span>.
+                  Go back to the campaign list to ask about other campaigns.
+                </p>
+              </div>
+            )}
 
             <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2">
               <select

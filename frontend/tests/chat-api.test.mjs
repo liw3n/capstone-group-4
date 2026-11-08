@@ -66,6 +66,20 @@ test('chat sends adviser, session and message without a CRM-selected campaign', 
   });
 });
 
+test('chat queries inside an opened campaign carry its campaign_id', async (t) => {
+  let body;
+  t.mock.method(globalThis, 'fetch', async (_url, init) => {
+    body = JSON.parse(init.body);
+    return new Response(JSON.stringify({ user: false, timestamp: '', ai_answer: 'ok' }), { status: 200 });
+  });
+  await api.sendChatMessage('synthetic-adviser', 'synthetic-session', 'Who needs a follow-up?',
+    undefined, 'camp-1');
+  assert.deepEqual(body, {
+    fa_id: 'synthetic-adviser', session_id: 'synthetic-session', campaign_id: 'camp-1',
+    message_content: 'Who needs a follow-up?',
+  });
+});
+
 test('chat cancellation still propagates as an abort', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => {
     throw new DOMException('Aborted', 'AbortError');
