@@ -142,17 +142,51 @@ def test_campaign_follow_up_returns_profiles_with_grounded_reasons(monkeypatch):
     }
     assert result["total_unreplied_clients"] == 2
     assert result["requested_limit"] == 1
+    assert result["compared_candidates"] == 2
     assert "already been contacted" in result["additional_instructions"]
     assert "not a pre-contact eligible audience" in result["additional_instructions"]
+    assert "Compare all 2 candidates and recommend the top 1" in result[
+        "additional_instructions"
+    ]
     assert result["candidates"] == [{
-        "client_id": "client-002",
-        "portfolio_data": {"client_id": "client-002", "portfolio_value": 125000},
-        "profile_data": {"client_id": "client-002", "name": "Demo Client B", "age": 70},
+        "client_id": client_id,
+        "portfolio_data": {"client_id": client_id, "portfolio_value": 125000},
+        "profile_data": {"client_id": client_id, "name": "Demo Client B", "age": 70},
         "last_engagement_date": engagement_date.isoformat(),
-    }]
+    } for client_id in ("client-002", "client-003")]
     assert "Dynamically formulate and explain" in result["additional_instructions"]
-    assert portfolio_requests == ["client-002"]
-    assert profile_requests == ["client-002"]
+    assert portfolio_requests == ["client-002", "client-003"]
+    assert profile_requests == ["client-002", "client-003"]
+
+
+def test_campaign_follow_up_compares_every_unreplied_client(monkeypatch):
+    clients = [
+        (f"client-{day:03d}", datetime(2026, 8, day % 28 + 1, 9, 0))
+        for day in range(50)
+    ] + [("client-never", None)]
+    monkeypatch.setattr(server_module, "get_campaign_info", lambda campaign_id, *_scope: {
+        "campaign_id": campaign_id,
+    })
+    monkeypatch.setattr(server_module, "get_client_follow_up_list", lambda *_args: clients)
+    monkeypatch.setattr(server_module, "fetch_client_portfolio", lambda client_id: {})
+    monkeypatch.setattr(server_module, "fetch_client_profile", lambda client_id, *_scope: {})
+
+    registry = MCPToolRegistry(server).bind_scope(
+        RequestScope(DEMO_FA), campaign_id="camp-1"
+    )
+    result = json.loads(registry.execute("campaign_follow_up", '{"limit":25}'))
+
+    dates = [item["last_engagement_date"] for item in result["candidates"]]
+    assert result["total_unreplied_clients"] == 51
+    assert result["compared_candidates"] == 51
+    assert {item["client_id"] for item in result["candidates"]} == {
+        client_id for client_id, _ in clients
+    }
+    assert dates[0] is None
+    assert dates[1:] == sorted(dates[1:])
+    assert "Compare all 51 candidates and recommend the top 25" in result[
+        "additional_instructions"
+    ]
 
 
 def _record_follow_up_campaign(monkeypatch, resolution=None):

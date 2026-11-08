@@ -1,6 +1,7 @@
 import logging
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -106,7 +107,15 @@ def campaign_follow_up(
             ),
         ),
     ] = None,
-    limit: Annotated[int, Field(ge=1, le=100, strict=True)] = 5,
+    limit: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=25,
+            strict=True,
+            description="How many of the compared candidates to recommend for follow-up.",
+        ),
+    ] = 5,
 ) -> dict:
     """Find post-contact follow-ups: clients already contacted for this campaign
     who have no recorded reply/response, with their portfolio profiles. Use this
@@ -118,6 +127,8 @@ def campaign_follow_up(
     Campaigns workspace), that campaign is used and the campaign argument is
     ignored. Otherwise pass the campaign name or ID the adviser mentioned.
 
+    Returns profile and portfolio data for every unreplied client (oldest
+    contact first) so they can all be compared; recommend the top `limit`.
     Do ranking and product suitability assessment based on the client's portfolio or profile to identify the most suitable clients for follow-up.
     Adviser and tenant scope come from API request metadata, never from model arguments.
     """
@@ -192,9 +203,14 @@ def campaign_follow_up(
         }
     client_info = get_client_follow_up_list(campaign_id, fa_id, tenant_id)
 
-    # 2. Fetch profile and portfolio context for these clients
+    # 2. Fetch profile and portfolio context for every candidate, oldest contact
+    # first, so the model compares the whole no-reply list before choosing.
+    client_info = sorted(
+        client_info,
+        key=lambda row: (row[1] is not None, row[1] or datetime.min),
+    )
     client_profiles = []
-    for client_id, last_engagement_date in client_info[:limit]:
+    for client_id, last_engagement_date in client_info:
         portfolio = fetch_client_portfolio(client_id)
         profile = fetch_client_profile(client_id, fa_id, tenant_id)
         client_profiles.append({
@@ -203,14 +219,18 @@ def campaign_follow_up(
             "profile_data": profile,
             "last_engagement_date": last_engagement_date.isoformat() if last_engagement_date else None,
         })
+    recommend_count = min(limit, len(client_profiles))
 
     additional_instructions = (
         "These candidates have already been contacted and have no recorded reply; "
         "they are not a pre-contact eligible audience. Do not add other clients or "
         "claim a reply status not present in the results. "
-        "Dynamically formulate and explain a tailored follow-up justification for each candidate "
-        "by evaluating their specific portfolio data, profile attributes, and the elapsed time since "
-        "their last engagement date against the campaign's eligibility criteria. "
+        f"Compare all {len(client_profiles)} candidates and recommend the top "
+        f"{recommend_count} for follow-up, ranked. "
+        "Dynamically formulate and explain a tailored follow-up justification for each "
+        "recommended candidate by evaluating their specific portfolio data, profile "
+        "attributes, and the elapsed time since their last engagement date against the "
+        "campaign's eligibility criteria. "
         "Do not infer suitability or priority from any other context. "
         "This tool does not check outreach consent or authorise another communication; "
         "adviser confirmation and separate channel consent checks are required before outreach."
@@ -221,6 +241,7 @@ def campaign_follow_up(
         "campaign_info": campaign_info,
         "total_unreplied_clients": len(client_info),
         "requested_limit": limit,
+        "compared_candidates": len(client_profiles),
         "candidates": client_profiles,
         "additional_instructions": additional_instructions,
     }

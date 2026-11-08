@@ -477,7 +477,10 @@ the campaign who have no recorded reply/response. Do not use it for pre-contact
 audience discovery or criteria filtering.
 
 Model-facing arguments: `campaign` (optional campaign name or ID from the
-current user message) and `limit` (integer 1-100, default 5). When the API
+current user message) and `limit` (integer 1-100, default 5: how many compared
+candidates to recommend). Profile and portfolio data are returned for every
+unreplied client, oldest contact first, so the assistant compares them all
+before recommending the top `limit`. When the API
 request includes a selected `campaign_id` (sent while the adviser has a campaign
 open in the Campaigns workspace), that server-bound context takes precedence
 over the model argument; otherwise a UUID argument is used as the campaign ID,
