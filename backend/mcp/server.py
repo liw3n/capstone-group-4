@@ -132,119 +132,126 @@ def campaign_follow_up(
     Do ranking and product suitability assessment based on the client's portfolio or profile to identify the most suitable clients for follow-up.
     Adviser and tenant scope come from API request metadata, never from model arguments.
     """
-    logger.info("MCP tool called: campaign_follow_up")
-    request = ctx.request_context
-    metadata = request.meta if request is not None else None
-    if metadata is not None and not isinstance(metadata, dict):
-        metadata = metadata.model_dump()
+    try:
+        logger.info("MCP tool called: campaign_follow_up")
+        request = ctx.request_context
+        metadata = request.meta if request is not None else None
+        if metadata is not None and not isinstance(metadata, dict):
+            metadata = metadata.model_dump()
 
-    pulse_scope = metadata.get("pulse_scope") if isinstance(metadata, dict) else None
-    fa_id = pulse_scope.get("fa_id") if isinstance(pulse_scope, dict) else None
-    if not isinstance(fa_id, str) or not fa_id.strip():
-        return {
-            "error": "Adviser request context is required",
-            "error_code": "missing_context",
-        }
-    raw_tenant_id = pulse_scope.get("tenant_id", DEMO_TENANT)
-    if not isinstance(raw_tenant_id, str) or not raw_tenant_id.strip():
-        return {"error": "Tenant request context is invalid", "error_code": "missing_context"}
-    tenant_id = _storage_tenant_id(RequestScope(fa_id, raw_tenant_id))
+        pulse_scope = metadata.get("pulse_scope") if isinstance(metadata, dict) else None
+        fa_id = pulse_scope.get("fa_id") if isinstance(pulse_scope, dict) else None
+        if not isinstance(fa_id, str) or not fa_id.strip():
+            return {
+                "error": "Adviser request context is required",
+                "error_code": "missing_context",
+            }
+        raw_tenant_id = pulse_scope.get("tenant_id", DEMO_TENANT)
+        if not isinstance(raw_tenant_id, str) or not raw_tenant_id.strip():
+            return {"error": "Tenant request context is invalid", "error_code": "missing_context"}
+        tenant_id = _storage_tenant_id(RequestScope(fa_id, raw_tenant_id))
 
-    # 1. Resolve campaign source: a server-bound campaign scope takes precedence,
-    # otherwise resolve the campaign named by the adviser.
-    selected_campaign_id = metadata.get("campaign_id") if isinstance(metadata, dict) else None
-    if selected_campaign_id is not None:
-        if (
-            not isinstance(selected_campaign_id, str)
-            or re.fullmatch(CAMPAIGN_ID_PATTERN, selected_campaign_id) is None
-        ):
-            return {
-                "error": "Selected campaign context is invalid",
-                "error_code": "invalid_campaign_context",
-            }
-        campaign_id = selected_campaign_id
-    else:
-        campaign_query = campaign.strip() if isinstance(campaign, str) else ""
-        if not campaign_query:
-            return {
-                "error": (
-                    "Campaign name or ID is missing. Extract the campaign name from the "
-                    "adviser's message and pass it as 'campaign'; if none was mentioned, "
-                    "ask the adviser which campaign they mean."
-                ),
-                "error_code": "missing_campaign",
-            }
-        if _is_uuid(campaign_query):
-            campaign_id = campaign_query
+        # 1. Resolve campaign source: a server-bound campaign scope takes precedence,
+        # otherwise resolve the campaign named by the adviser.
+        selected_campaign_id = metadata.get("campaign_id") if isinstance(metadata, dict) else None
+        if selected_campaign_id is not None:
+            if (
+                not isinstance(selected_campaign_id, str)
+                or re.fullmatch(CAMPAIGN_ID_PATTERN, selected_campaign_id) is None
+            ):
+                return {
+                    "error": "Selected campaign context is invalid",
+                    "error_code": "invalid_campaign_context",
+                }
+            campaign_id = selected_campaign_id
         else:
-            # Share resolve_campaign's adviser-scoped name matching 
-            resolution = execute_resolve_campaign({"campaign_name": campaign_query}, metadata)
-            if "error_code" in resolution:
-                return {"error": resolution["error"], "error_code": resolution["error_code"]}
-            if resolution["status"] == "ambiguous":
+            campaign_query = campaign.strip() if isinstance(campaign, str) else ""
+            if not campaign_query:
                 return {
                     "error": (
-                        "Several campaigns match that name. Ask the adviser which "
-                        "campaign they mean."
+                        "Campaign name or ID is missing. Extract the campaign name from the "
+                        "adviser's message and pass it as 'campaign'; if none was mentioned, "
+                        "ask the adviser which campaign they mean."
                     ),
-                    "error_code": "campaign_unavailable",
-                    "campaign_candidates": resolution["candidates"],
+                    "error_code": "missing_campaign",
                 }
-            if resolution["status"] != "matched":
-                return {"error": resolution["message"], "error_code": "campaign_unavailable"}
-            campaign_id = resolution["campaign_id"]
+            if _is_uuid(campaign_query):
+                campaign_id = campaign_query
+            else:
+                # Share resolve_campaign's adviser-scoped name matching 
+                resolution = execute_resolve_campaign({"campaign_name": campaign_query}, metadata)
+                if "error_code" in resolution:
+                    return {"error": resolution["error"], "error_code": resolution["error_code"]}
+                if resolution["status"] == "ambiguous":
+                    return {
+                        "error": (
+                            "Several campaigns match that name. Ask the adviser which "
+                            "campaign they mean."
+                        ),
+                        "error_code": "campaign_unavailable",
+                        "campaign_candidates": resolution["candidates"],
+                    }
+                if resolution["status"] != "matched":
+                    return {"error": resolution["message"], "error_code": "campaign_unavailable"}
+                campaign_id = resolution["campaign_id"]
 
-    try:
-        campaign_info = get_campaign_info(campaign_id, fa_id, tenant_id)
-    except ValueError as error:
+        try:
+            campaign_info = get_campaign_info(campaign_id, fa_id, tenant_id)
+        except ValueError as error:
+            return {
+                "error": f"{error}. Ask the adviser to confirm the exact campaign name.",
+                "error_code": "campaign_unavailable",
+            }
+        client_info = get_client_follow_up_list(campaign_id, fa_id, tenant_id)
+
+        # 2. Fetch profile and portfolio context for every candidate, oldest contact
+        # first, so the model compares the whole no-reply list before choosing.
+        client_info = sorted(
+            client_info,
+            key=lambda row: (row[1] is not None, row[1] or datetime.min),
+        )
+        client_profiles = []
+        for client_id, last_engagement_date in client_info:
+            portfolio = fetch_client_portfolio(client_id)
+            profile = fetch_client_profile(client_id, fa_id, tenant_id)
+            client_profiles.append({
+                "client_id": client_id,
+                "portfolio_data": portfolio,
+                "profile_data": profile,
+                "last_engagement_date": last_engagement_date.isoformat() if last_engagement_date else None,
+            })
+        recommend_count = min(limit, len(client_profiles))
+
+        additional_instructions = (
+            "These candidates have already been contacted and have no recorded reply; "
+            "they are not a pre-contact eligible audience. Do not add other clients or "
+            "claim a reply status not present in the results. "
+            f"Compare all {len(client_profiles)} candidates and recommend the top "
+            f"{recommend_count} for follow-up, ranked. "
+            "Dynamically formulate and explain a tailored follow-up justification for each "
+            "recommended candidate by evaluating their specific portfolio data, profile "
+            "attributes, and the elapsed time since their last engagement date against the "
+            "campaign's eligibility criteria. "
+            "Do not infer suitability or priority from any other context. "
+            "This tool does not check outreach consent or authorise another communication; "
+            "adviser confirmation and separate channel consent checks are required before outreach."
+        )
+
+        # 3. Return the rich data back to the LLM
         return {
-            "error": f"{error}. Ask the adviser to confirm the exact campaign name.",
-            "error_code": "campaign_unavailable",
+            "campaign_info": campaign_info,
+            "total_unreplied_clients": len(client_info),
+            "requested_limit": limit,
+            "compared_candidates": len(client_profiles),
+            "candidates": client_profiles,
+            "additional_instructions": additional_instructions,
         }
-    client_info = get_client_follow_up_list(campaign_id, fa_id, tenant_id)
 
-    # 2. Fetch profile and portfolio context for every candidate, oldest contact
-    # first, so the model compares the whole no-reply list before choosing.
-    client_info = sorted(
-        client_info,
-        key=lambda row: (row[1] is not None, row[1] or datetime.min),
-    )
-    client_profiles = []
-    for client_id, last_engagement_date in client_info:
-        portfolio = fetch_client_portfolio(client_id)
-        profile = fetch_client_profile(client_id, fa_id, tenant_id)
-        client_profiles.append({
-            "client_id": client_id,
-            "portfolio_data": portfolio,
-            "profile_data": profile,
-            "last_engagement_date": last_engagement_date.isoformat() if last_engagement_date else None,
-        })
-    recommend_count = min(limit, len(client_profiles))
-
-    additional_instructions = (
-        "These candidates have already been contacted and have no recorded reply; "
-        "they are not a pre-contact eligible audience. Do not add other clients or "
-        "claim a reply status not present in the results. "
-        f"Compare all {len(client_profiles)} candidates and recommend the top "
-        f"{recommend_count} for follow-up, ranked. "
-        "Dynamically formulate and explain a tailored follow-up justification for each "
-        "recommended candidate by evaluating their specific portfolio data, profile "
-        "attributes, and the elapsed time since their last engagement date against the "
-        "campaign's eligibility criteria. "
-        "Do not infer suitability or priority from any other context. "
-        "This tool does not check outreach consent or authorise another communication; "
-        "adviser confirmation and separate channel consent checks are required before outreach."
-    )
-
-    # 3. Return the rich data back to the LLM
-    return {
-        "campaign_info": campaign_info,
-        "total_unreplied_clients": len(client_info),
-        "requested_limit": limit,
-        "compared_candidates": len(client_profiles),
-        "candidates": client_profiles,
-        "additional_instructions": additional_instructions,
-    }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "error_code": "failed_tool_call"
+        }
 
 
 def _request_metadata(ctx: Context) -> dict | None:
