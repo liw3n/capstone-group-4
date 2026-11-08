@@ -207,6 +207,7 @@ export function sendChatMessage(
   sessionId: string,
   messageContent: string,
   signal?: AbortSignal,
+  campaignId?: string | null,
 ): Promise<QueryResponse> {
   return request<QueryResponse>(apiUrl('/api/chat/query'), {
     method: 'POST',
@@ -214,6 +215,9 @@ export function sendChatMessage(
     body: JSON.stringify({
       fa_id: faId,
       session_id: sessionId,
+      // Present only while the adviser is inside an opened campaign, so MCP
+      // tools receive it as request metadata instead of relying on the model.
+      ...(campaignId ? { campaign_id: campaignId } : {}),
       message_content: messageContent,
     }),
   });

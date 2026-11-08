@@ -194,6 +194,8 @@ mock_data_scripts=(
     mock_contact.sql
     mock_campaign.sql
     mock_campaign_member.sql
+    20261107_add_demo_contacts.sql
+    20261107_add_demo_members.sql
 )
 for table_script in "${mock_data_scripts[@]}"; do
     if [[ ! -f "$mock_data_dir/$table_script" ]]; then

@@ -1,7 +1,31 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import {
+  CSSProperties,
+  FormEvent,
+  PointerEvent as ReactPointerEvent,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Bot, FileText, MessageCircle, Plus, Send, X } from 'lucide-react';
+import {
+  Bot,
+  FileText,
+  Maximize2,
+  MessageCircle,
+  Minimize2,
+  Plus,
+  Send,
+  X,
+} from 'lucide-react';
 import AssistantMessage from './AssistantMessage';
+import {
+  CHAT_PANEL_SIZE_STORAGE_KEY,
+  ChatPanelSize,
+  DEFAULT_CHAT_PANEL_SIZE,
+  clampChatPanelSize,
+  parseStoredChatPanelSize,
+  resizeFromTopLeft,
+} from '../lib/chatPanelSize';
 import {
   ChatMessage,
   ChatSession,
@@ -15,6 +39,8 @@ import { getCampaignDraft } from '../services/campaignDraftApi';
 
 interface ChatPanelProps {
   advisorId: string;
+  /** The active campaign the adviser has opened, used to scope chat tools. */
+  scopedCampaign?: { id: string; name: string } | null;
   onReviewCampaignDraft?: (draft: CampaignDraftArtifact, sessionId: string) => void;
 }
 
@@ -44,15 +70,45 @@ function formatSessionTimestamp(timestamp: string): string {
   }).format(date);
 }
 
+function readViewport(): ChatPanelSize {
+  if (typeof window === 'undefined') return DEFAULT_CHAT_PANEL_SIZE;
+  return { width: window.innerWidth, height: window.innerHeight };
+}
+
+function readStoredPanelSize(): ChatPanelSize {
+  if (typeof window === 'undefined') return DEFAULT_CHAT_PANEL_SIZE;
+  try {
+    return (
+      parseStoredChatPanelSize(window.localStorage.getItem(CHAT_PANEL_SIZE_STORAGE_KEY)) ??
+      DEFAULT_CHAT_PANEL_SIZE
+    );
+  } catch {
+    return DEFAULT_CHAT_PANEL_SIZE;
+  }
+}
+
+function storePanelSize(size: ChatPanelSize) {
+  try {
+    window.localStorage.setItem(CHAT_PANEL_SIZE_STORAGE_KEY, JSON.stringify(size));
+  } catch {
+    // Size persistence is a convenience; ignore blocked storage.
+  }
+}
+
 function titleFromMessage(message: string): string {
   return `${message.split(/\s+/).slice(0, 5).join(' ')}...`;
 }
 
 export default function ChatPanel({
   advisorId,
+  scopedCampaign = null,
   onReviewCampaignDraft,
 }: ChatPanelProps) {
   const [open, setOpen] = useState(false);
+  const [panelSize, setPanelSize] = useState<ChatPanelSize>(readStoredPanelSize);
+  const [maximized, setMaximized] = useState(false);
+  const [viewport, setViewport] = useState<ChatPanelSize>(readViewport);
+  const resizeStart = useRef<{ x: number; y: number; size: ChatPanelSize } | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -74,6 +130,58 @@ export default function ChatPanel({
   const activeCampaignDraftId = sessions.find(
     (session) => session.session_id === activeSessionId,
   )?.active_campaign_draft_id;
+
+  useEffect(() => {
+    if (!open) return;
+    const handleResize = () => setViewport(readViewport());
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [open]);
+
+  const effectivePanelSize = maximized
+    ? clampChatPanelSize({ width: Infinity, height: Infinity }, viewport)
+    : clampChatPanelSize(panelSize, viewport);
+  const panelStyle = {
+    '--chat-panel-width': `${effectivePanelSize.width}px`,
+    '--chat-panel-height': `${effectivePanelSize.height}px`,
+  } as CSSProperties;
+
+  const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    resizeStart.current = { x: event.clientX, y: event.clientY, size: effectivePanelSize };
+    setMaximized(false);
+  };
+
+  const continueResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = resizeStart.current;
+    if (!start) return;
+    setPanelSize(
+      resizeFromTopLeft(
+        start.size,
+        event.clientX - start.x,
+        event.clientY - start.y,
+        readViewport(),
+      ),
+    );
+  };
+
+  const endResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!resizeStart.current) return;
+    resizeStart.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    setPanelSize((size) => {
+      storePanelSize(size);
+      return size;
+    });
+  };
+
+  const resetPanelSize = () => {
+    setMaximized(false);
+    setPanelSize(DEFAULT_CHAT_PANEL_SIZE);
+    storePanelSize(DEFAULT_CHAT_PANEL_SIZE);
+  };
 
   useEffect(() => {
     loadedForAdvisor.current = null;
@@ -250,6 +358,7 @@ export default function ChatPanel({
         sessionId,
         content,
         controller.signal,
+        scopedCampaign?.id,
       );
       if (controller.signal.aborted) return;
       setSessions((current) =>
@@ -321,8 +430,22 @@ export default function ChatPanel({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.98 }}
             transition={{ duration: 0.16 }}
-            className="fixed inset-x-3 bottom-3 z-50 flex h-[min(640px,calc(100vh-24px))] flex-col overflow-hidden rounded-xl border border-line bg-white shadow-2xl sm:inset-x-auto sm:bottom-5 sm:right-5 sm:w-[460px]"
+            style={panelStyle}
+            className="fixed inset-x-3 bottom-3 z-50 flex h-[min(640px,calc(100vh-24px))] flex-col overflow-hidden rounded-xl border border-line bg-white shadow-2xl sm:inset-x-auto sm:bottom-5 sm:right-5 sm:h-[var(--chat-panel-height)] sm:w-[var(--chat-panel-width)]"
           >
+            <div
+              role="separator"
+              aria-label="Resize PULSE assistant"
+              title="Drag to resize · double-click to reset"
+              onPointerDown={startResize}
+              onPointerMove={continueResize}
+              onPointerUp={endResize}
+              onPointerCancel={endResize}
+              onDoubleClick={resetPanelSize}
+              className="absolute left-0 top-0 z-10 hidden h-4 w-4 cursor-nwse-resize touch-none sm:block"
+            >
+              <span className="absolute left-1 top-1 h-2 w-2 rounded-tl-sm border-l-2 border-t-2 border-white/60" />
+            </div>
             <header className="flex items-center justify-between border-b border-line bg-ink px-4 py-3 text-white">
               <div className="flex items-center gap-2.5">
                 <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/15">
@@ -333,21 +456,35 @@ export default function ChatPanel({
                   <p className="text-[11px] text-white/65">Campaign and adviser support</p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                aria-label="Close PULSE assistant"
-                className="rounded p-1.5 text-white/70 hover:bg-white/10 hover:text-white"
-              >
-                <X size={17} />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setMaximized((value) => !value)}
+                  aria-label={maximized ? 'Restore PULSE assistant size' : 'Expand PULSE assistant'}
+                  title={maximized ? 'Restore size' : 'Expand'}
+                  className="hidden rounded p-1.5 text-white/70 hover:bg-white/10 hover:text-white sm:block"
+                >
+                  {maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  aria-label="Close PULSE assistant"
+                  className="rounded p-1.5 text-white/70 hover:bg-white/10 hover:text-white"
+                >
+                  <X size={17} />
+                </button>
+              </div>
             </header>
 
-            <div className="border-b border-line-soft bg-link-soft px-3 py-2 text-[12px] text-body">
-              <p className="font-medium">
-                Name a campaign in chat to request client recommendations.
-              </p>
-            </div>
+            {scopedCampaign && (
+              <div className="border-b border-line-soft bg-link-soft px-3 py-2 text-[12px] text-body">
+                <p className="font-medium">
+                  Scoped to <span className="font-semibold">{scopedCampaign.name}</span>.
+                  Go back to the campaign list to ask about other campaigns.
+                </p>
+              </div>
+            )}
 
             <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2">
               <select

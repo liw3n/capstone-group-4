@@ -3,7 +3,7 @@
 Status: deployed on 5 November 2026; startup/readiness passed, authenticated login
 and full hosted acceptance pending. This replaces the
 earlier paid-compute design and the expiring Render Free database plan.
-Revised 5 November 2026. All services must remain free.
+Revised 7 November 2026. All services must remain free.
 Operational instructions are in [deployment.md](deployment.md).
 
 Live demo: https://pulse-demo-nail.onrender.com, deployed from commit `2ab0408`.
@@ -29,6 +29,7 @@ See the runbook's deployment record for verified results and outstanding checks.
 | Database | deploy/database.py and deploy/start.sh; explicit SQL order, advisory lock, transactional checksum ledger | Repeat startup preserves edits; failures roll back; seeds run only once |
 | Access | Shared Basic middleware and same-origin mutation checks | Assets/API protected, cross-origin writes rejected, missing settings stop hosted startup |
 | Health | Generic /live and bounded DB query + MCP tool discovery /ready | Dependency failure returns 503 without secrets or a model call |
+| Startup supervision | service_runner.py launches both children concurrently, logs progress, disables hosted FastMCP update checks and enforces a 120-second readiness deadline | Child failure or timeout stops both processes; hosted rollout verification pending |
 | Render | render.yaml creates one Free web service; secret DATABASE_URL supplied manually; manual releases | Dashboard confirms Free service and Supabase session-pooler URL with TLS |
 | Supabase | Operator creates a separate Free project and disables Data API before bootstrap | Free plan, correct region, TLS session connection and no public table API access verified |
 | Rehearsal | compose.yaml and deployment tests | Local image and fresh PostgreSQL smoke test |
@@ -39,6 +40,16 @@ shell access are unavailable. Seeding is an explicit Blueprint setting with
 once-only database bookkeeping. An application rollback does not roll back SQL.
 Changes to already applied SQL fail checksum validation and require a new
 explicit migration file; do not delete the ledger to bypass the check.
+The 7 November seed-history repair restores the original deployed seed files and
+adds two versioned `SEED_UPDATES` for additional synthetic contacts/members.
+Existing fully seeded databases receive these once-only updates even when initial
+seeding is disabled. See deployment.md for guarded edits and rollout instructions.
+
+The subsequent `095fe02` rollout committed bootstrap successfully but stalled
+before readiness and was cancelled. Startup supervision now separates bootstrap
+exit, child launch and readiness in logs. This is a diagnostic and lifecycle
+hardening change, not a confirmed root-cause resolution; verify a new manual
+deployment before marking the incident resolved. Automatic deployment remains off.
 
 Both retrieval and campaign-preview signing secrets are stable and generated
 through Render. `/live` and `/ready` alone bypass shared authentication so Render

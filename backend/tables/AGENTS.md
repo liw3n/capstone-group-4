@@ -27,6 +27,10 @@ synthetic seed scripts are tracked in `pulse_schema_migration`.
 - Mark synthetic seed data clearly and never copy company production hosts,
   identifiers, or real client data into SQL.
 - Never place production credentials or data dumps here.
+- Hosted baseline seed files are immutable after deployment, including whitespace.
+  Add new versioned synthetic updates to `deploy/database.py`'s `SEED_UPDATES`
+  and the local setup manifest instead of editing applied files. Preserve existing
+  edits/deletions, and test upgrades from the original deployed baseline.
 
 ## Known gaps (current state)
 
