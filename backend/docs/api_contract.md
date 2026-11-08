@@ -477,9 +477,13 @@ audience discovery or criteria filtering.
 
 Model-facing arguments: `campaign` (optional campaign name or ID from the
 current user message) and `limit` (integer 1-100, default 5). When the API
-request includes a selected `campaign_id`, that server-bound context takes
-precedence over the model argument; otherwise the campaign from the current
-message is used. The API supplies the adviser identity through
+request includes a selected `campaign_id` (sent while the adviser has a campaign
+open in the Campaigns workspace), that server-bound context takes precedence
+over the model argument; otherwise a UUID argument is used as the campaign ID,
+and a name is resolved with the same adviser-scoped matching as
+`resolve_campaign` (active, in-schedule campaigns only). With neither, the tool returns `missing_campaign`; an ambiguous
+or unknown name returns `campaign_unavailable`, and a malformed scope returns
+`invalid_campaign_context`. No client data is returned on these errors. The API supplies the adviser identity through
 `_meta.pulse_scope`; `fa_id` is not a model argument and is never requested
 from the adviser by the assistant. The tool uses that scoped adviser ID when
 retrieving unreplied clients. Each candidate includes a `follow_up_reason`

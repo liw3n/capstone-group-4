@@ -14,14 +14,19 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.tools.campaign_follow_up import (
-    get_campaign_id,
     get_client_follow_up_list,
     fetch_client_portfolio,
     fetch_client_profile,
     get_campaign_info
 )
 
-from app.campaigns.repository import CAMPAIGN_ID_PATTERN, DEMO_TENANT, RequestScope, _storage_tenant_id
+from app.campaigns.repository import (
+    CAMPAIGN_ID_PATTERN,
+    DEMO_TENANT,
+    RequestScope,
+    _is_uuid,
+    _storage_tenant_id,
+)
 from app.campaigns.email import (
     ConfirmCampaignEmailArguments,
     PrepareCampaignEmailArguments,
@@ -91,11 +96,12 @@ def campaign_follow_up(
     campaign: Annotated[
         str | None,
         Field(
+            max_length=200,
             description=(
                 "The campaign name or ID explicitly mentioned by the user in the conversation "
-                "(e.g., 'Q3 Wealth Campaign', 'Retirement Boost'). Always extract this from the "
-                "user's query when a session campaign ID is not already active in metadata."
-            )
+                "(e.g., 'Q3 Wealth Campaign', 'Retirement Boost'). Used only when the chat "
+                "is not already scoped to a campaign."
+            ),
         ),
     ] = None,
     limit: Annotated[int, Field(ge=1, le=100, strict=True)] = 5,
@@ -104,9 +110,13 @@ def campaign_follow_up(
     who have no recorded reply/response, with their portfolio profiles. Use this
     only to find contacted clients awaiting a response, not to discover or filter
     a pre-contact eligible audience. For pre-contact criteria matching, use
-    recommend_clients_for_campaign. 
+    recommend_clients_for_campaign.
 
-    Do ranking and product suitability assessment based on the client's portfolio or profile to identify the most suitable clients for follow-up. 
+    When the chat is scoped to a campaign (the adviser opened it in the
+    Campaigns workspace), that campaign is used and the campaign argument is
+    ignored. Otherwise pass the campaign name or ID the adviser mentioned.
+
+    Do ranking and product suitability assessment based on the client's portfolio or profile to identify the most suitable clients for follow-up.
     Adviser and tenant scope come from API request metadata, never from model arguments.
     """
     logger.info("MCP tool called: campaign_follow_up")
@@ -114,7 +124,7 @@ def campaign_follow_up(
     metadata = request.meta if request is not None else None
     if metadata is not None and not isinstance(metadata, dict):
         metadata = metadata.model_dump()
-    
+
     pulse_scope = metadata.get("pulse_scope") if isinstance(metadata, dict) else None
     fa_id = pulse_scope.get("fa_id") if isinstance(pulse_scope, dict) else None
     if not isinstance(fa_id, str) or not fa_id.strip():
@@ -127,29 +137,57 @@ def campaign_follow_up(
         return {"error": "Tenant request context is invalid", "error_code": "missing_context"}
     tenant_id = _storage_tenant_id(RequestScope(fa_id, raw_tenant_id))
 
-    # 1. Resolve campaign source: prioritize metadata if present, otherwise use the parsed tool argument
+    # 1. Resolve campaign source: a server-bound campaign scope takes precedence,
+    # otherwise resolve the campaign named by the adviser.
     selected_campaign_id = metadata.get("campaign_id") if isinstance(metadata, dict) else None
-    
-    campaign_query = None
     if selected_campaign_id is not None:
-        if not isinstance(selected_campaign_id, str):
+        if (
+            not isinstance(selected_campaign_id, str)
+            or re.fullmatch(CAMPAIGN_ID_PATTERN, selected_campaign_id) is None
+        ):
             return {
                 "error": "Selected campaign context is invalid",
                 "error_code": "invalid_campaign_context",
             }
-        campaign_query = selected_campaign_id
+        campaign_id = selected_campaign_id
     else:
-        campaign_query = campaign
+        campaign_query = campaign.strip() if isinstance(campaign, str) else ""
+        if not campaign_query:
+            return {
+                "error": (
+                    "Campaign name or ID is missing. Extract the campaign name from the "
+                    "adviser's message and pass it as 'campaign'; if none was mentioned, "
+                    "ask the adviser which campaign they mean."
+                ),
+                "error_code": "missing_campaign",
+            }
+        if _is_uuid(campaign_query):
+            campaign_id = campaign_query
+        else:
+            # Share resolve_campaign's adviser-scoped name matching 
+            resolution = execute_resolve_campaign({"campaign_name": campaign_query}, metadata)
+            if "error_code" in resolution:
+                return {"error": resolution["error"], "error_code": resolution["error_code"]}
+            if resolution["status"] == "ambiguous":
+                return {
+                    "error": (
+                        "Several campaigns match that name. Ask the adviser which "
+                        "campaign they mean."
+                    ),
+                    "error_code": "campaign_unavailable",
+                    "campaign_candidates": resolution["candidates"],
+                }
+            if resolution["status"] != "matched":
+                return {"error": resolution["message"], "error_code": "campaign_unavailable"}
+            campaign_id = resolution["campaign_id"]
 
-    # If both are missing, return a descriptive error that prompts the model to extract it from user text
-    if not isinstance(campaign_query, str) or not campaign_query.strip():
+    try:
+        campaign_info = get_campaign_info(campaign_id, fa_id, tenant_id)
+    except ValueError as error:
         return {
-            "error": "Campaign name or ID is missing. Please extract the campaign name directly from the user's message and pass it into the 'campaign' parameter.",
-            "error_code": "missing_campaign",
+            "error": f"{error}. Ask the adviser to confirm the exact campaign name.",
+            "error_code": "campaign_unavailable",
         }
-
-    campaign_id = get_campaign_id(campaign_query, fa_id, tenant_id)
-    campaign_info = get_campaign_info(campaign_id, fa_id, tenant_id)
     client_info = get_client_follow_up_list(campaign_id, fa_id, tenant_id)
 
     # 2. Fetch profile and portfolio context for these clients

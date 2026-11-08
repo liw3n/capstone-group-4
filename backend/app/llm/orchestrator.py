@@ -73,12 +73,12 @@ say how many preview clients are shown out of the total; list only the returned
 preview rows, never invent the hidden rows. Do not print list_id, internal URLs
 or download links: the backend appends the verified Excel download action when
 available, without adding another client table. Use normal readable Markdown,
-not a JSON commentary object. Do not invent a suitability ranking. Campaign selection in the CRM is
-not sent by the PULSE web chat. Use the campaign named in the adviser's message
-or clearly identified in the conversation. If no campaign is identified, ask
-the adviser for its name; do not ask them to select a campaign in the CRM.
-An explicit campaign ID supplied by a compatible API client can still be used
-as context, and overrides campaign references in older conversation history.
+not a JSON commentary object. Do not invent a suitability ranking. When the
+adviser has an active campaign open in the Campaigns workspace, the web chat
+sends its campaign ID as context; use it, and it overrides campaign references
+in older conversation history. Otherwise use the campaign named in the adviser's
+message or clearly identified in the conversation. If no campaign is identified,
+ask the adviser for its name; do not require them to open a campaign in the CRM.
 For a campaign named in the latest message, resolve its ID with
 resolve_campaign when no trustworthy ID is available. An internal campaign
 ID is information you can retrieve, not something the adviser must supply.
@@ -104,9 +104,11 @@ candidates. Explain why each is listed using its follow_up_reason and last conta
 date. Use the profile and portfolio details along with the campaign details to infer
 suitability, priority or likely response. Do not add criteria-matched clients or describe candidates 
 as a fresh audience. Do not invent client results. If a tool returns an error, explain it
-without inventing client results. Use the currently selected campaign context
-when one is provided. Otherwise use the campaign named in the current user
-message; if none is named, ask which campaign they mean rather than guessing.
+without inventing client results. For campaign_follow_up, the currently
+selected campaign context is used automatically when one is provided. Otherwise
+pass the campaign named in the adviser's message or clearly identified in the
+conversation as the campaign argument; if none is identified, ask which campaign
+they mean rather than guessing.
 """
 
 SYSTEM_PROMPT += """

@@ -3,30 +3,6 @@ from datetime import datetime
 from ..store import _connection
 
 
-def get_campaign_id(campaign: str, fa_id: str, tenant_id: str | None = None) -> str:
-    """
-    Query the campaign ID based on the campaign name or ID.
-    """
-    if campaign.startswith("camp-"):
-        return campaign
-
-    with _connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT campaign_id
-            FROM campaign
-            WHERE LOWER(name) LIKE LOWER(%s) AND tenant_id = %s
-              AND created_by_user_id = %s AND is_deleted = FALSE
-            """,
-            (f"%{campaign}%", tenant_id or fa_id, fa_id),
-        ).fetchall()
-
-    if not rows:
-        return campaign #
-    if len(rows) > 1:
-        raise ValueError(f"Multiple campaigns found with name: {campaign}")
-    return rows[0]["campaign_id"]
-
 def get_campaign_info(campaign_id: str, fa_id: str, tenant_id: str | None = None) -> dict:
     """
     Query the campaign information based on the campaign ID.

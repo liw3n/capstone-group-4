@@ -85,10 +85,6 @@ def test_campaign_implementations_read_dict_rows(monkeypatch):
 
     class FakeConnection:
         def execute(self, query, parameters):
-            if "SELECT campaign_id" in query:
-                assert parameters == ("%Legacy Protection Refresh%", DEMO_FA, DEMO_FA)
-                assert "created_by_user_id = %s" in query
-                return FakeResult(rows=[{"campaign_id": "camp-1"}])
             assert parameters == ("camp-1",) + (DEMO_FA,) * 5
             assert "campaign.created_by_user_id = %s" in query
             assert "client.assigned_to_user_id = %s" in query
@@ -101,7 +97,6 @@ def test_campaign_implementations_read_dict_rows(monkeypatch):
         implementations, "_connection", lambda: nullcontext(FakeConnection())
     )
 
-    assert implementations.get_campaign_id("Legacy Protection Refresh", DEMO_FA) == "camp-1"
     assert implementations.get_client_follow_up_list("camp-1", DEMO_FA) == [
         ("client-002", engagement_date)
     ]
@@ -111,11 +106,6 @@ def test_campaign_follow_up_returns_profiles_with_grounded_reasons(monkeypatch):
     engagement_date = datetime(2026, 8, 2, 11, 0)
     portfolio_requests = []
     profile_requests = []
-
-    def get_campaign(campaign, fa_id, tenant_id):
-        assert campaign == "camp-1"
-        assert fa_id == DEMO_FA and tenant_id == DEMO_FA
-        return campaign
 
     def get_clients(campaign_id, fa_id, tenant_id):
         assert campaign_id == "camp-1"
@@ -134,7 +124,6 @@ def test_campaign_follow_up_returns_profiles_with_grounded_reasons(monkeypatch):
         assert fa_id == DEMO_FA and tenant_id == DEMO_FA
         return {"client_id": client_id, "name": "Demo Client B", "age": 70}
 
-    monkeypatch.setattr(server_module, "get_campaign_id", get_campaign)
     monkeypatch.setattr(server_module, "get_campaign_info", lambda campaign_id, *_scope: {
         "campaign_id": campaign_id, "campaign_name": "Legacy Protection Refresh",
     })
@@ -142,10 +131,10 @@ def test_campaign_follow_up_returns_profiles_with_grounded_reasons(monkeypatch):
     monkeypatch.setattr(server_module, "fetch_client_portfolio", get_portfolio)
     monkeypatch.setattr(server_module, "fetch_client_profile", get_profile)
 
-    registry = MCPToolRegistry(server).bind_scope(RequestScope(DEMO_FA))
-    result = json.loads(registry.execute(
-        "campaign_follow_up", '{"campaign":"camp-1","limit":1}'
-    ))
+    registry = MCPToolRegistry(server).bind_scope(
+        RequestScope(DEMO_FA), campaign_id="camp-1"
+    )
+    result = json.loads(registry.execute("campaign_follow_up", '{"limit":1}'))
 
     assert result["campaign_info"] == {
         "campaign_id": "camp-1", "campaign_name": "Legacy Protection Refresh",
@@ -165,27 +154,73 @@ def test_campaign_follow_up_returns_profiles_with_grounded_reasons(monkeypatch):
     assert profile_requests == ["client-002"]
 
 
-def test_campaign_follow_up_prefers_selected_campaign_context(monkeypatch):
-    resolved_campaigns = []
+def _record_follow_up_campaign(monkeypatch, resolution=None):
+    """Stub storage and record which campaign ID and name lookups were used."""
+    calls = {"info": [], "resolve": []}
 
-    def get_campaign(campaign, fa_id, tenant_id):
-        resolved_campaigns.append(campaign)
+    def get_info(campaign_id, fa_id, tenant_id):
         assert fa_id == DEMO_FA and tenant_id == DEMO_FA
-        return campaign
+        calls["info"].append(campaign_id)
+        return {"campaign_id": campaign_id}
 
-    monkeypatch.setattr(server_module, "get_campaign_id", get_campaign)
-    monkeypatch.setattr(server_module, "get_campaign_info", lambda *_args: {})
+    def resolve(arguments, metadata):
+        assert metadata["pulse_scope"]["fa_id"] == DEMO_FA
+        calls["resolve"].append(arguments["campaign_name"])
+        return resolution
+
+    monkeypatch.setattr(server_module, "get_campaign_info", get_info)
+    monkeypatch.setattr(server_module, "execute_resolve_campaign", resolve)
     monkeypatch.setattr(server_module, "get_client_follow_up_list", lambda *_args: [])
+    return calls
+
+
+def test_campaign_follow_up_uses_selected_campaign_context(monkeypatch):
+    calls = _record_follow_up_campaign(monkeypatch)
 
     registry = MCPToolRegistry(server).bind_scope(
         RequestScope(DEMO_FA), campaign_id="camp-2"
     )
+    result = json.loads(registry.execute("campaign_follow_up", "{}"))
+
+    assert calls == {"info": ["camp-2"], "resolve": []}
+    assert result["total_unreplied_clients"] == 0
+
+
+def test_campaign_follow_up_prefers_selected_campaign_over_argument(monkeypatch):
+    calls = _record_follow_up_campaign(monkeypatch)
+
+    registry = MCPToolRegistry(server).bind_scope(
+        RequestScope(DEMO_FA), campaign_id="camp-2"
+    )
+    registry.execute("campaign_follow_up", '{"campaign":"Spring Promo"}')
+
+    assert calls == {"info": ["camp-2"], "resolve": []}
+
+
+def test_campaign_follow_up_resolves_named_campaign_without_scope(monkeypatch):
+    campaign_uuid = "6f1c2a4e-0b7d-4f7e-9a51-3c2d8e9b1a10"
+    calls = _record_follow_up_campaign(monkeypatch, {
+        "status": "matched", "campaign_id": campaign_uuid, "name": "Spring Promo",
+    })
+
+    registry = MCPToolRegistry(server).bind_scope(RequestScope(DEMO_FA))
     result = json.loads(registry.execute(
-        "campaign_follow_up", '{"campaign":"Spring Promo"}'
+        "campaign_follow_up", '{"campaign":"  Spring Promo "}'
     ))
 
-    assert resolved_campaigns == ["camp-2"]
+    assert calls == {"info": [campaign_uuid], "resolve": ["Spring Promo"]}
+    assert result["campaign_info"] == {"campaign_id": campaign_uuid}
     assert result["total_unreplied_clients"] == 0
+
+
+def test_campaign_follow_up_uses_uuid_argument_without_name_lookup(monkeypatch):
+    campaign_uuid = "6f1c2a4e-0b7d-4f7e-9a51-3c2d8e9b1a10"
+    calls = _record_follow_up_campaign(monkeypatch)
+
+    registry = MCPToolRegistry(server).bind_scope(RequestScope(DEMO_FA))
+    registry.execute("campaign_follow_up", json.dumps({"campaign": campaign_uuid}))
+
+    assert calls == {"info": [campaign_uuid], "resolve": []}
 
 
 def test_campaign_follow_up_requires_campaign_when_no_selection():
@@ -195,10 +230,42 @@ def test_campaign_follow_up_requires_campaign_when_no_selection():
     assert result["error_code"] == "missing_campaign"
 
 
+def test_campaign_follow_up_reports_ambiguous_campaign(monkeypatch):
+    calls = _record_follow_up_campaign(monkeypatch, {
+        "status": "ambiguous", "candidate_count": 2,
+        "candidates": [{"campaign_id": "a", "name": "Promo A"},
+                       {"campaign_id": "b", "name": "Promo B"}],
+    })
+    registry = MCPToolRegistry(server).bind_scope(RequestScope(DEMO_FA))
+    result = json.loads(registry.execute(
+        "campaign_follow_up", '{"campaign":"Promo"}'
+    ))
+
+    assert result["error_code"] == "campaign_unavailable"
+    assert [item["name"] for item in result["campaign_candidates"]] == ["Promo A", "Promo B"]
+    assert "candidates" not in result
+    assert calls["info"] == []
+
+
+def test_campaign_follow_up_reports_unknown_campaign(monkeypatch):
+    calls = _record_follow_up_campaign(monkeypatch, {
+        "status": "not_found", "candidate_count": 0,
+        "message": "No accessible active campaign matches that name.",
+    })
+    registry = MCPToolRegistry(server).bind_scope(RequestScope(DEMO_FA))
+    result = json.loads(registry.execute(
+        "campaign_follow_up", '{"campaign":"Unknown"}'
+    ))
+
+    assert result["error_code"] == "campaign_unavailable"
+    assert "candidates" not in result
+    assert calls["info"] == []
+
+
 def test_campaign_follow_up_requires_server_bound_adviser_context():
     registry = MCPToolRegistry(server)
     result = json.loads(registry.execute(
-        "campaign_follow_up", '{"campaign":"camp-1","limit":5}'
+        "campaign_follow_up", '{"limit":5}'
     ))
 
     assert result["error_code"] == "missing_context"
