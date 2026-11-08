@@ -14,8 +14,13 @@ class HistoryItem(Protocol):
     message_content: str
 
 
-_EMAIL_CONTEXT_PATTERN = re.compile(
-    r"\b(?:e[ -]?mails?|mails?|outreach|sign[ -]?off)\b", re.IGNORECASE
+_EMAIL_WORKFLOW_REQUEST_PATTERN = re.compile(
+    r"(?:\b(?:draft|write|prepare|review|revise|edit|send)\w*\b.{0,80}"
+    r"\b(?:e[ -]?mails?|mails?|outreach)\b|"
+    r"\b(?:e[ -]?mails?|mails?|outreach)\b.{0,80}"
+    r"\b(?:draft|copy|message|preview|recipients?|send|revise|edit)\w*\b|"
+    r"\b(?:e[ -]?mail|mail)\s+(?:the\s+)?(?:clients?|contacts?|recipients?)\b)",
+    re.IGNORECASE,
 )
 _UUID_PATTERN = re.compile(
     r"(?<![0-9a-f])"
@@ -28,7 +33,8 @@ _EXPLICIT_CAMPAIGN_ID_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _SIGNOFF_QUESTION_PATTERN = re.compile(
-    r"(?:what|which)\s+name.*sign[ -]?off|name.*email.*signed|sign[ -]?off\s+name",
+    r"(?:what|which)\s+(?:name.*sign[ -]?off|sign[ -]?off.*(?:use|name))|"
+    r"name.*email.*signed|sign[ -]?off\s+name",
     re.IGNORECASE,
 )
 _SIGNOFF_COMMAND_PATTERN = re.compile(
@@ -37,6 +43,37 @@ _SIGNOFF_COMMAND_PATTERN = re.compile(
 )
 _ADVISER_TITLE_PATTERN = re.compile(
     r"^(?:financial\s+advis(?:e|o)r|fa)$", re.IGNORECASE
+)
+_EMAIL_CAMPAIGN_QUESTION_PATTERN = re.compile(
+    r"which\s+campaign.*(?:e[ -]?mail|use)|"
+    r"campaign\s+e[ -]?mail.*which\s+campaign",
+    re.IGNORECASE | re.DOTALL,
+)
+_EMAIL_PREVIEW_PATTERN = re.compile(
+    r"^##\s+Review campaign e[ -]?mail\b", re.IGNORECASE
+)
+_EMAIL_CONTENT_QUESTION_PATTERN = re.compile(
+    r"provide both the e[ -]?mail subject and message|"
+    r"provide an e[ -]?mail message",
+    re.IGNORECASE,
+)
+_EMAIL_PREVIEW_REPLY_PATTERN = re.compile(
+    r"\b(?:revise|edit|change|update|replace|rewrite|shorten|shorter|longer|"
+    r"subject|body|message|recipients?|sign[ -]?off)\b|"
+    r"\bmake\s+(?:it|the\s+(?:subject|body|message))\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_EMAIL_CANCEL_PATTERN = re.compile(
+    r"\b(?:cancel|exit|stop|discard|abandon)\b.{0,40}"
+    r"\b(?:e[ -]?mail|outreach)\b|"
+    r"\b(?:e[ -]?mail|outreach)\b.{0,40}"
+    r"\b(?:cancel|exit|stop|discard|abandon)\b",
+    re.IGNORECASE,
+)
+_SHORT_CANCEL_PATTERN = re.compile(
+    r"^(?:cancel|exit|stop|discard|never\s*mind|forget\s+it)"
+    r"(?:\s+(?:this|it|the\s+draft|drafting))?[.! ]*$",
+    re.IGNORECASE,
 )
 
 
@@ -53,17 +90,51 @@ def _words(value: str) -> str:
     )
 
 
+def pending_campaign_email_prompt(
+    history: Iterable[HistoryItem],
+) -> str | None:
+    """Return the kind of email input requested by the latest assistant turn."""
+    items = tuple(history)
+    if not items or items[-1].user is not False:
+        return None
+    message = items[-1].message_content
+    if _SIGNOFF_QUESTION_PATTERN.search(message):
+        return "signoff"
+    if _EMAIL_CAMPAIGN_QUESTION_PATTERN.search(message):
+        return "campaign"
+    if _EMAIL_PREVIEW_PATTERN.search(message):
+        return "preview"
+    if _EMAIL_CONTENT_QUESTION_PATTERN.search(message):
+        return "content"
+    return None
+
+
+def is_campaign_email_cancel(
+    latest_message: str, history: Iterable[HistoryItem]
+) -> bool:
+    """Recognise an explicit exit, or a short exit while email input is pending."""
+    if _EXPLICIT_EMAIL_CANCEL_PATTERN.search(latest_message):
+        return True
+    return bool(
+        pending_campaign_email_prompt(history)
+        and _SHORT_CANCEL_PATTERN.fullmatch(latest_message.strip())
+    )
+
+
 def is_campaign_email_turn(
     latest_message: str, history: Iterable[HistoryItem]
 ) -> bool:
-    """Identify a direct email request or a reply to the latest email prompt."""
-    if _EMAIL_CONTEXT_PATTERN.search(latest_message):
-        return True
+    """Identify an email request or a bounded reply to a pending email prompt."""
     items = tuple(history)
-    return bool(
-        items
-        and items[-1].user is False
-        and _EMAIL_CONTEXT_PATTERN.search(items[-1].message_content)
+    if is_campaign_email_cancel(latest_message, items):
+        return True
+    if _EMAIL_WORKFLOW_REQUEST_PATTERN.search(latest_message):
+        return True
+    pending = pending_campaign_email_prompt(items)
+    if pending in {"campaign", "signoff", "content"}:
+        return True
+    return pending == "preview" and bool(
+        _EMAIL_PREVIEW_REPLY_PATTERN.search(latest_message)
     )
 
 

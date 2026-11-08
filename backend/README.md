@@ -107,7 +107,7 @@ The registered tools include `recommend_clients_for_campaign`,
 `get_active_campaigns`, `get_campaign_contact_performance`,
 `get_campaign_contact_ranking`, `find_campaign_references`,
 `prepare_campaign_draft`, `revise_campaign_draft`, `prepare_campaign_email`,
-`confirm_campaign_email`, and `campaign_follow_up`. Campaign matching and scoped data access live in
+`confirm_campaign_email`, `discard_campaign_email`, and `campaign_follow_up`. Campaign matching and scoped data access live in
 `app/campaigns/`; shared follow-up handlers live in
 `app/tools/campaign_follow_up.py`. Follow-up handlers query the mock engagement
 table and currently return simulated client profile and portfolio data.
@@ -330,6 +330,14 @@ revisions receive only the relevant part of the stored draft. Identical
 adviser/session requests share a short-lived in-process result so retries do not
 consume another model call or create another preview. Exact confirmation also
 bypasses the model.
+
+While campaign selection, sign-off or preview input is pending, the adviser can
+cancel or discard email drafting. The server-routed `discard_campaign_email`
+operation invalidates only the latest prepared preview in that adviser, tenant
+and chat session; it never changes sent or in-progress batches. Completed and
+discarded email responses are terminal conversation states, so the next message
+can use another PULSE tool without starting a new chat. This cancellation path
+also bypasses the model.
 
 Only the exact phrase in the latest user message can invoke
 `confirm_campaign_email`. The server rechecks campaign access, matching and

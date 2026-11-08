@@ -118,6 +118,13 @@ def test_confirmed_mock_email_updates_members_and_campaign_once(email_database):
         (CAMPAIGN,),
     ).fetchone()[0] == len(recipient_ids)
 
+    discarded = email_module.discard_campaign_email(metadata("Cancel email"))
+    assert discarded["discarded"] is False
+    assert email_database.execute(
+        "SELECT status FROM campaign_email_send WHERE send_batch_id = %s",
+        (preview["send_batch_id"],),
+    ).fetchone()[0] == "sent"
+
 
 def test_confirmation_must_match_latest_preview_exactly(email_database):
     preview = email_module.prepare_campaign_email(
@@ -134,6 +141,37 @@ def test_confirmation_must_match_latest_preview_exactly(email_database):
         "SELECT status FROM campaign_email_send WHERE send_batch_id = %s",
         (preview["send_batch_id"],),
     ).fetchone()[0] == "prepared"
+    assert email_database.execute(
+        "SELECT count(*) FROM campaign_member"
+    ).fetchone()[0] == 0
+
+
+def test_discard_invalidates_preview_and_prevents_confirmation(email_database):
+    preview = email_module.prepare_campaign_email(
+        PrepareCampaignEmailArguments(
+            subject="Review", body="Educational review.", signoff_name="Steven Raynaldi"
+        ),
+        metadata(),
+    )
+
+    discarded = email_module.discard_campaign_email(metadata("Discard this email"))
+
+    assert discarded == {
+        "type": "campaign_email_discarded",
+        "discarded": True,
+        "send_batch_id": preview["send_batch_id"],
+        "campaign_id": CAMPAIGN,
+        "sent": False,
+    }
+    assert email_database.execute(
+        "SELECT status FROM campaign_email_send WHERE send_batch_id = %s",
+        (preview["send_batch_id"],),
+    ).fetchone()[0] == "invalidated"
+
+    confirmation = email_module.confirm_campaign_email(
+        metadata(preview["confirmation_phrase"]), MockEmailTransport()
+    )
+    assert confirmation["error_code"] == "invalid_confirmation"
     assert email_database.execute(
         "SELECT count(*) FROM campaign_member"
     ).fetchone()[0] == 0

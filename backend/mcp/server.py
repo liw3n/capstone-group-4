@@ -24,8 +24,10 @@ from app.tools.campaign_follow_up import (
 from app.campaigns.repository import CAMPAIGN_ID_PATTERN, DEMO_TENANT, RequestScope, _storage_tenant_id
 from app.campaigns.email import (
     ConfirmCampaignEmailArguments,
+    DiscardCampaignEmailArguments,
     PrepareCampaignEmailArguments,
     confirm_campaign_email as execute_confirm_campaign_email,
+    discard_campaign_email as execute_discard_campaign_email,
     prepare_campaign_email as execute_prepare_campaign_email,
 )
 from app.campaigns.models import (
@@ -231,6 +233,19 @@ def confirm_campaign_email(ctx: Context) -> dict:
     logger.info("MCP tool called: confirm_campaign_email")
     ConfirmCampaignEmailArguments()
     return execute_confirm_campaign_email(_request_metadata(ctx))
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True})
+def discard_campaign_email(ctx: Context) -> dict:
+    """Discard the latest unsent campaign-email preview in this chat session.
+
+    Adviser and tenant scope come from trusted request metadata. Sent or
+    in-progress batches are never modified, and this operation never sends an
+    email.
+    """
+    logger.info("MCP tool called: discard_campaign_email")
+    DiscardCampaignEmailArguments()
+    return execute_discard_campaign_email(_request_metadata(ctx))
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})

@@ -41,6 +41,7 @@ from app.campaigns.email import (
 )
 from app.campaigns.conversation_context import (
     CampaignContextResolution,
+    is_campaign_email_cancel,
     is_campaign_email_turn,
     signoff_reply,
 )
@@ -364,7 +365,8 @@ available tools cannot establish, say that it is unavailable.
 
 
 SERVER_ONLY_TOOLS = frozenset({
-    "confirm_campaign_email", "prepare_campaign_draft", "revise_campaign_draft",
+    "confirm_campaign_email", "discard_campaign_email",
+    "prepare_campaign_draft", "revise_campaign_draft",
 })
 
 
@@ -1777,6 +1779,23 @@ class ChatOrchestrator:
             if not isinstance(payload, dict):
                 raise LLMProviderError("Campaign email tool returned an invalid result")
             return _answer(render_campaign_email(payload))
+        if (
+            scope is not None
+            and session_id
+            and is_campaign_email_cancel(user_message, history)
+        ):
+            result = registry.execute("discard_campaign_email", "{}")
+            try:
+                payload = json.loads(result)
+            except json.JSONDecodeError as exc:
+                raise LLMProviderError(
+                    "Campaign email discard tool returned invalid JSON"
+                ) from exc
+            if not isinstance(payload, dict):
+                raise LLMProviderError(
+                    "Campaign email discard tool returned an invalid result"
+                )
+            return _answer(render_campaign_email(payload))
         if campaign_context_issue is not None:
             if campaign_context_issue.status == "ambiguous":
                 choices = "\n".join(
@@ -1802,7 +1821,8 @@ class ChatOrchestrator:
             if campaign_id is None:
                 return _answer(
                     "I can help draft the campaign email. Which campaign would you "
-                    "like to use? Enter its name or ID."
+                    "like to use? Enter its name or ID, or say **cancel email "
+                    "drafting**."
                 )
             previous_draft = latest_email_draft_context(
                 scope, session_id, campaign_id
@@ -1822,7 +1842,8 @@ class ChatOrchestrator:
                 require_active(campaign)
                 return _answer(
                     f"I found **{campaign.name}**. What name would you like me to "
-                    "use in the email sign-off?"
+                    "use in the email sign-off? You can also say **cancel email "
+                    "drafting**."
                 )
             return self._run_campaign_email(
                 registry=registry,

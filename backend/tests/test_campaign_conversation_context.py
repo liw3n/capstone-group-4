@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from app.campaigns import conversation_context
 from app.campaigns.repository import RequestScope
 from app.store import ChatHistoryItem
@@ -61,6 +63,47 @@ def test_plural_email_request_uses_email_context():
     assert conversation_context.is_campaign_email_turn(
         "Draft emails for clients", []
     ) is True
+
+
+def test_pending_email_can_be_cancelled_with_a_short_reply():
+    history = [ChatHistoryItem(
+        "2026-11-01T00:00:00Z", False,
+        "What name would you like me to use in the email sign-off?",
+    )]
+    assert conversation_context.is_campaign_email_cancel("Never mind", history) is True
+    assert conversation_context.is_campaign_email_turn("Never mind", history) is True
+
+
+def test_preview_accepts_edits_but_not_unrelated_tool_requests():
+    history = [ChatHistoryItem(
+        "2026-11-01T00:00:00Z", False,
+        "## Review campaign email\n\nReview the subject and recipients.",
+    )]
+    assert conversation_context.is_campaign_email_turn(
+        "Make the subject shorter", history
+    ) is True
+    assert conversation_context.is_campaign_email_turn(
+        "Show campaign performance", history
+    ) is False
+
+
+@pytest.mark.parametrize(
+    "assistant_message",
+    [
+        "## Campaign email result\n\n**Status:** sent",
+        "## Email drafting ended\n\nNo email was sent.",
+    ],
+)
+def test_terminal_email_response_releases_other_tools(assistant_message):
+    history = [ChatHistoryItem(
+        "2026-11-01T00:00:00Z", False, assistant_message,
+    )]
+    assert conversation_context.is_campaign_email_turn(
+        "Show active campaigns", history
+    ) is False
+    assert conversation_context.is_campaign_email_turn(
+        "Show email performance by campaign", history
+    ) is False
 
 
 def test_short_signoff_reply_is_extracted_without_the_adviser_title():

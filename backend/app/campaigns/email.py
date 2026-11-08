@@ -85,6 +85,10 @@ class ConfirmCampaignEmailArguments(StrictModel):
     pass
 
 
+class DiscardCampaignEmailArguments(StrictModel):
+    pass
+
+
 @contextmanager
 def _write_connection():
     import psycopg
@@ -170,7 +174,8 @@ def _campaign_required(scope: RequestScope) -> dict:
         "error_code": "campaign_required",
         "message": (
             "Which campaign should I use for this email? Tell me its name or ID, "
-            "and I can prepare a reviewable email preview."
+            "and I can prepare a reviewable email preview. You can also say "
+            "**cancel email drafting**."
         ),
         "campaign_suggestions": [campaign.name for campaign in campaigns[:5]],
     }
@@ -335,7 +340,8 @@ def prepare_campaign_email(
             "error_code": "email_content_required",
             "message": (
                 "Please provide both the email subject and message before I prepare "
-                "the first reviewable preview for this campaign."
+                "the first reviewable preview for this campaign, or say "
+                "**cancel email drafting**."
             ),
             "campaign_suggestions": [],
         }
@@ -349,7 +355,10 @@ def prepare_campaign_email(
             "type": "campaign_email_clarification",
             "prepared": False,
             "error_code": "signoff_name_required",
-            "message": "What name would you like me to use in the email sign-off?",
+            "message": (
+                "What name would you like me to use in the email sign-off? You can "
+                "also say **cancel email drafting**."
+            ),
             "campaign_suggestions": [],
         }
     message_body, reviewed_body = _with_adviser_signoff(message_body, signoff_name)
@@ -358,7 +367,10 @@ def prepare_campaign_email(
             "type": "campaign_email_clarification",
             "prepared": False,
             "error_code": "email_message_required",
-            "message": "Please provide an email message before I prepare the preview.",
+            "message": (
+                "Please provide an email message before I prepare the preview, or "
+                "say **cancel email drafting**."
+            ),
             "campaign_suggestions": [],
         }
     eligible_ids = _eligible_recipient_ids(campaign_id, scope)
@@ -574,6 +586,42 @@ def confirm_campaign_email(
         return _result_payload(batch, results)
 
 
+def discard_campaign_email(metadata: dict | None) -> dict:
+    """Invalidate the latest prepared preview in the scoped chat session."""
+    scope, session_id, _ = _context(metadata)
+    with _write_connection() as connection:
+        tenant_id = _storage_tenant_id(scope)
+        batch = connection.execute(
+            """
+            SELECT send_batch_id, campaign_id
+            FROM campaign_email_send
+            WHERE tenant_id = %s AND fa_id = %s AND session_id = %s
+              AND status = 'prepared'
+            ORDER BY created_at DESC
+            LIMIT 1
+            FOR UPDATE
+            """,
+            (tenant_id, scope.fa_id, session_id),
+        ).fetchone()
+        if batch is not None:
+            connection.execute(
+                """
+                UPDATE campaign_email_send
+                SET status = 'invalidated'
+                WHERE tenant_id = %s AND send_batch_id = %s
+                  AND status = 'prepared'
+                """,
+                (tenant_id, batch["send_batch_id"]),
+            )
+    return {
+        "type": "campaign_email_discarded",
+        "discarded": batch is not None,
+        "send_batch_id": str(batch["send_batch_id"]) if batch is not None else None,
+        "campaign_id": str(batch["campaign_id"]) if batch is not None else None,
+        "sent": False,
+    }
+
+
 def _result_payload(batch: dict, results: list[dict], repeated: bool = False) -> dict:
     successful = [item for item in results if item.get("success")]
     failed = [item for item in results if not item.get("success")]
@@ -643,6 +691,15 @@ def _legacy_render_campaign_email(payload: dict) -> str:
 
 def render_campaign_email(payload: dict) -> str:
     """Render email results without exposing internal contact identifiers."""
+    if payload.get("type") == "campaign_email_discarded":
+        if payload.get("error"):
+            return "## Email drafting could not be ended\n\n" + str(payload["error"])
+        return (
+            "## Email drafting ended\n\n"
+            "The email drafting workflow has ended. Any current unsent preview was "
+            "discarded. No email was sent. You can now ask PULSE to perform another "
+            "campaign task."
+        )
     if payload.get("type") == "campaign_email_clarification":
         suggestions = payload.get("campaign_suggestions", [])
         choices = "".join(f"\n- {name}" for name in suggestions)
@@ -674,7 +731,8 @@ def render_campaign_email(payload: dict) -> str:
             "Review the subject, message, and recipients. Ask me for any edits, or "
             "proceed to the final confirmation step by entering:\n\n"
             f"`{payload['confirmation_phrase']}`\n\n"
-            f"This confirmation expires at {payload['expires_at']}."
+            f"This confirmation expires at {payload['expires_at']}. To discard this "
+            "preview without sending, say **cancel email drafting**."
         )
     results = payload.get("results", [])
     lines = "\n".join(
@@ -691,5 +749,5 @@ def render_campaign_email(payload: dict) -> str:
         f"**Successful:** {payload['successful_count']}  \n"
         f"**Failed:** {payload['failed_count']}  \n"
         f"**Campaign members updated:** {payload['campaign_members_updated']}\n\n"
-        f"{lines}{repeated}"
+        f"{lines}{repeated}\n\nYou can now ask PULSE to perform another campaign task."
     )

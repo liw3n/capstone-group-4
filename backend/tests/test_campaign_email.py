@@ -72,6 +72,29 @@ def test_preview_renderer_shows_content_recipients_and_exact_confirmation():
     assert "demo.client.a@example.test" not in rendered
     assert "CONFIRM EMAIL ABC234" in rendered
     assert "simulated" in rendered
+    assert "cancel email drafting" in rendered
+
+
+def test_discard_renderer_ends_email_context_without_claiming_a_send():
+    rendered = render_campaign_email({
+        "type": "campaign_email_discarded",
+        "discarded": True,
+        "sent": False,
+    })
+    assert "Email drafting ended" in rendered
+    assert "No email was sent" in rendered
+    assert "another campaign task" in rendered
+
+
+def test_discard_renderer_does_not_hide_context_errors():
+    rendered = render_campaign_email({
+        "type": "campaign_email_discarded",
+        "discarded": False,
+        "sent": False,
+        "error": "Adviser and chat session context are required",
+    })
+    assert "could not be ended" in rendered
+    assert "context are required" in rendered
 
 
 class ConfirmationRegistry:
@@ -117,6 +140,48 @@ def test_exact_confirmation_is_server_routed_without_an_llm_call():
     assert registry.executed == [("confirm_campaign_email", {})]
     assert "Campaign email result" in result
     assert "Campaign members updated:** 1" in result
+    assert "another campaign task" in result
+
+
+class DiscardRegistry:
+    def __init__(self):
+        self.bound = None
+        self.executed = []
+
+    def bind_scope(self, scope, campaign_id=None, session_id=None, latest_user_message=None):
+        self.bound = (scope, campaign_id, session_id, latest_user_message)
+        return self
+
+    def schemas(self):
+        raise AssertionError("Email cancellation must bypass the LLM and schema discovery")
+
+    def execute(self, name, arguments_json):
+        self.executed.append((name, json.loads(arguments_json)))
+        return json.dumps({
+            "type": "campaign_email_discarded",
+            "discarded": True,
+            "send_batch_id": "email-1",
+            "campaign_id": "camp-1",
+            "sent": False,
+        })
+
+
+def test_email_cancellation_is_server_routed_without_an_llm_call():
+    provider = SimpleNamespace()
+    registry = DiscardRegistry()
+    orchestrator = ChatOrchestrator(provider, settings(), registry)
+    history = [ChatHistoryItem(
+        "2026-11-01T00:00:00Z", False,
+        "What name would you like me to use in the email sign-off?",
+    )]
+    result = orchestrator.run(
+        "Never mind", history, scope=RequestScope(DEMO_FA),
+        campaign_id="camp-1", session_id="session-1",
+    )
+    assert registry.bound[3] == "Never mind"
+    assert registry.executed == [("discard_campaign_email", {})]
+    assert "Email drafting ended" in result
+    assert "No email was sent" in result
 
 
 class PreviewRegistry:
@@ -342,6 +407,7 @@ def test_email_fast_path_asks_for_campaign_without_model_call():
         campaign_id=None, session_id="session-1",
     )
     assert "Which campaign" in result
+    assert "cancel email drafting" in result
 
 
 def test_email_fast_path_asks_for_signoff_without_model_call(monkeypatch):
@@ -357,6 +423,7 @@ def test_email_fast_path_asks_for_signoff_without_model_call(monkeypatch):
     )
     assert "What name" in result
     assert "Legacy Protection Refresh" in result
+    assert "cancel email drafting" in result
 
 
 def test_prompt_requires_preview_consent_and_exact_confirmation():

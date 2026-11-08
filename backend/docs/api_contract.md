@@ -276,7 +276,8 @@ Provider or MCP tool-server failures are returned as `429`, `502`, `503`, or
 the FastMCP server at `MCP_SERVER_URL`, filtered through an explicit list of
 model-discoverable tools. The model cannot invoke a tool absent from that turn's
 offered list. A response asking for such a tool is rejected before any tool in
-that response is run. Email confirmation, campaign-draft preparation and draft
+that response is run. Email confirmation, email-preview discard,
+campaign-draft preparation and draft
 revision are server-routed paths, not ordinary model-callable tools. A separate
 system instruction treats chat history, CRM text, retrieved references and tool
 results as untrusted data; it does not grant those sources authority to change
@@ -1107,3 +1108,22 @@ again. A deliberate resend requires a new preview and phrase.
 Local `EMAIL_DELIVERY_MODE=mock` results are explicitly simulated. Optional
 `gwm` mode uses the server-side GWM Core Email API adapter; credentials and
 provider settings are never model arguments or browser configuration.
+
+### MCP: discard_campaign_email
+
+This server-routed tool has no model-facing arguments and is not included in the
+Groq tool list. The orchestrator invokes it deterministically when an adviser
+explicitly cancels email drafting, or gives a short cancellation reply while a
+campaign-email question or preview is pending.
+
+The tool requires adviser, tenant and chat-session metadata. It changes only the
+latest `prepared` `campaign_email_send` row in that scope to `invalidated`.
+Already `sending`, `sent`, `partial` or `failed` batches are not modified. If no
+preview has been stored yet, cancellation still ends the conversational workflow
+without creating a row. It never sends email. A later exact confirmation phrase
+cannot send an invalidated preview.
+
+Campaign-email carry-over is limited to recognised campaign, sign-off, content
+and preview-edit prompts. A completed or discarded result is terminal, allowing
+the next message in the same chat to use another PULSE tool. Starting another
+email workflow requires a new explicit email request.
