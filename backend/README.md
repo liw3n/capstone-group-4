@@ -112,19 +112,19 @@ The registered tools include `recommend_clients_for_campaign`,
 `app/tools/campaign_follow_up.py`. Follow-up handlers query the mock engagement
 table and currently return simulated client profile and portfolio data.
 
-`get_active_campaigns` uses its own read-only tenant query: the frontend adviser
-ID resolves the legacy chat tenant namespace, then campaigns are filtered by
-`tenant_id`, non-deletion and status exactly `active`. Creator and schedule do
-not narrow discovery; other tools keep their existing ownership/date rules.
-The default table shows name, code, description, dates and readable age/gender/
-cash criteria, including preset/custom combinations. Optional filters support
-overlapping audience ranges, code/text search and schedule bounds. 'Over 40'
-uses `age_min: 41`; a Male filter can include mixed-gender campaigns.
+`get_active_campaigns` retrieves `GET /api/campaigns` over HTTP using the frontend
+adviser ID. It inherits the endpoint's tenant and creator restriction, then
+filters returned campaigns for status `active`; schedule dates do not determine
+active status. Other tools keep their existing ownership/date rules.
+`CAMPAIGN_API_BASE_URL` optionally overrides the default loopback origin on
+`${PORT:-4000}`. Both API and MCP processes must be running.
+The default table shows name, description, dates and readable age/gender/cash
+criteria, including preset/custom combinations. Optional filters support
+overlapping audience ranges, text search and schedule bounds. Campaign code is
+omitted because the endpoint does not return it. 'Over 40' uses `age_min: 41`;
+a Male filter can include mixed-gender campaigns.
 The chatbot renders the retrieved snapshot directly with today's Singapore date
-and a working Excel link below the table. Browser export uses the displayed rows
-and works after chat history reload. No extra endpoint, table, seed application
-or configuration change is needed. SQL seed files are not runtime data sources.
-See [the discovery contract](docs/api_contract.md#mcp-get_active_campaigns).
+and an Excel link below the table. 
 
 `find_campaign_references` searches a checked-in, approved synthetic pattern
 catalogue before campaign drafting. It returns at most three explainable matches

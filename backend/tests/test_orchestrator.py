@@ -1525,9 +1525,9 @@ def test_prepare_error_gets_a_deterministic_safe_explanation():
 
 
 def test_discovery_renders_full_tool_snapshot_without_another_model_round(monkeypatch):
-    from app.campaigns import repository
+    from app.tools import discovery
     from campaign_fixtures import CAMPAIGNS, DEMO_FA
-    monkeypatch.setattr(repository, 'list_active_campaigns_for_discovery', lambda *args: CAMPAIGNS)
+    monkeypatch.setattr(discovery, 'fetch_campaigns', lambda *args: CAMPAIGNS)
     payload = execute_get_active_campaigns({}, {'pulse_scope': {'fa_id': DEMO_FA, 'tenant_id': 'pulse-demo'}})
     registry = ToolRegistry([ToolDefinition(name='get_active_campaigns', description='Discover campaigns',
         arguments_model=ActiveCampaignArguments, handler=lambda **kwargs: payload)])

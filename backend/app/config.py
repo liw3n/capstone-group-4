@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.groq.com/openai/v1"
     llm_model: str = "openai/gpt-oss-20b"
     mcp_server_url: str = "http://127.0.0.1:8001/mcp"
+    campaign_api_base_url: str | None = None
     campaign_preview_secret: SecretStr | None = Field(
         default=None,
         validation_alias="PULSE_CAMPAIGN_PREVIEW_SECRET",

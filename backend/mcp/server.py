@@ -415,7 +415,7 @@ def get_active_campaigns(
     ctx: Context,
     campaign_ids: Annotated[list[CampaignId] | None, Field(max_length=100)] = None,
     campaign_names: Annotated[list[CampaignName] | None, Field(max_length=100)] = None,
-    fields: Annotated[list[CampaignField] | None, Field(min_length=1, max_length=14)] = None,
+    fields: Annotated[list[CampaignField] | None, Field(min_length=1, max_length=13)] = None,
     limit: Annotated[int, Field(ge=1, le=1000, strict=True)] = 1000,
     filters: CampaignFilters | None = None,
 ) -> dict:
@@ -423,7 +423,8 @@ def get_active_campaigns(
 
     Optional exact IDs/names restrict campaigns (both filters intersect).
     Omit fields unless the user explicitly requests particular details. Defaults:
-    name, campaign_code, description, start_date, end_date, age_groups, genders, cash_bands.
+    name, description, start_date, end_date, age_groups, genders, cash_bands.
+    Campaigns come from GET /api/campaigns, scoped to the tenant and creator.
     Name is always included; campaign_id is an allowed output field.
     Additional restrictions belong in filters, independently of output fields.
     Audience filters find overlapping eligibility, combining age/gender/cash

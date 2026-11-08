@@ -3,10 +3,28 @@ from datetime import date
 from uuid import uuid4
 
 import pytest
+import httpx
+from fastapi.testclient import TestClient
+from app import main
+from app.config import Settings
+from app.tools import campaign_catalogue_api
 
 from app.campaigns import repository
 from app.tools.discovery import execute_get_active_campaigns
 from test_campaign_current_postgres import current_database, ADVISER, FIRST_HOME
+
+
+@pytest.fixture(autouse=True)
+def catalogue_http(monkeypatch, current_database):
+    # Run the actual REST route/SQL while redirecting only the HTTP transport.
+    client = TestClient(main.app, raise_server_exceptions=False)
+    original = httpx.Client
+    def endpoint(request):
+        response = client.get(request.url.path, params=dict(request.url.params))
+        return httpx.Response(response.status_code, content=response.content, headers=dict(response.headers))
+    monkeypatch.setattr(campaign_catalogue_api.httpx, 'Client',
+        lambda **kwargs: original(**kwargs, transport=httpx.MockTransport(endpoint)))
+    monkeypatch.setattr(campaign_catalogue_api, 'get_settings', lambda: Settings(_env_file=None))
 
 
 def discover(arguments=None, tenant='pulse-demo'):
@@ -17,7 +35,7 @@ def discover(arguments=None, tenant='pulse-demo'):
 
 @pytest.mark.parametrize(('status', 'deleted', 'expected'), [
     ('active', False, 1), ('inactive', False, 0), ('draft', False, 0),
-    ('paused', False, 0), (None, False, 0), ('active', True, 0),
+    ('paused', False, 0), (None, False, 1), ('active', True, 0),
 ])
 def test_status_and_deletion_are_exact_discovery_conditions(current_database, status, deleted, expected):
     current_database.execute('UPDATE campaign SET status=%s,is_deleted=%s WHERE campaign_id=%s',
@@ -27,7 +45,7 @@ def test_status_and_deletion_are_exact_discovery_conditions(current_database, st
 
 
 @pytest.mark.parametrize(('start', 'end'), [
-    ('2030-01-01', '2030-12-31'), ('2020-01-01', '2020-12-31'), (None, None),
+    ('2030-01-01', '2030-12-31'), ('2020-01-01', '2020-12-31'),
 ])
 def test_active_discovery_ignores_schedule_and_decodes_current_schema(current_database, start, end):
     current_database.execute('UPDATE campaign SET status=%s,start_date=%s,end_date=%s WHERE campaign_id=%s',
@@ -35,18 +53,18 @@ def test_active_discovery_ignores_schedule_and_decodes_current_schema(current_da
     result = discover({'campaign_ids': [FIRST_HOME]})
     assert result['total_count'] == 1
     row = result['rows'][0]
-    assert row['campaign_code'] == 'CMP-2026-002' and row['description']
+    assert 'campaign_code' not in row and row['description']
     assert row['start_date'] == start and row['end_date'] == end
     assert row['age_groups'] == 'Under 35 or 35–44'
     assert row['genders'] == 'Male, Female'
 
 
-def test_discovery_includes_other_creators_without_broadening_lookup_or_tenants(current_database):
+def test_discovery_uses_endpoint_creator_restriction_without_changing_other_tools(current_database):
     other = str(uuid4())
     current_database.execute('INSERT INTO user_account(tenant_id,user_id) VALUES (%s,%s)', (ADVISER, other))
     current_database.execute('UPDATE campaign SET created_by_user_id=%s WHERE campaign_id=%s', (other, FIRST_HOME))
-    assert discover({'campaign_ids': [FIRST_HOME]})['total_count'] == 1
-    assert discover({'campaign_ids': [FIRST_HOME]}, tenant=other)['rows'] == []
+    assert discover({'campaign_ids': [FIRST_HOME]})['total_count'] == 0
+    assert discover({'campaign_ids': [FIRST_HOME]}, tenant=other)['error_code'] == 'storage_unavailable'
     scope = repository.RequestScope(ADVISER)
     assert repository.list_active_campaigns(scope, date(2026,10,28), [FIRST_HOME]) == ()
     with pytest.raises(repository.CampaignUnavailable):

@@ -383,31 +383,3 @@ def list_active_campaigns(scope: RequestScope, as_of: date,
              if campaign_names is not None else None),
         ).fetchall()
     return tuple(_campaign_from_row(row, scope) for row in rows)
-
-
-def list_active_campaigns_for_discovery(
-    scope: RequestScope, as_of: date,
-    campaign_ids: list[str] | None = None,
-    campaign_names: list[str] | None = None,
-) -> tuple[Campaign, ...]:
-    """Tenant catalogue for discovery only; as_of is reporting context.
-
-    Keep this separate from adviser-owned lookup/matching queries. Normal chat's
-    legacy namespace resolves to its request adviser UUID; explicit tenants stay
-    explicit. No calendar or creator restriction defines discovery eligibility.
-    """
-    tenant_id = _storage_tenant_id(scope)
-    if not _is_uuid(tenant_id):
-        return ()
-    with _connection() as connection:
-        rows = connection.execute(
-            f"""SELECT {CAMPAIGN_COLUMNS}, c.campaign_code, c.description
-                FROM campaign AS c
-                WHERE c.tenant_id = %s AND c.is_deleted = FALSE AND c.status = 'active'
-                  AND (%s::text[] IS NULL OR c.campaign_id::text = ANY(%s::text[]))
-                  AND (%s::text[] IS NULL OR lower(c.name) = ANY(%s::text[]))
-                ORDER BY c.campaign_id""",
-            (tenant_id, campaign_ids, campaign_ids, campaign_names,
-             [name.lower() for name in campaign_names] if campaign_names is not None else None),
-        ).fetchall()
-    return tuple(_campaign_from_row(row, scope) for row in rows)

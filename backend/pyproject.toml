@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "FastAPI backend for the PULSE chat popup"
 requires-python = ">=3.11"
 dependencies = [
+    "httpx>=0.28,<1",
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.34,<1",
     "localstack>=2026.8.1",

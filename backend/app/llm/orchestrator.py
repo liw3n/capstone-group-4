@@ -212,7 +212,7 @@ requiring a named/selected campaign apply to recommendation and follow-up tools.
 Use exact campaign IDs/names only when the current user requests particular campaigns.
 Do not narrow a general listing to the currently selected campaign or old history.
 Set fields only when the latest user explicitly requests particular details;
-otherwise omit fields or use null for name, campaign_code, description, start_date,
+otherwise omit fields or use null for name, description, start_date,
 end_date, age_groups, genders, cash_bands. Active means status exactly 'active',
 independently of schedule dates. Today's Singapore date is reporting context;
 campaign name lookup and recommendations use the current Singapore date for
@@ -221,7 +221,7 @@ Put user-requested restrictions in filters, not fields. 'Active campaigns for
 people over 40' uses filters={"age_min":41}, with default columns. 'At least 40'
 uses age_min=40; 'under 40' uses age_max=39. Gender and cash filters can combine
 with age filters. For cash strictly above/below a value, set the corresponding
-cash_min_exclusive/cash_max_exclusive flag. Use campaign_codes, name_contains,
+cash_min_exclusive/cash_max_exclusive flag. Use name_contains,
 description_contains and start/end date bounds when requested. Never infer
 filters from campaign names, old history or vague life-stage terms.
 Audience filters match overlapping eligibility, not exclusively targeted

@@ -879,106 +879,54 @@ change the current activation behavior. A later confirmation path must force
 
 ### MCP: get_active_campaigns
 
-This read-only tool uses the existing MCP endpoint. It adds no REST route, SQL
-schema, startup migration, port or provisioning step. Recommendation, lookup,
-performance, follow-up, generation and email behavior remain unchanged.
-
-The API carries the frontend `fa_id` through MCP `_meta.pulse_scope`, separately
-from model-authored arguments. Discovery resolves the legacy `pulse-demo` tenant
-namespace to that request's adviser UUID. An explicit server tenant stays
-explicit. Its dedicated repository query filters `campaign.tenant_id`,
-`is_deleted = FALSE` and `status = 'active'`. It does not require creator ownership;
-another creator in the same tenant is included. Other tools retain their existing
-adviser ownership predicates. Caller-supplied adviser identity is a prototype
-boundary, not authentication.
-
-Active status is independent of the schedule. Future, expired or undated active
-rows remain discoverable; null, inactive, draft, paused and deleted rows are
-excluded. Today's actual Asia/Singapore date is reporting context only. This
-does not change recommendation eligibility. Campaign name lookup and matching
-both use today's Singapore date for schedule checks; matching uses one captured
-date for activity, client ages and the returned `as_of_date`.
+Read-only campaign discovery. Calls `GET /api/campaigns?role=advisor&fa_id=<id>`
+using adviser identity from MCP `_meta.pulse_scope`, then filters the response.
+The endpoint restricts records by tenant, creator and non-deletion. Only returned
+`status = active` records are included; schedule dates do not determine eligibility.
+The endpoint treats null database status as active. Other MCP tools are unchanged.
 
 Arguments:
 
-- `campaign_ids`: optional exact IDs, at most 100.
-- `campaign_names`: optional case-insensitive exact names, at most 100.
-- `fields`: optional output columns, 1–14 entries.
+- `campaign_ids`, `campaign_names`: optional exact selections, at most 100 each;
+  names are case-insensitive. Both intersect; empty lists return no rows.
+- `fields`: optional output columns, 1–13 entries; name is always included.
 - `limit`: strict integer 1–1000, default 1000.
-- `filters`: optional validated restrictions below.
+- `filters`: optional audience, text and schedule restrictions below.
 
-IDs/names intersect when both are supplied. An empty selection list returns no
-rows. A CRM-selected campaign or earlier conversation does not narrow a general
-listing. Campaign name is always present; columns are deduplicated in requested
-order. Defaults are `name`, `campaign_code`, `description`, `start_date`,
-`end_date`, `age_groups`, `genders`, `cash_bands`. Additional selectable fields:
-`campaign_id`, `age_min`, `age_max`, `cash_min`, `cash_max`, `status`.
+Default columns: `name`, `description`, `start_date`, `end_date`, `age_groups`,
+`genders`, `cash_bands`. Also selectable: `campaign_id`, `age_min`, `age_max`,
+`cash_min`, `cash_max`, `status`. Campaign-code output/filtering is unsupported.
 
 Supported filters:
 
-- `age_min`, `age_max`: strict integers 0–130.
-- `genders`: Male and/or Female.
-- `cash_min`, `cash_max`: finite nonnegative numbers.
-- `cash_min_exclusive`, `cash_max_exclusive`: booleans, false by default.
-- `campaign_codes`: case-insensitive exact codes, at most 100.
+- `age_min`, `age_max`: strict integers 0–130; `genders`: Male and/or Female.
+- `cash_min`, `cash_max`: finite nonnegative numbers; optional
+  `cash_min_exclusive`, `cash_max_exclusive` flags specify strict comparisons.
 - `name_contains`, `description_contains`: case-insensitive substrings.
 - `start_date_from`, `start_date_to`, `end_date_from`, `end_date_to`: ISO dates.
 
-Unknown keys, reversed ranges and inconsistent exclusive bounds are rejected.
-Output projection and filtering are independent. For example, 'over 40' sets
-`age_min: 41`, 'at least 40' sets `age_min: 40`, and 'under 40' sets `age_max: 39`.
-Strict cash comparisons use the corresponding exclusive flag.
+Audience filters match overlapping preset/custom ranges: AND across dimensions,
+OR within each dimension. Unrestricted criteria match any value; Male also
+matches mixed-gender campaigns. Preset cash upper bounds are exclusive; custom
+bounds are inclusive. Unknown keys and invalid ranges are rejected.
 
-Audience filters use overlap semantics: AND across dimensions and OR across a
-campaign's preset/custom alternatives in a dimension. Unrestricted dimensions
-accept any requested value. A Male filter also matches mixed-gender and
-unrestricted campaigns; there is no exact/exclusive-audience mode. Preset cash
-intervals are lower-inclusive/upper-exclusive; custom endpoints are inclusive.
-No client records are read for discovery filtering.
+Results are sorted by campaign ID and filtered before counting/limiting.
+Output: `data_source`, `as_of_date`, `filters`, `columns`, `rows`, `table`,
+`total_count`, `returned_count`, `truncated`, `disclaimer`. Chat displays today's
+Singapore date above the table and an Excel link below it. The download contains
+exactly the displayed rows/columns, including after history reload.
 
-Audience JSON supports storage presets (`35-44`, `50k-250k`, title-case genders),
-existing canonical aliases, and `ageCustomMin`, `ageCustomMax`, `cashCustomMin`,
-`cashCustomMax`. Custom and preset restrictions can coexist. Full original
-criteria are displayed with readable labels and 'or' between alternatives.
-Empty restrictions display 'Any'; absent dates display 'Unknown'. Malformed
-stored criteria return a safe storage error instead of silently widening scope.
-
-Output keys are `data_source: synthetic`, `as_of_date`, `filters`, `columns`,
-`rows`, `table`, `total_count`, `returned_count`, `truncated`, `disclaimer`.
-Filters apply before counting/limiting. Invalid arguments, missing context and
-storage failures use `invalid_arguments`, `missing_context`, `storage_unavailable`;
-no credentials, raw SQL errors or fallback fixtures are returned.
-
-The MCP wrapper calls `execute_get_active_campaigns` in `app/tools/discovery.py`.
-The orchestrator renders the returned snapshot directly with
-`render_active_campaigns`, without a subsequent model summary. It shows the
-current Singapore date above the escaped Markdown table, an optional filter
-summary explaining overlap semantics, and
-`[Download Excel (.xlsx)](#active-campaigns-excel)` below it. Empty results are
-explicit; truncated results state displayed and total counts. Synthetic source
-metadata is retained without adding a routine demo notice to every listing.
-
-The assistant-message renderer associates the download marker with its preceding
-table, including after saved chat history reload. `lib/campaignExport.ts` creates
-`active-campaigns.xlsx` in the browser with an 'Active Campaigns' sheet containing
-exactly the displayed columns/order/rows. No second database request or export
-endpoint is used. The Excel writer is bundled with the page so clicking the
-link does not fetch a separate lazy JavaScript chunk, which can be unavailable
-after a deployment or due to an asset/network failure. Workbook generation and
-the browser download start in the click's synchronous execution path. Temporary
-links/object URLs are cleaned up even if the browser rejects the download.
-Formula-like strings remain text. A marker without a table
-shows an unavailable fallback. Existing Markdown safety restrictions remain.
+Errors: `missing_context`, `invalid_arguments`, `storage_unavailable`. API errors
+or unsupported explicit tenant contexts return safe errors without a database
+fallback. Both services must be running. `CAMPAIGN_API_BASE_URL` overrides the
+default API origin, `http://127.0.0.1:${PORT:-4000}`; requests time out after ten
+seconds and use configured shared Basic credentials when enabled.
 
 Example arguments:
 
 ```json
-{"filters":{"age_min":41,"genders":["Female"],"cash_min":250000,"cash_min_exclusive":true}}
+{"filters":{"age_min":41,"genders":["Female"],"cash_min":250000}}
 ```
-
-This is campaign discovery, not client matching, suitability assessment or consent
-approval. It does not send communications, mutate CRM data, create tasks or
-measure outcomes. Those remain separate existing operations.
 
 ### MCP: resolve_campaign
 

@@ -1012,7 +1012,9 @@ def test_query_runs_real_mcp_recommendation_with_fake_provider_and_storage(monke
 def test_discovery_carries_frontend_identity_through_api_mcp_and_tenant_query(monkeypatch, route):
     from contextlib import contextmanager
     from datetime import date
-    from app.campaigns import repository
+    from app.campaigns import catalog
+    from app.tools import campaign_catalogue_api
+    import httpx
     from app.config import Settings
     from app.llm.orchestrator import ChatOrchestrator
     from app.tools.mcp_registry import MCPToolRegistry
@@ -1026,13 +1028,25 @@ def test_discovery_carries_frontend_identity_through_api_mcp_and_tenant_query(mo
             return self
         def fetchall(self):
             return [{'campaign_id':'b1111111-1111-1111-1111-111111111111', 'name':'Scoped campaign',
-                'campaign_code':'CMP-A', 'description':'Created by another tenant member', 'status':'active',
+                'description':'Created by this adviser', 'status':'active',
+                'created_by_user_id': frontend_id, 'created_at': datetime(2026,1,1,tzinfo=timezone.utc),
+                'client_messaging':'Educational message', 'origin':'advisor', 'audience_source':'contacts',
+                'lead_count_uploaded':0, 'lead_count_promoted':0, 'lead_count_removed':0,
                 'start_date':date(2027,1,1), 'end_date':date(2027,12,31),
                 'audience_criteria':{'ageGroups':['35-44'], 'genders':['Male'], 'cashBands':['50k-250k']}}]
     @contextmanager
     def connection():
         yield Connection()
-    monkeypatch.setattr(repository, '_connection', connection)
+    monkeypatch.setattr(catalog, '_connection', connection)
+    real_http_client = httpx.Client
+    def endpoint(request):
+        assert request.url.path == '/api/campaigns'
+        assert request.url.params['fa_id'] == frontend_id
+        response = client.get(request.url.path, params=dict(request.url.params))
+        return httpx.Response(response.status_code, content=response.content, headers=dict(response.headers))
+    monkeypatch.setattr(campaign_catalogue_api.httpx, 'Client',
+        lambda **kwargs: real_http_client(**kwargs, transport=httpx.MockTransport(endpoint)))
+    monkeypatch.setattr(campaign_catalogue_api, 'get_settings', lambda: Settings(_env_file=None))
     provider = FakeClient([completion(message(tool_calls=[tool_call('discover','get_active_campaigns','{}')]))])
     orchestrator = ChatOrchestrator(provider, Settings(_env_file=None, groq_api_key='test-key'), MCPToolRegistry(server))
     monkeypatch.setattr(main, 'get_orchestrator', lambda: orchestrator)
@@ -1045,4 +1059,5 @@ def test_discovery_carries_frontend_identity_through_api_mcp_and_tenant_query(mo
     assert '#active-campaigns-excel' in response.json()['ai_answer']
     sql, parameters = captured[-1]
     assert 'c.tenant_id = %s' in sql and parameters[0] == frontend_id
-    assert 'created_by_user_id' not in sql
+    assert 'c.created_by_user_id = %s' in sql and parameters[1] == frontend_id
+    assert 'Campaign Code' not in response.json()['ai_answer']

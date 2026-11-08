@@ -28,7 +28,6 @@ class CampaignFilters(BaseModel):
     cash_max: float | None = Field(default=None, ge=0, strict=True, allow_inf_nan=False)
     cash_min_exclusive: bool = Field(default=False, strict=True)
     cash_max_exclusive: bool = Field(default=False, strict=True)
-    campaign_codes: list[str] | None = Field(default=None, max_length=100)
     name_contains: str | None = Field(default=None, min_length=1, max_length=200)
     description_contains: str | None = Field(default=None, min_length=1, max_length=500)
     start_date_from: date | None = None
@@ -51,10 +50,6 @@ class CampaignFilters(BaseModel):
         if (self.cash_min is not None and self.cash_min == self.cash_max
                 and (self.cash_min_exclusive or self.cash_max_exclusive)):
             raise ValueError("Cash filter range is empty")
-        if self.campaign_codes is not None and any(
-            not code.strip() or len(code) > 50 for code in self.campaign_codes
-        ):
-            raise ValueError("Invalid campaign code")
         return self
 
 
@@ -101,10 +96,6 @@ def matches_filters(campaign: Campaign, filters: CampaignFilters) -> bool:
             minimum_open=filters.cash_min_exclusive, maximum_open=filters.cash_max_exclusive,
         ) for lo, hi, upper_open in intervals):
             return False
-    if filters.campaign_codes is not None and campaign.campaign_code.casefold() not in {
-        code.casefold() for code in filters.campaign_codes
-    }:
-        return False
     for field in ("name", "description"):
         term = getattr(filters, field + "_contains")
         if term is not None and term.casefold() not in (getattr(campaign, field) or "").casefold():

@@ -4,7 +4,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.campaigns import clock, repository
+from app.campaigns import clock
+from app.tools.campaign_catalogue_api import fetch_campaigns
 from app.campaigns.discovery_filters import CampaignFilters, matches_filters
 from app.campaigns.repository import (
     CAMPAIGN_ID_PATTERN,
@@ -13,13 +14,13 @@ from app.campaigns.repository import (
 )
 
 CampaignField = Literal[
-    "campaign_id", "name", "campaign_code", "description", "start_date", "end_date", "age_groups", "genders",
+    "campaign_id", "name", "description", "start_date", "end_date", "age_groups", "genders",
     "cash_bands", "age_min", "age_max", "cash_min", "cash_max", "status",
 ]
 CampaignId = Annotated[str, Field(pattern=CAMPAIGN_ID_PATTERN, max_length=69)]
 CampaignName = Annotated[str, Field(min_length=1, max_length=255)]
 DEFAULT_FIELDS = [
-    "name", "campaign_code", "description", "start_date", "end_date", "age_groups", "genders", "cash_bands",
+    "name", "description", "start_date", "end_date", "age_groups", "genders", "cash_bands",
 ]
 FIELD_LABELS = {"name": "Campaign Name", "age_groups": "Age Group"}
 AGE_LABELS = {
@@ -42,7 +43,7 @@ class ActiveCampaignArguments(BaseModel):
     campaign_ids: list[CampaignId] | None = Field(default=None, max_length=100)
     campaign_names: list[CampaignName] | None = Field(default=None, max_length=100)
     limit: int = Field(default=1000, ge=1, le=1000, strict=True)
-    fields: list[CampaignField] | None = Field(default=None, min_length=1, max_length=14)
+    fields: list[CampaignField] | None = Field(default=None, min_length=1, max_length=13)
     filters: CampaignFilters | None = None
 
 
@@ -116,8 +117,6 @@ def _filter_summary(filters: dict) -> str:
             cash.append(f"{comparison} S${value:,}".removesuffix(".0"))
     if cash:
         parts.append("Cash: " + " and ".join(cash))
-    if "campaign_codes" in filters:
-        parts.append("Campaign codes: " + (", ".join(filters["campaign_codes"]) or "none selected"))
     for field in ("name", "description"):
         if field + "_contains" in filters:
             parts.append(f"{field.title()} contains: {filters[field + '_contains']}")
@@ -164,9 +163,7 @@ def execute_get_active_campaigns(arguments: dict, metadata: dict | None) -> dict
 
     as_of = current_date()
     try:
-        campaigns = repository.list_active_campaigns_for_discovery(
-            scope, as_of, query.campaign_ids, query.campaign_names
-        )
+        campaigns = fetch_campaigns(scope)
     except CampaignStorageUnavailable as exc:
         return _error("storage_unavailable", str(exc))
 
@@ -174,14 +171,20 @@ def execute_get_active_campaigns(arguments: dict, metadata: dict | None) -> dict
     # Preserve field order and always identify a campaign by its name.
     columns = list(dict.fromkeys(fields if "name" in fields else ["name", *fields]))
     rows = []
+    names = {name.casefold() for name in query.campaign_names} if query.campaign_names is not None else None
     for campaign in campaigns:
+        if campaign.status != "active":
+            continue
+        if query.campaign_ids is not None and campaign.campaign_id not in query.campaign_ids:
+            continue
+        if names is not None and campaign.name.casefold() not in names:
+            continue
         if query.filters is not None and not matches_filters(campaign, query.filters):
             continue
         criteria = campaign.criteria
         values = {
             "campaign_id": campaign.campaign_id,
             "name": campaign.name,
-            "campaign_code": campaign.campaign_code,
             "description": campaign.description,
             "status": campaign.status,
             "start_date": campaign.start_date.isoformat() if campaign.start_date else None,
