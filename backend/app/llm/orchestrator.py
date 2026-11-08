@@ -1,8 +1,11 @@
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 import re
+from threading import Event, Lock
+from time import monotonic
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -31,14 +34,100 @@ from app.campaigns.models import (
     PersistedCampaignDraftArtifact,
     PersistedCampaignDraftOptionSet,
 )
-from app.campaigns.email import CONFIRMATION_PATTERN, render_campaign_email
+from app.campaigns.email import (
+    CONFIRMATION_PATTERN,
+    latest_email_draft_context,
+    render_campaign_email,
+)
+from app.campaigns.conversation_context import (
+    CampaignContextResolution,
+    is_campaign_email_cancel,
+    is_campaign_email_turn,
+    signoff_reply,
+)
 from app.campaigns.presentation import render_campaign_draft
-from app.campaigns.repository import RequestScope
+from app.campaigns.repository import RequestScope, get_campaign, require_active
 from app.config import Settings
 from app.llm.errors import LLMProviderError, LLMToolLoopError
 from app.store import ChatHistoryItem
 from app.tools.discovery import render_active_campaigns
 from app.tools.campaign import render_recommendation_download
+
+
+EMAIL_SYSTEM_PROMPT = """You are drafting or revising one campaign outreach email.
+Use only the supplied server-validated campaign and draft context. Return only
+the requested structured content. For a new draft, provide a
+concise subject and educational body using {{client_name}} for optional
+personalisation. Do not promise outcomes or invent client facts. State that
+individual circumstances and suitability require adviser review. Do not add a
+signature; the server adds the adviser-provided sign-off. For a revision, apply
+only the latest instruction and preserve the supplied draft's meaning. Return
+null for each unchanged field. Never send email or invent recipients."""
+
+EMAIL_CONTENT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "subject": {"type": ["string", "null"], "maxLength": 200},
+        "body": {"type": ["string", "null"], "maxLength": 10_000},
+    },
+    "required": ["subject", "body"],
+}
+
+_SUBJECT_ONLY_PATTERN = re.compile(r"\bsubject(?:\s+line)?\b", re.IGNORECASE)
+_BODY_REVISION_PATTERN = re.compile(
+    r"\b(?:body|message|copy|wording|tone|friendlier|friendly|formal|shorter|longer)\b",
+    re.IGNORECASE,
+)
+_CAMPAIGN_DETAIL_REVISION_PATTERN = re.compile(
+    r"\b(?:campaign\s+(?:information|details?)|date|schedule|start|end|"
+    r"audience|criteria|age|cash|gender)\b",
+    re.IGNORECASE,
+)
+
+
+def _replacement_value(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1].strip()
+    return value
+
+
+def _deterministic_email_edit(message: str) -> dict[str, str] | None:
+    """Parse exact replacement instructions that need no language model."""
+    patterns = (
+        (
+            "signoff_name",
+            re.compile(
+                r"^(?:please\s+)?(?:change|set|update|replace)\s+(?:the\s+)?"
+                r"sign[ -]?off(?:\s+name)?\s+(?:to|with)\s+(.+)$",
+                re.IGNORECASE | re.DOTALL,
+            ),
+        ),
+        (
+            "subject",
+            re.compile(
+                r"^(?:please\s+)?(?:change|set|update|replace)\s+(?:the\s+)?"
+                r"subject(?:\s+line)?\s+(?:to|with)\s+(.+)$",
+                re.IGNORECASE | re.DOTALL,
+            ),
+        ),
+        (
+            "body",
+            re.compile(
+                r"^(?:please\s+)?(?:change|set|update|replace)\s+(?:the\s+)?"
+                r"(?:body|message)\s+(?:to|with)\s+(.+)$",
+                re.IGNORECASE | re.DOTALL,
+            ),
+        ),
+    )
+    for field, pattern in patterns:
+        match = pattern.fullmatch(message.strip())
+        if match:
+            value = _replacement_value(match.group(1))
+            if value:
+                return {field: value}
+    return None
 
 
 SYSTEM_PROMPT = """You are PULSE, an assistant for financial advisers.
@@ -152,14 +241,21 @@ that individual circumstances and suitability require adviser review. Use
 {{client_name}} for optional name personalisation. Supply recipient_ids only
 when the adviser explicitly selected a subset; otherwise let the server use all
 consenting criteria matches. The tool creates a reviewable preview and never
-sends. Present the server-rendered recipients, exclusions, content and exact
+sends. Before the first preview, ask what name the adviser wants in the sign-off
+unless they already supplied one in this conversation. Never infer a sign-off
+name from an adviser ID or invent one. Do not include a sign-off in body; pass
+the adviser's answer as signoff_name. For a sign-off-only revision, omit
+unchanged subject and body so the server reuses the latest stored preview.
+Resolve an accessible campaign from either its name or an ID supplied by the
+adviser. Never require the adviser to look up an internal campaign ID when a
+campaign name was supplied. Present the server-rendered recipients, exclusions, content and exact
 confirmation phrase without alteration. A revision requires a new preview.
 
 Email sending requires the adviser to enter the exact confirmation phrase from
 the latest preview. Never infer approval from words such as approve, proceed or
 send it, and never place a confirmation phrase in tool arguments. The server
 reads the latest user message, revalidates campaign ownership, matching and
-email consent, then records successful recipients as campaign contact events.
+email consent, then updates campaign membership email counts and the email audit.
 """
 
 CAMPAIGN_INTENT_EXTRACTION_PROMPT = """Extract only campaign intent explicitly
@@ -271,7 +367,8 @@ available tools cannot establish, say that it is unavailable.
 
 
 SERVER_ONLY_TOOLS = frozenset({
-    "confirm_campaign_email", "prepare_campaign_draft", "revise_campaign_draft",
+    "confirm_campaign_email", "discard_campaign_email",
+    "prepare_campaign_draft", "revise_campaign_draft",
 })
 
 
@@ -425,7 +522,7 @@ def _campaign_reference_failure(result: str) -> str:
 
 def _is_campaign_generation_request(message: str) -> bool:
     normalized = " ".join(message.casefold().split())
-    if re.search(r"\b(?:email|mail|outreach)\b", normalized):
+    if re.search(r"\b(?:emails?|mails?|outreach)\b", normalized):
         return False
     return bool(
         re.search(
@@ -560,7 +657,7 @@ def _is_explicit_new_campaign_request(message: str) -> bool:
 def _is_email_campaign_request(message: str) -> bool:
     normalized = " ".join(message.casefold().split())
     return bool(
-        re.search(r"\b(?:email|mail|outreach)\b", normalized)
+        re.search(r"\b(?:emails?|mails?|outreach)\b", normalized)
         and re.search(r"\b(?:draft|write|prepare|revise|send|campaign)\b", normalized)
     )
 
@@ -934,6 +1031,11 @@ class ChatOrchestrator:
         self.settings = settings
         self.registry = registry
         self.clarification_store = clarification_store
+        self._email_request_lock = Lock()
+        self._email_request_cache: dict[
+            tuple[str, ...], tuple[float, OrchestratorResult]
+        ] = {}
+        self._email_requests_in_flight: dict[tuple[str, ...], Event] = {}
 
     def _assess_campaign_objective(
         self, objective: str, answers: tuple[str, ...] = ()
@@ -1457,6 +1559,190 @@ class ChatOrchestrator:
             requested_revision_fields=(field,),
         )
 
+    def _generate_campaign_email(
+        self,
+        *,
+        registry: ToolExecutor,
+        scope: RequestScope,
+        campaign_id: str,
+        user_message: str,
+        signoff_name: str | None,
+        previous_draft: dict[str, str] | None,
+    ) -> OrchestratorResult:
+        """Generate or revise email with one compact, email-only model call."""
+        campaign = get_campaign(campaign_id, scope)
+        require_active(campaign)
+        subject_only = bool(
+            previous_draft
+            and _SUBJECT_ONLY_PATTERN.search(user_message)
+            and not _BODY_REVISION_PATTERN.search(user_message)
+        )
+        campaign_context: dict[str, Any] = {
+            "name": campaign.name,
+            "description": campaign.description,
+        }
+        include_campaign_details = (
+            previous_draft is None
+            or bool(_CAMPAIGN_DETAIL_REVISION_PATTERN.search(user_message))
+        )
+        if include_campaign_details:
+            campaign_context.update({
+                "start_date": campaign.start_date.isoformat()
+                if campaign.start_date else None,
+                "end_date": campaign.end_date.isoformat()
+                if campaign.end_date else None,
+                "audience_criteria": {
+                    "age_groups": list(campaign.criteria.age_groups),
+                    "genders": list(campaign.criteria.genders),
+                    "cash_bands": list(campaign.criteria.cash_bands),
+                    "age_min": campaign.criteria.age_min,
+                    "age_max": campaign.criteria.age_max,
+                    "cash_min": campaign.criteria.cash_min,
+                    "cash_max": campaign.criteria.cash_max,
+                },
+            })
+        current_email_draft = None
+        if previous_draft is not None:
+            current_email_draft = (
+                {"subject": previous_draft["subject"]}
+                if subject_only
+                else {
+                    "subject": previous_draft["subject"],
+                    "body": previous_draft["message_body"],
+                }
+            )
+        context = {
+            "campaign": campaign_context,
+            "current_email_draft": current_email_draft,
+        }
+        messages = [
+            {
+                "role": "system",
+                "content": EMAIL_SYSTEM_PROMPT + "\n\nContext: " + json.dumps(
+                    context, ensure_ascii=False, separators=(",", ":")
+                ),
+            },
+            {"role": "user", "content": user_message},
+        ]
+        completion = self.client.create_structured_completion(
+            messages,
+            EMAIL_CONTENT_SCHEMA,
+            schema_name="campaign_email_content",
+        )
+        if not getattr(completion, "choices", None):
+            raise LLMProviderError("LLM provider returned no choices")
+        try:
+            arguments = json.loads(completion.choices[0].message.content)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise LLMProviderError("Campaign email content was invalid") from exc
+        if not isinstance(arguments, dict):
+            raise LLMProviderError("Campaign email content was invalid")
+        arguments = {
+            field: value
+            for field, value in arguments.items()
+            if field in {"subject", "body"} and isinstance(value, str) and value.strip()
+        }
+        if previous_draft is None and set(arguments) != {"subject", "body"}:
+            return _answer(
+                "I couldn't prepare a complete email draft in one generation step. "
+                "Please try again. No email was sent."
+            )
+        if not arguments:
+            return _answer(
+                "I couldn't identify an email change to preview. Please state the "
+                "subject or message change more specifically. No email was sent."
+            )
+        arguments["campaign_id"] = campaign_id
+        if signoff_name is not None:
+            arguments["signoff_name"] = signoff_name
+        return self._execute_campaign_email(registry, arguments)
+
+    def _execute_campaign_email(
+        self, registry: ToolExecutor, arguments: dict[str, Any]
+    ) -> OrchestratorResult:
+        result = registry.execute(
+            "prepare_campaign_email",
+            json.dumps(arguments, ensure_ascii=False),
+        )
+        try:
+            payload = json.loads(result)
+        except json.JSONDecodeError as exc:
+            raise LLMProviderError("Campaign email tool returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise LLMProviderError("Campaign email tool returned an invalid result")
+        return _answer(render_campaign_email(payload))
+
+    def _run_campaign_email(
+        self,
+        *,
+        registry: ToolExecutor,
+        scope: RequestScope,
+        session_id: str,
+        campaign_id: str,
+        user_message: str,
+        signoff_name: str | None,
+        previous_draft: dict[str, str] | None,
+    ) -> OrchestratorResult:
+        """Collapse identical short-lived email requests into one operation."""
+        digest = hashlib.sha256(json.dumps(
+            {
+                "campaign_id": campaign_id,
+                "message": user_message.strip(),
+                "signoff_name": signoff_name,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+        key = (scope.tenant_id, scope.fa_id, session_id, digest)
+        now = monotonic()
+        with self._email_request_lock:
+            self._email_request_cache = {
+                cache_key: value
+                for cache_key, value in self._email_request_cache.items()
+                if now - value[0] <= 30
+            }
+            cached = self._email_request_cache.get(key)
+            if cached is not None:
+                return cached[1]
+            event = self._email_requests_in_flight.get(key)
+            owner = event is None
+            if owner:
+                event = Event()
+                self._email_requests_in_flight[key] = event
+        if not owner:
+            event.wait(timeout=self.settings.llm_timeout_seconds + 5)
+            with self._email_request_lock:
+                cached = self._email_request_cache.get(key)
+            if cached is not None:
+                return cached[1]
+            raise LLMProviderError(
+                "A matching campaign email request did not complete"
+            )
+        try:
+            result = self._generate_campaign_email(
+                registry=registry,
+                scope=scope,
+                campaign_id=campaign_id,
+                user_message=user_message,
+                signoff_name=signoff_name,
+                previous_draft=previous_draft,
+            )
+            with self._email_request_lock:
+                self._email_request_cache[key] = (monotonic(), result)
+                if len(self._email_request_cache) > 128:
+                    oldest = min(
+                        self._email_request_cache,
+                        key=lambda item: self._email_request_cache[item][0],
+                    )
+                    self._email_request_cache.pop(oldest, None)
+            return result
+        finally:
+            with self._email_request_lock:
+                completed = self._email_requests_in_flight.pop(key, None)
+                if completed is not None:
+                    completed.set()
+
     def run(
         self,
         user_message: str,
@@ -1468,6 +1754,7 @@ class ChatOrchestrator:
         current_draft: PersistedCampaignDraftArtifact | None = None,
         pending_draft_options: PersistedCampaignDraftOptionSet | None = None,
         revision_context_checked: bool = False,
+        campaign_context_issue: CampaignContextResolution | None = None,
     ) -> OrchestratorResult:
         if scope is not None:
             try:
@@ -1494,6 +1781,81 @@ class ChatOrchestrator:
             if not isinstance(payload, dict):
                 raise LLMProviderError("Campaign email tool returned an invalid result")
             return _answer(render_campaign_email(payload))
+        if (
+            scope is not None
+            and session_id
+            and is_campaign_email_cancel(user_message, history)
+        ):
+            result = registry.execute("discard_campaign_email", "{}")
+            try:
+                payload = json.loads(result)
+            except json.JSONDecodeError as exc:
+                raise LLMProviderError(
+                    "Campaign email discard tool returned invalid JSON"
+                ) from exc
+            if not isinstance(payload, dict):
+                raise LLMProviderError(
+                    "Campaign email discard tool returned an invalid result"
+                )
+            return _answer(render_campaign_email(payload))
+        if campaign_context_issue is not None:
+            if campaign_context_issue.status == "ambiguous":
+                choices = "\n".join(
+                    f"- {name}" for name in campaign_context_issue.candidates
+                )
+                return _answer(
+                    "## Which campaign do you mean?\n\n"
+                    "I found more than one accessible active campaign in your "
+                    f"request:\n\n{choices}\n\n"
+                    "Reply with the campaign name or campaign ID."
+                )
+            if campaign_context_issue.status == "not_found":
+                return _answer(
+                    "## Campaign not found\n\n"
+                    "I could not find an accessible active campaign matching that "
+                    "ID. Check the campaign name or ID and try again."
+                )
+        if (
+            scope is not None
+            and session_id is not None
+            and is_campaign_email_turn(user_message, history)
+        ):
+            if campaign_id is None:
+                return _answer(
+                    "I can help draft the campaign email. Which campaign would you "
+                    "like to use? Enter its name or ID, or say **cancel email "
+                    "drafting**."
+                )
+            previous_draft = latest_email_draft_context(
+                scope, session_id, campaign_id
+            )
+            signoff_name = signoff_reply(user_message, history)
+            deterministic_edit = (
+                _deterministic_email_edit(user_message)
+                if previous_draft is not None else None
+            )
+            if deterministic_edit is not None:
+                return self._execute_campaign_email(
+                    registry,
+                    {"campaign_id": campaign_id, **deterministic_edit},
+                )
+            if previous_draft is None and signoff_name is None:
+                campaign = get_campaign(campaign_id, scope)
+                require_active(campaign)
+                return _answer(
+                    f"I found **{campaign.name}**. What name would you like me to "
+                    "use in the email sign-off? You can also say **cancel email "
+                    "drafting**."
+                )
+            return self._run_campaign_email(
+                registry=registry,
+                scope=scope,
+                session_id=session_id,
+                campaign_id=campaign_id,
+                user_message=user_message,
+                signoff_name=signoff_name,
+                previous_draft=previous_draft,
+            )
         prompt = SYSTEM_PROMPT
         if scope is not None:
             prompt += "\nCurrent campaign context (server-validated): " + json.dumps(

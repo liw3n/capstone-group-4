@@ -938,7 +938,6 @@ def test_active_draft_does_not_intercept_an_unrelated_tool_request():
         "Show clients above 65 with more than 250k cash",
         "Which male clients match this campaign?",
         "How did this campaign perform last week?",
-        "Draft an email for this campaign",
     ],
 )
 def test_active_draft_preserves_existing_tool_intent_precedence(message_value):
@@ -960,6 +959,23 @@ def test_active_draft_preserves_existing_tool_intent_precedence(message_value):
     assert "Do not present, rewrite or claim to save a campaign draft" in (
         client.calls[0]["messages"][0]["content"]
     )
+
+
+def test_active_draft_email_request_uses_deterministic_email_clarification():
+    client = FakeClient([])
+    orchestrator = ChatOrchestrator(client, settings(), tool_registry())
+
+    result = orchestrator.run(
+        "Draft an email for this campaign",
+        [],
+        scope=RequestScope("fa-1"),
+        session_id="session-1",
+        current_draft=persisted_campaign_draft(),
+        revision_context_checked=True,
+    )
+
+    assert "Which campaign" in result.answer
+    assert client.calls == []
 
 
 @pytest.mark.parametrize(

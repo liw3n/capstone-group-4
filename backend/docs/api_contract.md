@@ -276,7 +276,8 @@ Provider or MCP tool-server failures are returned as `429`, `502`, `503`, or
 the FastMCP server at `MCP_SERVER_URL`, filtered through an explicit list of
 model-discoverable tools. The model cannot invoke a tool absent from that turn's
 offered list. A response asking for such a tool is rejected before any tool in
-that response is run. Email confirmation, campaign-draft preparation and draft
+that response is run. Email confirmation, email-preview discard,
+campaign-draft preparation and draft
 revision are server-routed paths, not ordinary model-callable tools. A separate
 system instruction treats chat history, CRM text, retrieved references and tool
 results as untrusted data; it does not grant those sources authority to change
@@ -1062,27 +1063,35 @@ email delivery.
 
 ### MCP: prepare_campaign_email
 
-The email preview/confirmation implementation below is a legacy contract. Its
-storage still depends on `campaign_email_send` and
-`mock_campaign_contact_event`, which a fresh setup no longer creates. It must be
-migrated separately before this flow can run with only `campaign` and
-`campaign_member`; its former event writes do not feed the performance tools.
-
 This tool prepares and persists an email preview; it does not send. Model-facing
-arguments are `subject` (1-200 characters), `body` (1-10,000 characters),
-optional `campaign_id`, and optional unique `recipient_ids` (1-100). When a
+arguments are optional `subject` (1-200 characters), optional `body`
+(1-10,000 characters), optional `signoff_name` (2-100 characters), optional
+`campaign_id`, and optional unique `recipient_ids` (1-100). Subject and body are
+required for the first preview; later sign-off-only revisions reuse the stored
+content. When a
 campaign is selected in the UI, trusted request metadata overrides the model's
 campaign value. Adviser ID, tenant ID, chat session ID and latest user message
 are supplied only through MCP metadata.
 
-The server verifies campaign assignment and active state, recalculates campaign
-criteria matches, then loads only adviser-owned contacts. Contacts that are not
+The server verifies campaign ownership and active state, recalculates campaign
+criteria matches, then loads official `contact` rows accessible because the
+adviser is their assignee or creator. Contacts that are not
 matches or lack `opt_in_email` are returned under `excluded_recipients`; they are
 never included in the stored batch. Omitting `recipient_ids` selects all matched,
 consenting contacts. A successful result contains the exact subject, body,
 recipient snapshot, excluded recipients, delivery mode, 15-minute expiry and an
 exact `CONFIRM EMAIL <code>` phrase. A newer preview for the same chat session
 and campaign supersedes its prior unconfirmed preview.
+
+The API resolves exact campaign names/IDs and short sign-off replies from stored
+chat history without an LLM request. Once those inputs exist, email generation
+uses one compact structured request with validated campaign data, only the
+relevant fields from the latest stored email draft, the latest instruction, and
+a nullable subject/body schema. Other chat history and MCP schemas are not sent
+for this path. Exact subject, body and sign-off replacements are applied without
+the model. Identical model-backed requests within 30 seconds are collapsed by
+an adviser/session-scoped in-process cache; this is retry protection, not a
+cross-instance durable idempotency guarantee.
 
 ### MCP: confirm_campaign_email
 
@@ -1093,12 +1102,32 @@ message from trusted metadata. General approval language cannot send an email.
 The server locks the latest batch, verifies its hashed phrase and expiry, and
 rechecks campaign access, criteria matching, ownership and email consent. It
 calls the configured transport once for each recipient and stores bounded
-per-recipient outcomes. Every successful outcome appends one
-`mock_campaign_contact_event` with `engagement_status=0`, `channel=email`, the
-delivery mode and `send_batch_id`. Failed or unknown outcomes do not create a
-contact event. Repeating a completed confirmation returns the stored result and
-does not send again. A deliberate resend requires a new preview and phrase.
+per-recipient outcomes. Every successful outcome creates or updates the official
+`campaign_member` row, sets `emailed_at`, and increments `email_send_count`.
+The campaign's `email_send_runs` is incremented once when a batch has at least
+one successful outcome. Failed or unknown outcomes do not update membership.
+Repeating a completed confirmation returns the stored result and does not send
+again. A deliberate resend requires a new preview and phrase.
 
 Local `EMAIL_DELIVERY_MODE=mock` results are explicitly simulated. Optional
 `gwm` mode uses the server-side GWM Core Email API adapter; credentials and
 provider settings are never model arguments or browser configuration.
+
+### MCP: discard_campaign_email
+
+This server-routed tool has no model-facing arguments and is not included in the
+Groq tool list. The orchestrator invokes it deterministically when an adviser
+explicitly cancels email drafting, or gives a short cancellation reply while a
+campaign-email question or preview is pending.
+
+The tool requires adviser, tenant and chat-session metadata. It changes only the
+latest `prepared` `campaign_email_send` row in that scope to `invalidated`.
+Already `sending`, `sent`, `partial` or `failed` batches are not modified. If no
+preview has been stored yet, cancellation still ends the conversational workflow
+without creating a row. It never sends email. A later exact confirmation phrase
+cannot send an invalidated preview.
+
+Campaign-email carry-over is limited to recognised campaign, sign-off, content
+and preview-edit prompts. A completed or discarded result is terminal, allowing
+the next message in the same chat to use another PULSE tool. Starting another
+email workflow requires a new explicit email request.

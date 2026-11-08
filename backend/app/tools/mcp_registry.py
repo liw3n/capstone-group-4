@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.campaigns.email import (
     ConfirmCampaignEmailArguments,
+    DiscardCampaignEmailArguments,
     PrepareCampaignEmailArguments,
 )
 from app.campaigns.models import (
@@ -267,6 +268,26 @@ class MCPToolRegistry:
                     "type": "campaign_email_result",
                     "sent": False,
                     "error": "Campaign email confirmation arguments are invalid",
+                })
+
+        if name == "discard_campaign_email":
+            if self.scope is None or self.session_id is None:
+                return json.dumps({
+                    "type": "campaign_email_discarded",
+                    "discarded": False,
+                    "sent": False,
+                    "error": "Adviser and chat session context are required",
+                })
+            try:
+                arguments = DiscardCampaignEmailArguments.model_validate(
+                    arguments
+                ).model_dump()
+            except ValidationError:
+                return json.dumps({
+                    "type": "campaign_email_discarded",
+                    "discarded": False,
+                    "sent": False,
+                    "error": "Campaign email discard arguments are invalid",
                 })
 
         try:

@@ -29,8 +29,10 @@ from app.campaigns.repository import (
 )
 from app.campaigns.email import (
     ConfirmCampaignEmailArguments,
+    DiscardCampaignEmailArguments,
     PrepareCampaignEmailArguments,
     confirm_campaign_email as execute_confirm_campaign_email,
+    discard_campaign_email as execute_discard_campaign_email,
     prepare_campaign_email as execute_prepare_campaign_email,
 )
 from app.campaigns.models import (
@@ -232,11 +234,12 @@ def _request_metadata(ctx: Context) -> dict | None:
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False})
 def prepare_campaign_email(
-    subject: Annotated[str, Field(min_length=1, max_length=200)],
-    body: Annotated[str, Field(min_length=1, max_length=10_000)],
     ctx: Context,
     campaign_id: Annotated[str | None, Field(pattern=CAMPAIGN_ID_PATTERN, max_length=69)] = None,
     recipient_ids: Annotated[list[str] | None, Field(min_length=1, max_length=100)] = None,
+    subject: Annotated[str | None, Field(min_length=1, max_length=200)] = None,
+    body: Annotated[str | None, Field(min_length=1, max_length=10_000)] = None,
+    signoff_name: Annotated[str | None, Field(min_length=2, max_length=100)] = None,
 ) -> dict:
     """Prepare an expiring campaign-email preview for adviser review.
 
@@ -251,6 +254,7 @@ def prepare_campaign_email(
         recipient_ids=recipient_ids,
         subject=subject,
         body=body,
+        signoff_name=signoff_name,
     )
     return execute_prepare_campaign_email(arguments, _request_metadata(ctx))
 
@@ -267,6 +271,19 @@ def confirm_campaign_email(ctx: Context) -> dict:
     logger.info("MCP tool called: confirm_campaign_email")
     ConfirmCampaignEmailArguments()
     return execute_confirm_campaign_email(_request_metadata(ctx))
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True})
+def discard_campaign_email(ctx: Context) -> dict:
+    """Discard the latest unsent campaign-email preview in this chat session.
+
+    Adviser and tenant scope come from trusted request metadata. Sent or
+    in-progress batches are never modified, and this operation never sends an
+    email.
+    """
+    logger.info("MCP tool called: discard_campaign_email")
+    DiscardCampaignEmailArguments()
+    return execute_discard_campaign_email(_request_metadata(ctx))
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})

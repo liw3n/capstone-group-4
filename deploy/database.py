@@ -15,7 +15,8 @@ SCHEMA = (
     "create_campaign_chat_sessions.sql", "create_campaign_generation_clarifications.sql",
     "create_campaign_generation_drafts.sql", "create_campaign_chat_messages.sql",
     "create_mock_user_account.sql", "create_campaign.sql", "create_contact.sql",
-    "create_campaign_member.sql", "create_campaign_recommendation_lists.sql",
+    "create_campaign_member.sql", "create_campaign_email_send.sql",
+    "create_campaign_recommendation_lists.sql",
 )
 SEEDS = ("mock_user_account.sql", "mock_contact.sql", "mock_campaign.sql", "mock_campaign_member.sql")
 SEED_UPDATES = ("20261107_add_demo_contacts.sql", "20261107_add_demo_members.sql")

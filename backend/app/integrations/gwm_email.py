@@ -55,24 +55,27 @@ class GWMEmailTransport:
             "recipientEmail": recipient,
             "subject": subject,
             "message": message,
-            "base64Attachment": None,
-            "contentIDs": None,
-            "cc": None,
+            "base64Attachment": "",
+            "contentIDs": [""],
+            "cc": "",
         }).encode("utf-8")
-        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        headers = {"Content-Type": "application/json", "Accept": "text/plain"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         outbound = request.Request(self.url, data=payload, headers=headers, method="POST")
         try:
             with request.urlopen(outbound, timeout=self.timeout) as response:
-                body = response.read(64_000).decode("utf-8")
-                parsed = json.loads(body) if body else {}
-                status = str(parsed.get("statusCode", response.status))
-                message_text = str(parsed.get("message", "Delivery accepted"))
-                return DeliveryResult(200 <= response.status < 300, message_text, status)
+                body = response.read(64_000).decode(
+                    "utf-8", errors="replace"
+                ).strip()
+                return DeliveryResult(
+                    200 <= response.status < 300,
+                    body or "Delivery accepted",
+                    str(response.status),
+                )
         except error.HTTPError as exc:
             return DeliveryResult(False, "Email provider rejected the request", str(exc.code))
-        except (error.URLError, TimeoutError, json.JSONDecodeError):
+        except (error.URLError, TimeoutError):
             return DeliveryResult(False, "Email provider outcome is unknown", "unknown")
 
 

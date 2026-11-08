@@ -107,7 +107,7 @@ The registered tools include `recommend_clients_for_campaign`,
 `get_active_campaigns`, `get_campaign_contact_performance`,
 `get_campaign_contact_ranking`, `find_campaign_references`,
 `prepare_campaign_draft`, `revise_campaign_draft`, `prepare_campaign_email`,
-`confirm_campaign_email`, and `campaign_follow_up`. Campaign matching and scoped data access live in
+`confirm_campaign_email`, `discard_campaign_email`, and `campaign_follow_up`. Campaign matching and scoped data access live in
 `app/campaigns/`; shared follow-up handlers live in
 `app/tools/campaign_follow_up.py`. Follow-up handlers query the mock engagement
 table and currently return simulated client profile and portfolio data.
@@ -313,20 +313,42 @@ supplied, so this prototype does not provide production authentication.
 The adviser can ask PULSE to draft or revise an email for a selected campaign.
 The model supplies draft subject/body text to `prepare_campaign_email`; the
 server recalculates criteria matches and filters them by tenant, adviser ownership
-and `opt_in_email`. It stores the exact preview in `campaign_email_send` and
+and `opt_in_email`. Campaign names and IDs are resolved from the current turn or
+recent adviser-authored chat context. The adviser supplies the sign-off name;
+PULSE does not infer a name from an adviser identifier. The server stores the
+exact preview in `campaign_email_send` and
 returns its included and excluded recipients plus an expiring phrase such as
 `CONFIRM EMAIL ABC234`. Nothing is sent during preparation.
+
+Email turns use a bounded orchestration path. Python resolves a recent campaign
+and short replies to the sign-off question without calling the model. Drafting
+or revising uses one Groq request containing only validated campaign/current
+email context and a two-field subject/body response schema; it does not send the
+shared system prompt, full chat history or unrelated tool schemas. Exact
+subject, body and sign-off replacements bypass the model, while model-backed
+revisions receive only the relevant part of the stored draft. Identical
+adviser/session requests share a short-lived in-process result so retries do not
+consume another model call or create another preview. Exact confirmation also
+bypasses the model.
+
+While campaign selection, sign-off or preview input is pending, the adviser can
+cancel or discard email drafting. The server-routed `discard_campaign_email`
+operation invalidates only the latest prepared preview in that adviser, tenant
+and chat session; it never changes sent or in-progress batches. Completed and
+discarded email responses are terminal conversation states, so the next message
+can use another PULSE tool without starting a new chat. This cancellation path
+also bypasses the model.
 
 Only the exact phrase in the latest user message can invoke
 `confirm_campaign_email`. The server rechecks campaign access, matching and
 consent, then sends once per recipient through the configured transport. Local
 development defaults to `EMAIL_DELIVERY_MODE=mock`, which simulates accepted
-delivery without network access. The legacy confirmation implementation still
-depends on `campaign_email_send` and writes `mock_campaign_contact_event`; it
-needs a separate migration before it can run against a fresh setup using the
-new campaign tables. The performance tools read stored
-`campaign_member.email_send_count` values and do not claim that they prove
-delivery.
+delivery without network access. Successful outcomes create or update the
+corresponding `campaign_member`, set `emailed_at`, increment
+`email_send_count`, and increment the campaign's `email_send_runs` once for the
+batch. `campaign_email_send` retains the reviewed content, recipient snapshot,
+approval evidence and provider outcomes. The performance tools read stored
+member counts and do not claim that they prove delivery.
 
 `EMAIL_DELIVERY_MODE=gwm` selects the server-side GWM Core Email API adapter.
 Its base URL, sender and any API key must remain in backend environment settings.
@@ -337,6 +359,6 @@ owner.
 
 The schema follows the repository's rebuild convention rather than an in-place
 migration. After pulling this change into an environment that already has the
-old contact-event table, run `terraform destroy` from `backend/terraform`, then
+old email table, run `terraform destroy` from `backend/terraform`, then
 run `make provision` from the repository root. This recreates the local tables
-with email batch/channel fields and reloads the checked-in synthetic seed data.
+with the official UUID relationships and reloads the checked-in synthetic data.

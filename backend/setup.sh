@@ -176,6 +176,7 @@ create_scripts=(
     create_campaign.sql
     create_contact.sql
     create_campaign_member.sql
+    create_campaign_email_send.sql
     create_campaign_recommendation_lists.sql
 )
 for table_script in "${create_scripts[@]}"; do
@@ -185,8 +186,6 @@ for table_script in "${create_scripts[@]}"; do
     fi
     run_sql_file "$create_dir/$table_script"
 done
-
-printf 'Skipping legacy mock_campaign_advisor and campaign_email_send tables; they depend on the removed mock_campaign schema.\n'
 
 ##### Load mock data in foreign-key dependency order #####
 mock_data_dir="$BACKEND_DIR/tables/mock_data"
