@@ -52,6 +52,11 @@ from app.llm.errors import LLMProviderError, LLMToolLoopError
 from app.store import ChatHistoryItem
 from app.tools.discovery import render_active_campaigns
 from app.tools.campaign import render_recommendation_download
+from app.tools.performance_presentation import (
+    render_performance_error,
+    render_performance_result,
+    render_ranking_result,
+)
 
 
 EMAIL_SYSTEM_PROMPT = """You are drafting or revising one campaign outreach email.
@@ -442,6 +447,141 @@ def _without_performance_appendix(content: str) -> str:
         end = heading.end() + next_heading.start() if next_heading else len(content)
         content = (content[:heading.start()].rstrip() + content[end:]).strip()
     return content
+
+
+@dataclass(frozen=True)
+class _FastPerformanceRequest:
+    tool_name: str
+    arguments: dict[str, str]
+    view: str
+
+
+def _fast_campaign_name(value: str) -> str | None:
+    """Reject extra instructions that a loose name capture could absorb."""
+    name = value.strip()
+    if (
+        not name or len(name) > 255
+        or any(mark in name for mark in ",;?!")
+        or re.search(r"\b(?:and|also|then|ignore|send|recommend|create|draft|delete)\b",
+                     name, re.IGNORECASE)
+    ):
+        return None
+    return name
+
+
+def _fast_performance_request(message: str) -> _FastPerformanceRequest | None:
+    """Recognise unambiguous read-only questions; other wording uses the LLM."""
+    text = " ".join(message.strip().split()).strip('"“”')
+    if not text or len(text) > 400:
+        return None
+
+    ranking_email = re.fullmatch(
+        r"which campaign has the most (?:members|clients) with a recorded email"
+        r"(?:\?\s*include (?:any|all) ties\.?)?[?!.]?",
+        text,
+        re.IGNORECASE,
+    )
+    if ranking_email:
+        return _FastPerformanceRequest(
+            "get_campaign_contact_ranking",
+            {"metric": "clients_emailed", "period": "campaign_to_date"},
+            "ranking",
+        )
+    ranking_growth = re.fullmatch(
+        r"which campaign added the most members (?P<period>this|last) week"
+        r"(?:\?\s*include (?:any|all) ties\.?)?[?!.]?",
+        text,
+        re.IGNORECASE,
+    )
+    if ranking_growth:
+        return _FastPerformanceRequest(
+            "get_campaign_contact_ranking",
+            {"metric": "members_added", "period": ranking_growth["period"].lower() + "_week"},
+            "ranking",
+        )
+
+    summary = re.fullmatch(
+        r"(?:(?:give|show|provide) me )?(?:a )?performance summary for "
+        r"(?P<campaign>.+?)(?:, including (?:its )?email coverage)?[?!.]?",
+        text,
+        re.IGNORECASE,
+    )
+    if summary:
+        name = _fast_campaign_name(summary["campaign"])
+        if name is not None:
+            return _FastPerformanceRequest(
+                "get_campaign_contact_performance",
+                {"campaign": name, "period": "this_week"},
+                "summary",
+            )
+
+    common_questions = (
+        (r"how many (?:campaign )?members are in (?P<campaign>.+?)", "members"),
+        (r"how many members of (?P<campaign>.+?) have (?:a|at least one) "
+         r"recorded email(?: send)?", "emailed"),
+        (r"how many (?:recorded )?email sends are (?:recorded )?for "
+         r"(?P<campaign>.+?)", "sends"),
+        (r"what percentage of (?P<campaign>.+?) members have "
+         r"(?:a|at least one) recorded email", "coverage"),
+        (r"what is (?:the )?email coverage for (?P<campaign>.+?)", "coverage"),
+        (r"compare this week's and last week's member additions for "
+         r"(?P<campaign>.+?)", "compare_weeks"),
+    )
+    for pattern, view in common_questions:
+        match = re.fullmatch(pattern + r"[?!.]?", text, re.IGNORECASE)
+        if match:
+            name = _fast_campaign_name(match["campaign"])
+            if name is not None:
+                return _FastPerformanceRequest(
+                    "get_campaign_contact_performance",
+                    {"campaign": name, "period": "this_week"},
+                    view,
+                )
+
+    relative_week = re.fullmatch(
+        r"how many members were added to (?P<campaign>.+?) "
+        r"(?P<period>this|last) week[?!.]?",
+        text,
+        re.IGNORECASE,
+    )
+    if relative_week:
+        name = _fast_campaign_name(relative_week["campaign"])
+        if name is not None:
+            period = relative_week["period"].lower() + "_week"
+            return _FastPerformanceRequest(
+                "get_campaign_contact_performance",
+                {"campaign": name, "period": period},
+                period + "_added",
+            )
+
+    weekly_additions = re.fullmatch(
+        r"how many members (?:were|have been) added to (?P<campaign>.+?) "
+        r"in the week (?:containing|of) "
+        r"(?P<when>\d{1,2} [A-Za-z]+ \d{4}|\d{4}-\d{2}-\d{2})[?!.]?",
+        text,
+        re.IGNORECASE,
+    )
+    if weekly_additions:
+        name = _fast_campaign_name(weekly_additions["campaign"])
+        if name is None:
+            return None
+        for date_format in ("%d %B %Y", "%d %b %Y", "%Y-%m-%d"):
+            try:
+                requested_date = datetime.strptime(
+                    weekly_additions["when"], date_format
+                ).date()
+                break
+            except ValueError:
+                continue
+        else:
+            return None
+        return _FastPerformanceRequest(
+            "get_campaign_contact_performance",
+            {"campaign": name, "period": "specific_week",
+             "week_of": requested_date.isoformat()},
+            "week_added",
+        )
+    return None
 
 
 def _prepared_campaign_draft(result: str) -> CampaignDraftArtifact | None:
@@ -2048,6 +2188,36 @@ class ChatOrchestrator:
             generation_objective = assessment.canonical_objective
             generation_targeting_lock = assessment.targeting_lock
             generation_schedule_lock = assessment.schedule_lock
+
+        fast_performance = (
+            _fast_performance_request(user_message)
+            if scope is not None and generation_objective is None
+            else None
+        )
+        if fast_performance is not None:
+            named_campaign = fast_performance.arguments.get("campaign", "").casefold()
+            if named_campaign in {"this campaign", "the campaign", "it"} and campaign_id is None:
+                fast_performance = None
+        if fast_performance is not None:
+            result = registry.execute(
+                fast_performance.tool_name,
+                json.dumps(fast_performance.arguments),
+            )
+            try:
+                performance_payload = json.loads(result)
+                if not isinstance(performance_payload, dict):
+                    raise ValueError("Tool result is not an object")
+                if "error" in performance_payload or "error_code" in performance_payload:
+                    return _answer(render_performance_error(performance_payload))
+                if fast_performance.view == "ranking":
+                    return _answer(render_ranking_result(performance_payload))
+                return _answer(render_performance_result(
+                    performance_payload, fast_performance.view
+                ))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise LLMProviderError(
+                    "Campaign performance tool returned an invalid result"
+                ) from exc
 
         schemas = registry.schemas()
         preparation_tool = next(
