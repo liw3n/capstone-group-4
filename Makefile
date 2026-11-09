@@ -9,7 +9,7 @@ PYTEST := $(BACKEND_VENV)/bin/pytest
 UVICORN := $(BACKEND_VENV)/bin/uvicorn
 
 .PHONY: help doctor configure install bootstrap check-dev dev backend-dev frontend-dev \
-	provision test test-backend test-frontend frontend-build verify
+	provision eval eval-run test test-backend test-frontend frontend-build verify
 
 help: ## Show the available commands.
 	@printf '%s\n' \
@@ -20,6 +20,8 @@ help: ## Show the available commands.
 		'  make backend-dev     Run FastAPI :4000 and FastMCP :8001' \
 		'  make frontend-dev    Run Vite on http://localhost:3000' \
 		'  make provision       Provision the local FakeCloud/PostgreSQL stack' \
+		'  make eval DATASET=small|large  Provision with only an evaluation dataset' \
+		'  make eval-run EVAL=<tool> [ARGS=...]  Run backend/evaluation/evaluate_<tool>.py' \
 		'  make test            Run backend tests and frontend type checking' \
 		'  make frontend-build  Build the production frontend' \
 		'  make verify          Run the complete repository verification suite' \
@@ -107,6 +109,17 @@ frontend-dev: ## Run only the Vite development server.
 
 provision: ## Provision FakeCloud resources and initialize local PostgreSQL.
 	cd "$(BACKEND_DIR)" && ./setup.sh
+
+DATASET ?= small
+
+eval: ## Provision PostgreSQL with only the eval_data DATASET (small or large).
+	@case "$(DATASET)" in small|large) ;; *) printf 'DATASET must be small or large.\n' >&2; exit 1;; esac
+	cd "$(BACKEND_DIR)" && EVAL_DATASET="$(DATASET)" ./setup.sh
+
+eval-run: ## Run evaluation/evaluate_$(EVAL).py on the dataset loaded by make eval.
+	@test -n "$(EVAL)" || { printf 'Set EVAL to one of: %s\n' "$$(cd $(BACKEND_DIR)/evaluation && ls evaluate_*.py | sed 's/^evaluate_//; s/\.py$$//' | tr '\n' ' ')" >&2; exit 1; }
+	@test -f "$(BACKEND_DIR)/evaluation/evaluate_$(EVAL).py" || { printf 'No evaluation file: $(BACKEND_DIR)/evaluation/evaluate_$(EVAL).py\n' >&2; exit 1; }
+	cd "$(BACKEND_DIR)" && uv run python "evaluation/evaluate_$(EVAL).py" $(ARGS)
 
 test-backend: ## Run backend pytest tests.
 	@test -x "$(PYTEST)" || { printf 'Backend test dependencies are missing. Run make install.\n' >&2; exit 1; }

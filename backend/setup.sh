@@ -187,6 +187,23 @@ for table_script in "${create_scripts[@]}"; do
     run_sql_file "$create_dir/$table_script"
 done
 
+##### Optionally load one evaluation dataset instead of the mock data #####
+# EVAL_DATASET=small|large seeds tables/eval_data/eval_<size>.sql only, so tool
+# evaluations run against a database of known size and content.
+if [[ -n "${EVAL_DATASET:-}" ]]; then
+    case "$EVAL_DATASET" in
+        small | large) ;;
+        *)
+            printf 'EVAL_DATASET must be small or large, got: %s\n' "$EVAL_DATASET" >&2
+            exit 1
+            ;;
+    esac
+    run_sql_file "$BACKEND_DIR/tables/eval_data/eval_${EVAL_DATASET}.sql"
+    printf '\nEvaluation database provisioning complete (%s dataset).\n' "$EVAL_DATASET"
+    printf 'DATABASE_URL was written to %s.\n' "$env_file"
+    exit 0
+fi
+
 ##### Load mock data in foreign-key dependency order #####
 mock_data_dir="$BACKEND_DIR/tables/mock_data"
 mock_data_scripts=(
