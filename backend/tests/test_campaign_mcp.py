@@ -221,15 +221,70 @@ def test_campaign_follow_up_uses_selected_campaign_context(monkeypatch):
     assert result["total_unreplied_clients"] == 0
 
 
-def test_campaign_follow_up_prefers_selected_campaign_over_argument(monkeypatch):
-    calls = _record_follow_up_campaign(monkeypatch)
+def _scoped_follow_up(monkeypatch, campaign_argument, resolution=None):
+    """Run campaign_follow_up scoped to 'Legacy Refresh' (camp-2) with a named campaign."""
+    calls = {"resolve": []}
+    monkeypatch.setattr(server_module, "get_campaign_info", lambda campaign_id, *_: {
+        "campaign_id": campaign_id, "campaign_name": "Legacy Refresh",
+    })
 
-    registry = MCPToolRegistry(server).bind_scope(
-        RequestScope(DEMO_FA), campaign_id="camp-2"
-    )
-    registry.execute("campaign_follow_up", '{"campaign":"Spring Promo"}')
+    def resolve(arguments, _metadata):
+        calls["resolve"].append(arguments["campaign_name"])
+        return resolution
 
-    assert calls == {"info": ["camp-2"], "resolve": []}
+    monkeypatch.setattr(server_module, "execute_resolve_campaign", resolve)
+    monkeypatch.setattr(server_module, "get_client_follow_up_list", lambda *_args: [])
+    registry = MCPToolRegistry(server).bind_scope(RequestScope(DEMO_FA), campaign_id="camp-2")
+    result = json.loads(registry.execute(
+        "campaign_follow_up", json.dumps({"campaign": campaign_argument})
+    ))
+    return result, calls
+
+
+@pytest.mark.parametrize("name", ["Legacy Refresh", "the legacy refresh campaign"])
+def test_campaign_follow_up_accepts_scoped_campaign_name(monkeypatch, name):
+    result, calls = _scoped_follow_up(monkeypatch, name)
+
+    assert result["campaign_info"]["campaign_id"] == "camp-2"
+    assert calls["resolve"] == []
+
+
+def test_campaign_follow_up_rejects_a_different_named_campaign(monkeypatch):
+    result, calls = _scoped_follow_up(monkeypatch, "Spring Promo", {
+        "status": "matched", "campaign_id": "camp-9", "name": "Spring Promo",
+    })
+
+    assert result["error_code"] == "campaign_scope_mismatch"
+    assert result["scoped_campaign"] == "Legacy Refresh"
+    assert result["requested_campaign"] == "Spring Promo"
+    assert "candidates" not in result
+    assert calls["resolve"] == ["Spring Promo"]
+
+
+def test_campaign_follow_up_rejects_an_unresolvable_named_campaign(monkeypatch):
+    result, _ = _scoped_follow_up(monkeypatch, "Ended Promo", {
+        "status": "not_found", "candidate_count": 0, "message": "No match",
+    })
+
+    assert result["error_code"] == "campaign_scope_mismatch"
+    assert "candidates" not in result
+
+
+def test_campaign_follow_up_accepts_ambiguous_name_that_includes_scope(monkeypatch):
+    result, _ = _scoped_follow_up(monkeypatch, "Legacy", {
+        "status": "ambiguous", "candidate_count": 2,
+        "candidates": [{"campaign_id": "camp-2", "name": "Legacy Refresh"},
+                       {"campaign_id": "camp-7", "name": "Legacy Planning"}],
+    })
+
+    assert result["campaign_info"]["campaign_id"] == "camp-2"
+
+
+def test_campaign_follow_up_rejects_a_different_campaign_uuid(monkeypatch):
+    result, calls = _scoped_follow_up(monkeypatch, "6f1c2a4e-0b7d-4f7e-9a51-3c2d8e9b1a10")
+
+    assert result["error_code"] == "campaign_scope_mismatch"
+    assert calls["resolve"] == []
 
 
 def test_campaign_follow_up_resolves_named_campaign_without_scope(monkeypatch):

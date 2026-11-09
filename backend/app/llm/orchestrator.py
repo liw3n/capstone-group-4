@@ -199,10 +199,14 @@ date. Use the profile and portfolio details along with the campaign details to i
 suitability, priority or likely response. Do not add criteria-matched clients or describe candidates 
 as a fresh audience. Do not invent client results. If a tool returns an error, explain it
 without inventing client results. For campaign_follow_up, the currently
-selected campaign context is used automatically when one is provided. Otherwise
-pass the campaign named in the adviser's message or clearly identified in the
-conversation as the campaign argument; if none is identified, ask which campaign
-they mean rather than guessing.
+selected campaign context is used automatically when one is provided. Whenever
+the adviser names a campaign, pass that name as the campaign argument, even with
+a selected campaign, so the server can confirm they match; on a
+campaign_scope_mismatch error, tell the adviser the named campaign differs from
+the open one and return no client results. Without a selected campaign, pass the
+campaign named in the adviser's message or clearly identified in the
+conversation; if none is identified, ask which campaign they mean rather than
+guessing.
 """
 
 SYSTEM_PROMPT += """

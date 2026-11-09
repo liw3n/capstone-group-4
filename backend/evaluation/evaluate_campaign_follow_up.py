@@ -74,6 +74,8 @@ class PromptCase:
     expected_campaign: str
     # Limit the model should pass; None means any limit is acceptable.
     expected_limit: int | None = None
+    # Error the tool should return instead of clients (e.g. a scope mismatch).
+    expected_error_code: str | None = None
     note: str = ""
 
 
@@ -85,9 +87,9 @@ DATASETS = {
 
 # The same five prompts run on both datasets: two in a chat scoped to a
 # campaign, two in the general chat naming the campaign, and one scoped chat
-# that names a different (out-of-scope) campaign. campaign_follow_up documents
-# that a server-bound campaign scope overrides the campaign argument, so scope
-# must win there. The five named campaigns exist in both datasets; in the large
+# that names a different (out-of-scope) campaign. In that case the model must
+# pass the named campaign and the tool must refuse with campaign_scope_mismatch
+# rather than answer for either campaign. The five named campaigns exist in both datasets; in the large
 # one they sit among generated near-match names such as "Retirement Income Wave 012".
 PROMPT_CASES = [
     PromptCase(
@@ -124,7 +126,8 @@ PROMPT_CASES = [
                 "who should I follow up with?"),
         scoped_campaign="Legacy Protection Refresh",
         expected_campaign="Legacy Protection Refresh",
-        note="Out-of-scope campaign named inside a scoped chat; scope must win.",
+        expected_error_code="campaign_scope_mismatch",
+        note="Out-of-scope campaign named inside a scoped chat; the tool must refuse.",
     ),
 ]
 
@@ -336,6 +339,15 @@ def _score(case: PromptCase, run: int, calls: list[ToolCall], answer: str,
     if "error_code" in call.result:
         result.error = f"{call.result.get('error_code')}: {call.result.get('error')}"
 
+    if case.expected_error_code is not None:
+        # Correct behaviour is a refusal: the expected error and no clients.
+        result.campaign_correct = call.result.get("error_code") == case.expected_error_code
+        result.limit_correct = True
+        result.result_correct = result.campaign_correct and not successful
+        result.passed = (not result.wrong_tool_called and result.campaign_correct
+                         and result.result_correct)
+        return result
+
     limit = call.arguments.get("limit", 5)
     result.limit_correct = case.expected_limit is None or limit == case.expected_limit
     returned_id = str((call.result.get("campaign_info") or {}).get("campaign_id", ""))
@@ -444,7 +456,8 @@ def main() -> int:
     for case in cases:
         expected_id = _campaign_id(case.expected_campaign)
         scoped_id = _campaign_id(case.scoped_campaign) if case.scoped_campaign else None
-        expectations[case.case_id] = (expected_id, scoped_id, _ground_truth(expected_id))
+        truth = set() if case.expected_error_code else _ground_truth(expected_id)
+        expectations[case.case_id] = (expected_id, scoped_id, truth)
 
     scope = RequestScope(EVAL_FA_ID)
     results: list[CaseResult] = []

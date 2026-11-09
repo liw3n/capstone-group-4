@@ -15,6 +15,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.tools.campaign_follow_up import (
+    
     get_client_follow_up_list,
     fetch_client_portfolio,
     fetch_client_profile,
@@ -57,7 +58,7 @@ from app.tools.discovery import (
     execute_get_active_campaigns,
 )
 from app.tools.performance import execute_contact_performance, execute_contact_ranking
-from app.tools.campaign_lookup import execute_resolve_campaign
+from app.tools.campaign_lookup import _words as _campaign_words, execute_resolve_campaign
 
 # Initialize the FastMCP server instance
 mcp = FastMCP(name="FastMCP Server")
@@ -102,8 +103,10 @@ def campaign_follow_up(
             max_length=200,
             description=(
                 "The campaign name or ID explicitly mentioned by the user in the conversation "
-                "(e.g., 'Q3 Wealth Campaign', 'Retirement Boost'). Used only when the chat "
-                "is not already scoped to a campaign."
+                "(e.g., 'Q3 Wealth Campaign', 'Retirement Boost'). Always pass it when the "
+                "adviser names a campaign, even in a campaign-scoped chat, so the server can "
+                "check it against the open campaign. Omit it when the adviser names no "
+                "campaign (e.g. 'this campaign')."
             ),
         ),
     ] = None,
@@ -124,8 +127,10 @@ def campaign_follow_up(
     recommend_clients_for_campaign.
 
     When the chat is scoped to a campaign (the adviser opened it in the
-    Campaigns workspace), that campaign is used and the campaign argument is
-    ignored. Otherwise pass the campaign name or ID the adviser mentioned.
+    Campaigns workspace), that campaign is used. If the adviser also names a
+    campaign, pass it: a name that identifies a different campaign returns a
+    campaign_scope_mismatch error instead of results. Without a scope, pass the
+    campaign name or ID the adviser mentioned.
 
     Returns profile and portfolio data for every unreplied client (oldest
     contact first) so they can all be compared; recommend the top `limit`.
@@ -154,6 +159,8 @@ def campaign_follow_up(
         # 1. Resolve campaign source: a server-bound campaign scope takes precedence,
         # otherwise resolve the campaign named by the adviser.
         selected_campaign_id = metadata.get("campaign_id") if isinstance(metadata, dict) else None
+        campaign_query = campaign.strip() if isinstance(campaign, str) else ""
+        campaign_info = None
         if selected_campaign_id is not None:
             if (
                 not isinstance(selected_campaign_id, str)
@@ -164,8 +171,22 @@ def campaign_follow_up(
                     "error_code": "invalid_campaign_context",
                 }
             campaign_id = selected_campaign_id
+            if campaign_query:
+                # A campaign named in the prompt must be the scoped campaign;
+                # never silently answer for a different campaign.
+                try:
+                    campaign_info = get_campaign_info(campaign_id, fa_id, tenant_id)
+                except ValueError as error:
+                    return {
+                        "error": f"{error}. Ask the adviser to reopen the campaign.",
+                        "error_code": "campaign_unavailable",
+                    }
+                mismatch = _follow_up_scope_mismatch(
+                    campaign_query, campaign_id, campaign_info.get("campaign_name"), metadata
+                )
+                if mismatch is not None:
+                    return mismatch
         else:
-            campaign_query = campaign.strip() if isinstance(campaign, str) else ""
             if not campaign_query:
                 return {
                     "error": (
@@ -195,13 +216,14 @@ def campaign_follow_up(
                     return {"error": resolution["message"], "error_code": "campaign_unavailable"}
                 campaign_id = resolution["campaign_id"]
 
-        try:
-            campaign_info = get_campaign_info(campaign_id, fa_id, tenant_id)
-        except ValueError as error:
-            return {
-                "error": f"{error}. Ask the adviser to confirm the exact campaign name.",
-                "error_code": "campaign_unavailable",
-            }
+        if campaign_info is None:
+            try:
+                campaign_info = get_campaign_info(campaign_id, fa_id, tenant_id)
+            except ValueError as error:
+                return {
+                    "error": f"{error}. Ask the adviser to confirm the exact campaign name.",
+                    "error_code": "campaign_unavailable",
+                }
         client_info = get_client_follow_up_list(campaign_id, fa_id, tenant_id)
 
         # 2. Fetch profile and portfolio context for every candidate, oldest contact
@@ -252,6 +274,52 @@ def campaign_follow_up(
             "error": str(e),
             "error_code": "failed_tool_call"
         }
+
+
+def _campaign_name_key(value: str) -> str:
+    """Normalise a campaign name the way resolve_campaign compares names."""
+    words = _campaign_words(value).split()
+    if words and words[0] == "the":
+        words = words[1:]
+    if words and words[-1] == "campaign":
+        words = words[:-1]
+    return " ".join(words)
+
+
+def _follow_up_scope_mismatch(
+    campaign_query: str, scoped_id: str, scoped_name: str | None, metadata: dict
+) -> dict | None:
+    """Return an error when the named campaign is not the scoped campaign."""
+    if _is_uuid(campaign_query):
+        if campaign_query.lower() == scoped_id.lower():
+            return None
+    elif scoped_name and _campaign_name_key(campaign_query) == _campaign_name_key(scoped_name):
+        return None
+    else:
+        resolution = execute_resolve_campaign({"campaign_name": campaign_query}, metadata)
+        if "error_code" in resolution:
+            return {"error": resolution["error"], "error_code": resolution["error_code"]}
+        if resolution["status"] == "matched" and str(resolution["campaign_id"]).lower() == scoped_id.lower():
+            return None
+        if resolution["status"] == "ambiguous" and any(
+            str(item["campaign_id"]).lower() == scoped_id.lower()
+            for item in resolution["candidates"]
+        ):
+            return None
+
+    open_name = scoped_name or "the selected campaign"
+    return {
+        "error": (
+            f"The adviser has the '{open_name}' campaign open but asked about "
+            f"'{campaign_query}'. No follow-up results were returned. Tell the adviser "
+            "the campaign they named differs from the open campaign, and ask them to open "
+            "that campaign or ask from the general chat. If they did not name a different "
+            "campaign, call again without the campaign argument."
+        ),
+        "error_code": "campaign_scope_mismatch",
+        "scoped_campaign": open_name,
+        "requested_campaign": campaign_query,
+    }
 
 
 def _request_metadata(ctx: Context) -> dict | None:

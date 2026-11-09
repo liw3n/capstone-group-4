@@ -120,3 +120,4 @@ def fetch_client_profile(client_id: str, fa_id: str, tenant_id: str | None = Non
             "age": None,
             "email": None,
         }
+    
