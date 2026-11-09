@@ -3,8 +3,8 @@
 Runs adviser prompts through the real ChatOrchestrator, LLM provider and
 FastMCP server against a seeded evaluation database, then scores whether
 campaign_follow_up was called with the right campaign and limit and returned
-the ground-truth unreplied clients. It also records end-to-end, LLM and tool
-latency.
+the ground-truth unreplied clients (Tool Calling Accuracy), and records each
+prompt's response time with the total and mean (Response Time).
 
 Datasets (synthetic, tables/eval_data/):
   small  5 campaigns, 20 contacts, 66 campaign members
@@ -350,23 +350,12 @@ def _score(case: PromptCase, run: int, calls: list[ToolCall], answer: str,
     return result
 
 
-def _percentile(values: list[float], fraction: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, max(0, round(fraction * (len(ordered) - 1))))
-    return round(ordered[index], 3)
-
-
 def _summary(results: list[CaseResult]) -> dict[str, Any]:
     total = len(results)
 
     def rate(attribute: str) -> float:
         return round(sum(bool(getattr(r, attribute)) for r in results) / total, 3)
 
-    end_to_end = [r.end_to_end_seconds for r in results]
-    tool = [r.follow_up_tool_seconds for r in results if r.follow_up_tool_seconds is not None]
-    llm = [r.llm_seconds for r in results]
     return {
         "runs": total,
         "tool_selection_accuracy": rate("tool_called"),
@@ -375,20 +364,54 @@ def _summary(results: list[CaseResult]) -> dict[str, Any]:
         "limit_accuracy": rate("limit_correct"),
         "result_accuracy": rate("result_correct"),
         "pass_rate": rate("passed"),
-        "end_to_end_seconds": {"mean": round(statistics.mean(end_to_end), 3),
-                               "p50": _percentile(end_to_end, .5),
-                               "p95": _percentile(end_to_end, .95)},
-        "llm_seconds": {"mean": round(statistics.mean(llm), 3),
-                        "p50": _percentile(llm, .5), "p95": _percentile(llm, .95)},
-        "follow_up_tool_seconds": {
-            "mean": round(statistics.mean(tool), 3) if tool else None,
-            "p50": _percentile(tool, .5), "p95": _percentile(tool, .95),
-        },
     }
 
 
-def evaluate_tool_call_accuracy() -> int:
-    parser = argparse.ArgumentParser(description=f"Evaluate {TOOL_NAME} tool-call accuracy")
+#=========================#
+# Response Time           #
+#=========================#
+
+def _response_time(cases: list[PromptCase], results: list[CaseResult]) -> dict[str, Any]:
+    """Per-prompt response time for the same prompts, plus the total and mean.
+
+    Each prompt's time is the average of its runs (one run unless --repeats is
+    set). The mean is the total across prompts divided by the number of prompts.
+    """
+    prompts = []
+    for case in cases:
+        runs = [r for r in results if r.case_id == case.case_id]
+        tool = [r.follow_up_tool_seconds for r in runs if r.follow_up_tool_seconds is not None]
+        prompts.append({
+            "case_id": case.case_id,
+            "runs": len(runs),
+            "end_to_end_seconds": round(statistics.mean(r.end_to_end_seconds for r in runs), 3),
+            "llm_seconds": round(statistics.mean(r.llm_seconds for r in runs), 3),
+            "follow_up_tool_seconds": round(statistics.mean(tool), 3) if tool else None,
+        })
+    total = sum(prompt["end_to_end_seconds"] for prompt in prompts)
+    return {
+        "prompts": prompts,
+        "prompt_count": len(prompts),
+        "total_seconds": round(total, 3),
+        "mean_seconds": round(total / len(prompts), 3),
+    }
+
+
+def _print_response_time(response_time: dict[str, Any]) -> None:
+    print("\nResponse time (seconds)")
+    print(f"  {'case':<40} {'end-to-end':>10} {'llm':>8} {'tool':>8}")
+    for prompt in response_time["prompts"]:
+        tool = prompt["follow_up_tool_seconds"]
+        print(f"  {prompt['case_id']:<40} {prompt['end_to_end_seconds']:>10.3f} "
+              f"{prompt['llm_seconds']:>8.3f} {'-' if tool is None else f'{tool:.3f}':>8}")
+    print(f"  {'total':<40} {response_time['total_seconds']:>10.3f}")
+    print(f"  {'mean (total / ' + str(response_time['prompt_count']) + ')':<40} "
+          f"{response_time['mean_seconds']:>10.3f}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=f"Evaluate {TOOL_NAME} tool-call accuracy and response time")
     parser.add_argument("--dataset", choices=sorted(DATASETS), default=None,
                         help="Expected dataset (default: detect from the loaded database)")
     parser.add_argument("--repeats", type=int, default=1,
@@ -452,6 +475,8 @@ def evaluate_tool_call_accuracy() -> int:
 
     summary = _summary(results)
     print(json.dumps(summary, indent=2))
+    response_time = _response_time(cases, results)
+    _print_response_time(response_time)
 
     RESULTS_DIR.mkdir(exist_ok=True)
     output = RESULTS_DIR / f"tool_call_accuracy_{spec.name}_{datetime.now():%Y%m%d_%H%M%S}.json"
@@ -462,6 +487,7 @@ def evaluate_tool_call_accuracy() -> int:
         "mcp_transport": args.mcp_url or "in-process",
         "cases": [asdict(case) for case in cases],
         "summary": summary,
+        "response_time": response_time,
         "results": [asdict(result) for result in results],
     }, indent=2, default=str))
     print(f"Wrote {output}")
@@ -469,4 +495,4 @@ def evaluate_tool_call_accuracy() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(evaluate_tool_call_accuracy())
+    raise SystemExit(main())
