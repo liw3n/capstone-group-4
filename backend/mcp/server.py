@@ -579,20 +579,26 @@ def get_campaign_contact_ranking(
     ctx: Context,
     period: Annotated[
         Literal["campaign_to_date", "this_week", "last_week"],
-        Field(description="Period for members_added. clients_emailed supports campaign_to_date only."),
+        Field(description="Period for members_added. Email reach and coverage support campaign_to_date only."),
     ] = "campaign_to_date",
     metric: Annotated[
-        Literal["clients_emailed", "members_added"],
-        Field(description="Rank cumulative clients with a recorded email, or members added in the chosen period. Never treat either as all clients contacted."),
+        Literal["clients_emailed", "members_added", "email_coverage"],
+        Field(description="Rank cumulative clients with a recorded email, members added, or the percentage of members with a recorded email. Never treat these as all clients contacted."),
     ] = "clients_emailed",
+    direction: Annotated[
+        Literal["most", "least"],
+        Field(description="Use least only with email_coverage; defaults to most."),
+    ] = "most",
 ) -> dict:
-    """Rank accessible campaigns by recorded email reach or member additions.
+    """Rank accessible campaigns by recorded email reach, coverage, or member additions.
 
     Compare all campaigns available to this adviser, regardless of the selected
-    campaign. Weekly email reach and general contact counts are unavailable.
+    campaign. Coverage excludes campaigns with no members and includes ties.
+    Weekly email reach and general contact counts are unavailable.
     """
     logger.info("MCP tool called: get_campaign_contact_ranking")
-    return execute_contact_ranking({"period": period, "metric": metric},
+    return execute_contact_ranking({"period": period, "metric": metric,
+                                    "direction": direction},
                                    _request_metadata(ctx))
 
 

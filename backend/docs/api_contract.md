@@ -996,21 +996,37 @@ caller supplied in this prototype, so it is not production authentication.
 
 ### MCP: get_campaign_contact_ranking
 
-This read-only tool also retains its legacy name. It compares all campaigns
-owned by the scoped adviser in the tenant, including zero-count campaigns and
-ties. Its optional `metric` is `clients_emailed` (default, cumulative members
+This read-only tool also retains its legacy name. It compares campaigns
+owned by the scoped adviser in the tenant and includes ties. Count rankings
+include zero-count campaigns. Its optional `metric` is `clients_emailed` (default, cumulative members
 with `email_send_count > 0`) or `members_added` (member rows added in the
-chosen period). Its optional `period` is `campaign_to_date` (default),
-`this_week`, or `last_week`. Weekly `clients_emailed` ranking returns
+chosen period), or `email_coverage` (cumulative members with a recorded email
+divided by all campaign members). The optional `direction` is `most` (default)
+or `least`; `least` is supported only for `email_coverage`. Coverage ranking
+excludes campaigns with no members, whose percentage is undefined, but includes
+campaigns with members and 0% coverage. Coverage ties use the underlying ratio,
+before the displayed percentage is rounded to one decimal place. Its optional
+`period` is `campaign_to_date` (default), `this_week`, or `last_week`.
+Weekly `clients_emailed` and `email_coverage` ranking returns
 `period_unavailable` because the table lacks a per-send timestamp.
 
-Results contain `metric`, `requested_period`, `ranked_campaigns` (up to 20
-rows), `leaders`, `highest_count`, tie/truncation flags, a concise `summary`,
-and `contact_history_available: false`. Each row includes its selected
+Results contain `metric`, `direction`, `requested_period`, `ranked_campaigns`
+(up to 20 rows), `leaders`, tie/truncation flags, a concise `summary`, and
+`contact_history_available: false`. Count rankings also contain `highest_count`.
+Each count-ranking row includes its selected
 `metric_count`, total member count, cumulative emailed-client count, and
 members added in the requested period. These are synthetic prototype metrics;
 none represents all-channel contact, acquisition, service sales, or proven
 email delivery.
+
+For `email_coverage`, the result instead includes `direction` and
+`leading_coverage_percent`; each ranked row includes `email_coverage_percent`,
+`campaign_members_total`, and `clients_emailed_total`. `highest_count` and
+`metric_count` are omitted because coverage is a percentage. For example,
+`{"metric":"email_coverage","direction":"least"}` compares adviser-owned
+campaigns with members and returns all visible lowest-coverage ties. If no
+campaign has members, the result has an empty `leaders` list and a zero
+`campaign_count`.
 
 ### MCP: prepare_campaign_email
 

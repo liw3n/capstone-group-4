@@ -267,14 +267,26 @@ def get_campaign_member_metrics(
 
 def rank_campaigns_by_member_metric(
     scope: RequestScope, metric: str, period_start: datetime | None,
-    period_end: datetime, as_of: datetime,
+    period_end: datetime, as_of: datetime, direction: str = "most",
 ) -> tuple[dict, ...]:
     """Rank only adviser-owned campaigns and adviser-added members."""
-    if metric not in {"clients_emailed", "members_added"}:
+    if metric not in {"clients_emailed", "members_added", "email_coverage"}:
         raise ValueError("Unsupported campaign ranking metric")
+    if direction not in {"most", "least"}:
+        raise ValueError("Unsupported campaign ranking direction")
+    if direction == "least" and metric != "email_coverage":
+        raise ValueError("Least ranking is supported for email coverage only")
     if not all(_is_uuid(value) for value in (_storage_tenant_id(scope), scope.fa_id)):
         return ()
-    count_column = "clients_emailed" if metric == "clients_emailed" else "members_added"
+    count_column = {
+        "clients_emailed": "clients_emailed",
+        "members_added": "members_added",
+        "email_coverage": "email_coverage_ratio",
+    }[metric]
+    order = "ASC" if direction == "least" else "DESC"
+    coverage_filter = (
+        "WHERE email_coverage_ratio IS NOT NULL" if metric == "email_coverage" else ""
+    )
     with _connection() as connection:
         rows = connection.execute(
             f"""
@@ -304,13 +316,18 @@ def rank_campaigns_by_member_metric(
                 WHERE c.tenant_id = %s AND c.created_by_user_id = %s
                   AND c.is_deleted = FALSE
                 GROUP BY c.campaign_id, c.name, c.status
+            ), ranked AS (
+                SELECT *, clients_emailed::numeric /
+                       NULLIF(campaign_members_total, 0) AS email_coverage_ratio
+                FROM campaign_counts
             )
             SELECT campaign_id, name, status, campaign_members_total,
                    clients_emailed, members_added, {count_column} AS count_value,
                    COUNT(*) OVER () AS campaign_count,
                    COUNT(*) OVER (PARTITION BY {count_column}) AS tie_count
-            FROM campaign_counts
-            ORDER BY count_value DESC, name, campaign_id
+            FROM ranked
+            {coverage_filter}
+            ORDER BY count_value {order}, name, campaign_id
             LIMIT 21
             """,
             (period_start, period_start, period_end, scope.fa_id, as_of,

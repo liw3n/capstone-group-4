@@ -308,8 +308,11 @@ you may offer the narrower recorded-email and member figures with clear labels.
 For comparisons, use get_campaign_contact_ranking (legacy tool name). Choose
 metric=clients_emailed and period=campaign_to_date for "which campaign emailed
 the most clients?" Choose metric=members_added with this_week, last_week, or
-campaign_to_date for "which campaign added the most members?" Weekly email
-rankings are unavailable. If the adviser asks only "which campaign has the most
+campaign_to_date for "which campaign added the most members?" For highest or
+lowest email coverage, choose metric=email_coverage, period=campaign_to_date,
+and direction=most or least respectively. Coverage is the percentage of
+campaign members with a recorded email; zero-member campaigns are excluded.
+Weekly email rankings are unavailable. If the adviser asks only "which campaign has the most
 clients?", ask whether they mean members or clients with recorded emails. If
 they ask for the most contacted clients, explain that the all-channel ranking
 is unavailable and offer the email ranking as a narrower alternative. Name ties
@@ -478,6 +481,22 @@ def _fast_performance_request(message: str) -> _FastPerformanceRequest | None:
     text = " ".join(message.strip().split()).strip('"“”')
     if not text or len(text) > 400:
         return None
+
+    ranking_coverage = re.fullmatch(
+        r"which campaign has the (?P<direction>most|least|highest|lowest) email coverage"
+        r"(?:\?\s*include (?:any|all) ties\.?)?[?!.]?",
+        text,
+        re.IGNORECASE,
+    )
+    if ranking_coverage:
+        direction = ("least" if ranking_coverage["direction"].lower() in {"least", "lowest"}
+                     else "most")
+        return _FastPerformanceRequest(
+            "get_campaign_contact_ranking",
+            {"metric": "email_coverage", "period": "campaign_to_date",
+             "direction": direction},
+            "ranking",
+        )
 
     ranking_email = re.fullmatch(
         r"which campaign has the most (?:members|clients) with a recorded email"

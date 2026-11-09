@@ -39,7 +39,7 @@ def test_schema_exposes_metric_and_period_but_not_scope():
     schemas = MCPToolRegistry(server).schemas()
     schema = next(item["function"]["parameters"] for item in schemas
                   if item["function"]["name"] == "get_campaign_contact_ranking")
-    assert set(schema["properties"]) == {"period", "metric"}
+    assert set(schema["properties"]) == {"period", "metric", "direction"}
 
 
 def test_default_ranks_cumulative_emailed_clients(monkeypatch):
@@ -72,6 +72,60 @@ def test_weekly_member_ranking_and_ties(monkeypatch):
     assert result["period_end_date"] == "2026-10-11"
     assert len(result["leaders"]) == 2
     assert "tie" in result["summary"]
+
+
+@pytest.mark.parametrize("direction,expected_name,expected_percent", [
+    ("most", "Full Coverage", 100.0),
+    ("least", "No Emails Yet", 0.0),
+])
+def test_email_coverage_ranks_percent_not_raw_email_count(
+    monkeypatch, direction, expected_name, expected_percent
+):
+    def rank(scope, metric, start, end, as_of, requested_direction):
+        assert scope.fa_id == DEMO_FA
+        assert (metric, requested_direction) == ("email_coverage", direction)
+        assert start is None and end == NOW and as_of == NOW
+        if direction == "most":
+            return ({**row("camp-1", "Full Coverage", 2, 0, 1),
+                     "campaign_members_total": 2},
+                    {**row("camp-2", "Larger Audience", 8, 0, 0.8),
+                     "campaign_members_total": 10})
+        return ({**row("camp-3", "No Emails Yet", 0, 0, 0),
+                 "campaign_members_total": 3},
+                {**row("camp-2", "Larger Audience", 8, 0, 0.8),
+                 "campaign_members_total": 10})
+    monkeypatch.setattr(repository, "rank_campaigns_by_member_metric", rank)
+    result = call({"metric": "email_coverage", "direction": direction})
+    assert result["leaders"][0]["campaign_name"] == expected_name
+    assert result["leading_coverage_percent"] == expected_percent
+    assert "highest_count" not in result
+    assert result["direction"] == direction
+
+
+def test_email_coverage_rejects_weekly_period_and_empty_membership(monkeypatch):
+    monkeypatch.setattr(repository, "rank_campaigns_by_member_metric",
+                        lambda *_: (_ for _ in ()).throw(AssertionError("must not read")))
+    assert call({"metric": "email_coverage", "period": "last_week"})["error_code"] == "period_unavailable"
+    assert call({"direction": "least"})["error_code"] == "invalid_arguments"
+    monkeypatch.setattr(repository, "rank_campaigns_by_member_metric", lambda *args: ())
+    result = call({"metric": "email_coverage", "direction": "least"})
+    assert result["campaign_count"] == 0
+    assert result["leading_coverage_percent"] is None
+    assert "no" in result["summary"].lower()
+
+
+def test_email_coverage_ties_use_exact_ratio_before_display_rounding(monkeypatch):
+    def rank(*_args):
+        return (
+            {**row("camp-1", "Slightly Higher", 3331, 0, 0.3331),
+             "campaign_members_total": 10000},
+            {**row("camp-2", "Slightly Lower", 333, 0, 0.333),
+             "campaign_members_total": 1000},
+        )
+    monkeypatch.setattr(repository, "rank_campaigns_by_member_metric", rank)
+    result = call({"metric": "email_coverage"})
+    assert [item["email_coverage_percent"] for item in result["ranked_campaigns"]] == [33.3, 33.3]
+    assert [item["campaign_name"] for item in result["leaders"]] == ["Slightly Higher"]
 
 
 def test_weekly_email_ranking_unavailable_and_empty_scope(monkeypatch):

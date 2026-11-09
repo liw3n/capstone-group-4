@@ -153,6 +153,42 @@ def render_ranking_result(payload: dict[str, Any]) -> str:
         raise ValueError("Invalid campaign ranking result")
     metric = payload["metric"]
     period = payload["requested_period"]
+    if metric == "email_coverage" and period == "campaign_to_date":
+        direction = payload["direction"]
+        if direction not in {"most", "least"}:
+            raise ValueError("Invalid campaign ranking direction")
+        leaders = payload["leaders"]
+        if not isinstance(leaders, list):
+            raise ValueError("Invalid campaign leaders")
+        if _count(payload, "campaign_count") == 0:
+            return ("No adviser-owned campaign with members is available for an email "
+                    "coverage comparison. *Synthetic records.*")
+        title = f"{'Highest' if direction == 'most' else 'Lowest'} email coverage"
+        lines = [
+            f"**{title} (as of {_date(payload['period_end_date'])})**",
+            "",
+            "| Campaign | Email coverage |",
+            "| --- | ---: |",
+        ]
+        for leader in leaders:
+            if not isinstance(leader, dict):
+                raise ValueError("Invalid campaign leader")
+            members = _count(leader, "campaign_members_total")
+            emailed = _count(leader, "clients_emailed_total")
+            if members == 0 or emailed > members:
+                raise ValueError("Invalid campaign coverage")
+            lines.append(
+                f"| {_text(leader['campaign_name'])} | "
+                f"{_coverage(leader, members)} ({emailed}/{members} members) |"
+            )
+        if payload.get("leaders_truncated"):
+            lines.extend(("", "Additional tied campaigns are not shown."))
+        lines.extend((
+            "",
+            "*Figures are synthetic. Campaigns with no members are excluded. "
+            "A recorded email does not confirm delivery or replies.*",
+        ))
+        return "\n".join(lines)
     if metric == "clients_emailed" and period == "campaign_to_date":
         title = "Most members with a recorded email"
         column = "Members with a recorded email"

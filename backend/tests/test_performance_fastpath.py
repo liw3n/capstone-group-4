@@ -199,6 +199,50 @@ def test_ranking_shows_ties_without_model_call():
     assert result.answer.count("| 11 |") == 2
 
 
+@pytest.mark.parametrize("question,direction,heading", [
+    ("Which campaign has the highest email coverage?", "most", "Highest email coverage"),
+    ("Which campaign has the least email coverage?", "least", "Lowest email coverage"),
+])
+def test_email_coverage_ranking_uses_fast_path_and_shows_ties(question, direction, heading):
+    app, registry = orchestrator({
+        "data_source": "synthetic",
+        "metric": "email_coverage",
+        "direction": direction,
+        "requested_period": "campaign_to_date",
+        "period_end_date": "2026-11-08",
+        "campaign_count": 2,
+        "leaders": [
+            {"campaign_name": "First Home Starter Bundle", "campaign_members_total": 4,
+             "clients_emailed_total": 2, "email_coverage_percent": 50.0},
+            {"campaign_name": "Legacy Protection Refresh", "campaign_members_total": 8,
+             "clients_emailed_total": 4, "email_coverage_percent": 50.0},
+        ],
+        "leaders_truncated": False,
+    })
+    result = app.run(question, [], scope=RequestScope("adv-demo"))
+
+    assert registry.calls == [("get_campaign_contact_ranking", {
+        "metric": "email_coverage", "period": "campaign_to_date", "direction": direction,
+    })]
+    assert heading in result.answer
+    assert "First Home Starter Bundle" in result.answer
+    assert "Legacy Protection Refresh" in result.answer
+    assert "50% (2/4 members)" in result.answer
+    assert "50% (4/8 members)" in result.answer
+    assert "does not confirm delivery" in result.answer
+
+
+def test_empty_email_coverage_ranking_explains_undefined_percentage():
+    app, _registry = orchestrator({
+        "data_source": "synthetic", "metric": "email_coverage",
+        "direction": "least", "requested_period": "campaign_to_date",
+        "campaign_count": 0, "leaders": [],
+    })
+    result = app.run("Which campaign has the lowest email coverage?", [],
+                     scope=RequestScope("adv-demo"))
+    assert "campaign with members" in result.answer
+
+
 def test_last_week_ranking_uses_singapore_week_from_tool():
     app, registry = orchestrator({
         "data_source": "synthetic",

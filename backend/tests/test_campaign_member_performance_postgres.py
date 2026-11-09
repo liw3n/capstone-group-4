@@ -75,6 +75,21 @@ def test_member_email_totals_and_week_boundaries(database):
     assert second["members_added_requested_week"] == 2
 
 
+def test_custom_campaign_has_two_last_week_and_one_this_week_as_of_november_9(database):
+    now = datetime(2026, 11, 9, 23, tzinfo=ZoneInfo("Asia/Singapore"))
+    scope = RequestScope(fa_id=FA, tenant_id=FA)
+    result = repository.get_campaign_member_metrics(
+        scope, "b3333333-3333-3333-3333-333333333333", now,
+        datetime(2026, 11, 9, tzinfo=now.tzinfo),
+        datetime(2026, 11, 2, tzinfo=now.tzinfo),
+    )
+    assert result["campaign_members_total"] == 8
+    assert result["members_added_this_week"] == 1
+    assert result["members_added_last_week"] == 2
+    assert result["clients_emailed_total"] == 6
+    assert result["email_sends_total"] == 8
+
+
 def test_ranking_includes_zero_campaigns_and_excludes_other_adviser(database):
     scope = RequestScope(fa_id=FA, tenant_id=FA)
     rows = repository.rank_campaigns_by_member_metric(
@@ -121,3 +136,27 @@ def test_ranking_includes_zero_campaigns_and_excludes_other_adviser(database):
     assert repository.rank_campaigns_by_member_metric(
         RequestScope(fa_id=OTHER_FA, tenant_id=FA), "clients_emailed", None, NOW, NOW
     ) == ()
+
+
+def test_email_coverage_ranking_excludes_empty_campaigns_but_includes_zero_percent(database):
+    scope = RequestScope(fa_id=FA, tenant_id=FA)
+    rows = repository.rank_campaigns_by_member_metric(
+        scope, "email_coverage", None, NOW, NOW
+    )
+    assert len(rows) == 2  # The third adviser-owned campaign has no members.
+    assert all(row["count_value"] == 1 for row in rows)
+    assert rows[0]["tie_count"] == 2
+    assert rows[0]["campaign_count"] == 2
+
+    database.execute(
+        """UPDATE campaign_member SET email_send_count = 0
+           WHERE tenant_id = %s AND campaign_id = %s""",
+        (FA, "b2222222-2222-2222-2222-222222222222"),
+    )
+    lowest = repository.rank_campaigns_by_member_metric(
+        scope, "email_coverage", None, NOW, NOW, "least"
+    )
+    assert str(lowest[0]["campaign_id"]) == "b2222222-2222-2222-2222-222222222222"
+    assert lowest[0]["campaign_members_total"] == 3
+    assert lowest[0]["count_value"] == 0
+    assert lowest[0]["campaign_count"] == 2

@@ -28,7 +28,8 @@ class ContactPerformanceArguments(BaseModel):
 class ContactRankingArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
     period: Literal["campaign_to_date", "this_week", "last_week"] = "campaign_to_date"
-    metric: Literal["clients_emailed", "members_added"] = "clients_emailed"
+    metric: Literal["clients_emailed", "members_added", "email_coverage"] = "clients_emailed"
+    direction: Literal["most", "least"] = "most"
 
 
 def current_time() -> datetime:
@@ -207,7 +208,7 @@ def execute_contact_performance(arguments: dict, metadata: dict | None) -> dict:
 
 
 def execute_contact_ranking(arguments: dict, metadata: dict | None) -> dict:
-    """Rank adviser-owned campaigns by cumulative email reach or member growth."""
+    """Rank adviser-owned campaigns by email reach, coverage, or member growth."""
     context = metadata.get("pulse_scope") if isinstance(metadata, dict) else None
     if not isinstance(context, dict):
         return _error("missing_context", "Adviser request context is required")
@@ -219,13 +220,15 @@ def execute_contact_ranking(arguments: dict, metadata: dict | None) -> dict:
         query = ContactRankingArguments.model_validate(arguments)
     except ValidationError:
         return _error("invalid_arguments", "Invalid tool arguments")
-    if query.metric == "clients_emailed" and query.period != "campaign_to_date":
+    if query.metric in {"clients_emailed", "email_coverage"} and query.period != "campaign_to_date":
         return _error(
             "period_unavailable",
-            "Weekly email reach is unavailable because campaign_member stores an "
+            "Weekly email reach and coverage are unavailable because campaign_member stores an "
             "email count without a per-send date. Ask for campaign-to-date email "
             "reach or rank members added in a week.",
         )
+    if query.direction == "least" and query.metric != "email_coverage":
+        return _error("invalid_arguments", "Least ranking is supported for email coverage only")
 
     now = current_time().astimezone(SINGAPORE)
     today = now.date()
@@ -248,43 +251,75 @@ def execute_contact_ranking(arguments: dict, metadata: dict | None) -> dict:
         period_end_date = today
         period_words = f"as of {today.day} {today:%B %Y}"
     try:
-        rows = repository.rank_campaigns_by_member_metric(
-            scope, query.metric, period_start, period_end, now
-        )
+        if query.metric == "email_coverage":
+            rows = repository.rank_campaigns_by_member_metric(
+                scope, query.metric, period_start, period_end, now, query.direction
+            )
+        else:
+            rows = repository.rank_campaigns_by_member_metric(
+                scope, query.metric, period_start, period_end, now
+            )
     except CampaignStorageUnavailable as exc:
         return _error("storage_unavailable", str(exc))
 
     campaign_count = rows[0]["campaign_count"] if rows else 0
     visible = rows[:20]
-    ranking = [{
-        "campaign_id": str(row["campaign_id"]),
-        "campaign_name": row["name"],
-        "campaign_status": row["status"],
-        "campaign_members_total": row["campaign_members_total"],
-        "clients_emailed_total": row["clients_emailed"],
-        "members_added_in_period": row["members_added"],
-        "metric_count": row["count_value"],
-    } for row in visible]
-    highest = ranking[0]["metric_count"] if ranking else 0
-    leaders = [row for row in ranking if row["metric_count"] == highest]
+    ranking = []
+    for row in visible:
+        item = {
+            "campaign_id": str(row["campaign_id"]),
+            "campaign_name": row["name"],
+            "campaign_status": row["status"],
+            "campaign_members_total": row["campaign_members_total"],
+            "clients_emailed_total": row["clients_emailed"],
+            "members_added_in_period": row["members_added"],
+        }
+        if query.metric == "email_coverage":
+            item["email_coverage_percent"] = round(
+                100 * row["clients_emailed"] / row["campaign_members_total"], 1
+            )
+        else:
+            item["metric_count"] = row["count_value"]
+        ranking.append(item)
+    leading_value = rows[0]["count_value"] if rows else None
+    leaders = [ranking[index] for index, row in enumerate(visible)
+               if row["count_value"] == leading_value]
     leaders_truncated = bool(rows and rows[0]["tie_count"] > len(leaders))
-    label = "clients with a recorded email" if query.metric == "clients_emailed" else "members added"
-    if not ranking:
-        summary = "No campaigns are available to this adviser."
-    elif highest == 0:
-        summary = f"No available campaign has recorded {label} {period_words}."
-    elif leaders_truncated:
-        summary = (f"At least {len(leaders)} campaigns tie for the most {label} "
-                   f"{period_words}: {highest} each. The full tie is truncated.")
-    elif len(leaders) == 1:
-        summary = (f"{leaders[0]['campaign_name']} has the most {label} "
-                   f"{period_words}: {highest}.")
+    if query.metric == "email_coverage":
+        if not ranking:
+            summary = "No adviser-owned campaign has members for an email coverage comparison."
+        elif leaders_truncated:
+            summary = (f"At least {len(leaders)} campaigns tie for the {query.direction} "
+                       f"email coverage {period_words}. The full tie is truncated.")
+        elif len(leaders) == 1:
+            summary = (f"{leaders[0]['campaign_name']} has the {query.direction} "
+                       f"email coverage {period_words}: "
+                       f"{leaders[0]['email_coverage_percent']}%.")
+        else:
+            names = ", ".join(row["campaign_name"] for row in leaders)
+            summary = (f"{names} tie for the {query.direction} email coverage "
+                       f"{period_words}: {leaders[0]['email_coverage_percent']}% each.")
     else:
-        names = ", ".join(row["campaign_name"] for row in leaders)
-        summary = f"{names} tie for the most {label} {period_words}: {highest} each."
-    return {
+        highest = ranking[0]["metric_count"] if ranking else 0
+        label = ("clients with a recorded email" if query.metric == "clients_emailed"
+                 else "members added")
+        if not ranking:
+            summary = "No campaigns are available to this adviser."
+        elif highest == 0:
+            summary = f"No available campaign has recorded {label} {period_words}."
+        elif leaders_truncated:
+            summary = (f"At least {len(leaders)} campaigns tie for the most {label} "
+                       f"{period_words}: {highest} each. The full tie is truncated.")
+        elif len(leaders) == 1:
+            summary = (f"{leaders[0]['campaign_name']} has the most {label} "
+                       f"{period_words}: {highest}.")
+        else:
+            names = ", ".join(row["campaign_name"] for row in leaders)
+            summary = f"{names} tie for the most {label} {period_words}: {highest} each."
+    result = {
         "data_source": "synthetic",
         "metric": query.metric,
+        "direction": query.direction,
         "requested_period": query.period,
         "period_start_date": period_start.date().isoformat() if period_start else None,
         "period_end_date": period_end_date.isoformat(),
@@ -294,14 +329,21 @@ def execute_contact_ranking(arguments: dict, metadata: dict | None) -> dict:
         "leaders_truncated": leaders_truncated,
         "ranked_campaigns": ranking,
         "leaders": leaders,
-        "highest_count": highest,
         "contact_history_available": False,
         "summary": summary,
         "metric_definition": (
             "Only active members added by this adviser to adviser-owned campaigns "
             "are included. clients_emailed counts members with email_send_count > 0 "
-            "as a cumulative snapshot. members_added counts member rows created in "
+            "as a cumulative snapshot. email_coverage is that count divided by "
+            "campaign members; campaigns with no members are excluded because "
+            "their coverage is undefined. members_added counts member rows created in "
             "the requested Singapore-time period. These metrics do not count all "
             "forms of client contact or prove email delivery."
         ),
     }
+    if query.metric == "email_coverage":
+        result["leading_coverage_percent"] = (leaders[0]["email_coverage_percent"]
+                                               if leaders else None)
+    else:
+        result["highest_count"] = highest
+    return result
