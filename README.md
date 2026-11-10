@@ -238,25 +238,6 @@ running and no SQL scripts changed. Open http://localhost:3000 and keep the
 terminal running. Press Ctrl+C to stop the application. Tool installations
 are one-time setup; rerun `make bootstrap` when project dependencies change.
 
-### 5. Verify the interim presentation flow
-
-Open http://localhost:3000, choose **Financial Advisor** (the Steven Raynaldi demo
-account), and open **Campaigns > Legacy Protection Refresh**. Open PULSE, click
-**Ask for recommended clients**, then send the question.
-
-For untouched seed records, expect:
-
-| Campaign | Evaluated | Matches | Incomplete | Excluded |
-| --- | ---: | --- | ---: | ---: |
-| Legacy Protection Refresh (`camp-1`) | 12 | A, B, C, L (4) | 2 | 6 |
-| First Home Starter Bundle (`camp-2`) | 12 | F, G, H (3) | 2 | 7 |
-
-The matcher uses the fixed demo date **2026-08-26**. Campaign definitions,
-campaign UI state and CRM contacts now come from PostgreSQL; the frontend has no
-duplicate campaign or contact seed. The same scoped `mock_client` IDs drive the
-CRM audience and MCP recommendations. Recommendations explain criteria matches;
-they do not rank suitability or authorize outreach.
-
 ## Adding another MCP feature
 
 1. Put synthetic schema/migration/seed SQL in `backend/tables/`.
