@@ -885,6 +885,14 @@ The endpoint restricts records by tenant, creator and non-deletion. Only returne
 `status = active` records are included; schedule dates do not determine eligibility.
 The endpoint treats null database status as active. Other MCP tools are unchanged.
 
+Chat routes both catalogue requests and details of a named active campaign
+directly to `get_active_campaigns`. For example, "get campaign details for legacy
+protection refresh" supplies `campaign_names: ["legacy protection refresh"]`
+without first calling `resolve_campaign`. A generic details request uses the
+default columns; explicit requests can select particular fields. An empty exact
+lookup is reported without silently broadening the selection. This is model
+prompt guidance, not a deterministic routing guarantee.
+
 Arguments:
 
 - `campaign_ids`, `campaign_names`: optional exact selections, at most 100 each;
@@ -953,7 +961,7 @@ For example, `{"campaign_name":"first home starter bundle campaign"}` can resolv
 to `{"status":"matched","campaign_id":"b2222222-2222-2222-2222-222222222222",
 "name":"First Home Starter Bundle",...}` using the current synthetic seed.
 
-The LLM chooses `resolve_campaign`, receives its result, and may request
+For an operation requiring a campaign ID, the LLM chooses `resolve_campaign`, receives its result, and may request
 `recommend_clients_for_campaign` with that ID. `tool_choice="auto"` is retained.
 The registry validates and executes only requested calls; no backend sequence
 forces lookup or recommendations. Known IDs may be used directly; ambiguity

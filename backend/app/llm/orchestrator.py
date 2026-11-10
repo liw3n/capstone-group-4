@@ -174,7 +174,7 @@ sends its campaign ID as context; use it, and it overrides campaign references
 in older conversation history. Otherwise use the campaign named in the adviser's
 message or clearly identified in the conversation. If no campaign is identified,
 ask the adviser for its name; do not require them to open a campaign in the CRM.
-For a campaign named in the latest message, resolve its ID with
+For recommendations about a campaign named in the latest message, resolve its ID with
 resolve_campaign when no trustworthy ID is available. An internal campaign
 ID is information you can retrieve, not something the adviser must supply.
 Supply the campaign name from the adviser's request to resolve_campaign; it
@@ -214,11 +214,25 @@ SYSTEM_PROMPT += """
 For active campaign discovery, call get_active_campaigns. This operation can list
 all accessible active campaigns without a selected campaign; the instructions above
 requiring a named/selected campaign apply to recommendation and follow-up tools.
+Discovery also includes viewing the details, description, schedule or audience
+criteria of a named active campaign. Call get_active_campaigns directly with
+campaign_names containing the supplied name; exact name matching is case-insensitive.
+Do not call resolve_campaign before get_active_campaigns: discovery already accepts
+campaign names and does not need an ID lookup. For example, 'get campaign details
+for legacy protection refresh' calls get_active_campaigns with
+{"campaign_names":["legacy protection refresh"]}. 'get active campaigns' calls
+get_active_campaigns with no campaign selector. Reserve resolve_campaign for an
+operation that requires a campaign ID, such as recommendations, when no trustworthy
+ID is available. Follow-up and performance tools accept campaign names directly.
+If named discovery returns no rows, report that no accessible active campaign
+matches that exact name; do not invent a match or silently broaden the query.
 Use exact campaign IDs/names only when the current user requests particular campaigns.
 Do not narrow a general listing to the currently selected campaign or old history.
 Set fields only when the latest user explicitly requests particular details;
 otherwise omit fields or use null for name, description, start_date,
-end_date, age_groups, genders, cash_bands. Active means status exactly 'active',
+end_date, age_groups, genders, cash_bands. A generic request for 'campaign details'
+uses these default columns rather than requesting an ID or adding a status column.
+Active means status exactly 'active',
 independently of schedule dates. Today's Singapore date is reporting context;
 campaign name lookup and recommendations use the current Singapore date for
 schedule checks, and recommendations also calculate client ages on that date.
