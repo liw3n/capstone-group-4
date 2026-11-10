@@ -84,10 +84,11 @@ PROMPTS = (
         metric="email_coverage", direction="least",
     ),
     PromptCase(
-        "5-total-sends",
-        "For Retirement Income Review, what is the cumulative number of "
-        "recorded email sends so far?",
-        "llm", PERFORMANCE, "sends", "Retirement Income Review",
+        "5-highest-coverage",
+        "Across my campaigns, which has the highest percentage of members "
+        "with a recorded email? Include ties.",
+        "llm", RANKING, "ranking", period="campaign_to_date",
+        metric="email_coverage", direction="most",
     ),
 )
 CASES = {
@@ -104,18 +105,23 @@ EXPECTED = {
         "campaign_count": 5,
         "summary": (13, 10, 15, 76.9),
         "week": 5,
-        "most": (11, 1),
-        "least": (Fraction(10, 13), 4),
-        "sends": 16,
+        "most_emailed": (11, 1),
+        "lowest_coverage": (Fraction(10, 13), 4),
+        "highest_coverage": (Fraction(11, 14), 1),
     },
     "large": {
         "campaign_count": 100,
         "summary": (250, 215, 430, 86.0),
         "week": 63,
-        "most": (215, 30),
-        "least": (Fraction(214, 250), 70),
-        "sends": 429,
+        "most_emailed": (215, 30),
+        "lowest_coverage": (Fraction(214, 250), 70),
+        "highest_coverage": (Fraction(215, 250), 30),
     },
+}
+RANKING_EXPECTATIONS = {
+    ("clients_emailed", "most"): "most_emailed",
+    ("email_coverage", "least"): "lowest_coverage",
+    ("email_coverage", "most"): "highest_coverage",
 }
 
 
@@ -195,12 +201,10 @@ def _tool_result_correct(case: PromptCase, result: dict, expected: dict,
                     and result.get("requested_week_start_date") == "2026-09-07"
                     and result.get("requested_week_end_date") == "2026-09-13"
                     and result.get("members_added_requested_week") == expected["week"])
-        return result.get("email_sends_total") == expected["sends"]
+        raise ValueError(f"Unsupported performance case: {case.kind}")
 
-    visible, tie_count, value = rankings[case.metric]
-    known_value, known_ties = expected[
-        "least" if case.metric == "email_coverage" else "most"
-    ]
+    visible, tie_count, value = rankings[(case.metric, case.direction)]
+    known_value, known_ties = expected[RANKING_EXPECTATIONS[(case.metric, case.direction)]]
     actual = result.get("leaders")
     if (value != known_value or tie_count != known_ties
             or result.get("metric") != case.metric
@@ -261,15 +265,7 @@ def _response_correct(case: PromptCase, answer: str, expected: dict,
             case.campaign, f"**{expected['week']} members**",
             "7 Sep 2026–13 Sep 2026",
         ))
-    if case.kind == "sends":
-        count = expected["sends"]
-        nearby = re.search(
-            rf"(?:\b{count}\b.{{0,70}}\bemail\s+sends?\b|"
-            rf"\bemail\s+sends?\b.{{0,70}}\b{count}\b)",
-            answer, re.IGNORECASE | re.DOTALL,
-        )
-        return case.campaign.casefold() in answer.casefold() and nearby is not None
-    visible, tie_count, value = rankings[case.metric]
+    visible, tie_count, value = rankings[(case.metric, case.direction)]
     normalized_answer = _normalized_response(answer)
     named_leaders = sum(_normalized_response(name) in normalized_answer
                         for name, _, _, _ in visible)
@@ -318,17 +314,15 @@ def main() -> int:
     campaign_ids = {
         name: _campaign_id(name) for name in (
             "Legacy Protection Refresh", "Young Families Cover Check",
-            "Retirement Income Review",
         )
     }
     rankings = {
-        "clients_emailed": _ranking_truth("clients_emailed", "most"),
-        "email_coverage": _ranking_truth("email_coverage", "least"),
+        (metric, direction): _ranking_truth(metric, direction)
+        for metric, direction in RANKING_EXPECTATIONS
     }
     expected = EXPECTED[spec.name]
-    for metric, key in (("clients_emailed", "most"),
-                        ("email_coverage", "least")):
-        _, ties, value = rankings[metric]
+    for (metric, direction), key in RANKING_EXPECTATIONS.items():
+        _, ties, value = rankings[(metric, direction)]
         if (value, ties) != expected[key]:
             raise SystemExit(f"The loaded {spec.name} ranking seed differs from {key} expectations")
 
