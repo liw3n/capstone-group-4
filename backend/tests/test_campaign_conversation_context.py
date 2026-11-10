@@ -83,7 +83,26 @@ def test_preview_accepts_edits_but_not_unrelated_tool_requests():
         "Make the subject shorter", history
     ) is True
     assert conversation_context.is_campaign_email_turn(
+        "Add that the session includes an educational discussion", history
+    ) is True
+    assert conversation_context.is_campaign_email_turn(
         "Show campaign performance", history
+    ) is False
+
+
+def test_preview_general_approval_requires_preview_context():
+    history = [ChatHistoryItem(
+        "2026-11-01T00:00:00Z", False,
+        "## Review campaign email\n\nReview the subject and recipients.",
+    )]
+    assert conversation_context.is_campaign_email_general_approval(
+        "Looks good, send it", history
+    ) is True
+    assert conversation_context.is_campaign_email_general_approval(
+        "Proceed", history
+    ) is True
+    assert conversation_context.is_campaign_email_general_approval(
+        "Looks good, send it", []
     ) is False
 
 

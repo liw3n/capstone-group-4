@@ -184,6 +184,25 @@ def test_email_cancellation_is_server_routed_without_an_llm_call():
     assert "No email was sent" in result
 
 
+def test_general_email_approval_is_server_routed_without_an_llm_or_tool_call():
+    provider = SimpleNamespace()
+    registry = DiscardRegistry()
+    orchestrator = ChatOrchestrator(provider, settings(), registry)
+    history = [ChatHistoryItem(
+        "2026-11-01T00:00:00Z", False,
+        "## Review campaign email\n\nEnter the exact confirmation phrase to send.",
+    )]
+
+    result = orchestrator.run(
+        "Looks good, send it", history, scope=RequestScope(DEMO_FA),
+        campaign_id="camp-1", session_id="session-1",
+    )
+
+    assert registry.executed == []
+    assert "exact confirmation phrase" in result
+    assert "No email was sent" in result
+
+
 class PreviewRegistry:
     def __init__(self):
         self.execute_count = 0
@@ -397,6 +416,36 @@ def test_subject_revision_sends_only_subject_context(monkeypatch):
     assert registry.arguments == [{
         "subject": "A shorter subject", "campaign_id": "camp-1"
     }]
+
+
+def test_additive_body_revision_uses_compact_email_path(monkeypatch):
+    monkeypatch.setattr(orchestrator_module, "get_campaign", lambda *_: campaign())
+    monkeypatch.setattr(
+        orchestrator_module, "latest_email_draft_context",
+        lambda *_: previous_email_draft(),
+    )
+    revised_body = (
+        "Educational information only. The session includes an educational "
+        "financial-planning discussion."
+    )
+    provider = PreviewProvider({"subject": None, "body": revised_body})
+    registry = EditRegistry()
+    orchestrator = ChatOrchestrator(provider, settings(), registry)
+    history = [ChatHistoryItem(
+        "2026-11-01T00:00:00Z", False, "## Review campaign email",
+    )]
+
+    orchestrator.run(
+        "Add that the session includes an educational financial-planning discussion",
+        history,
+        scope=RequestScope(DEMO_FA),
+        campaign_id="camp-1",
+        session_id="session-body-revision",
+    )
+
+    assert provider.calls == 1
+    assert len(provider.messages) == 2
+    assert registry.arguments == [{"body": revised_body, "campaign_id": "camp-1"}]
 
 
 def test_email_fast_path_asks_for_campaign_without_model_call():

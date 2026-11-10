@@ -42,6 +42,7 @@ from app.campaigns.email import (
 from app.campaigns.conversation_context import (
     CampaignContextResolution,
     is_campaign_email_cancel,
+    is_campaign_email_general_approval,
     is_campaign_email_turn,
     signoff_reply,
 )
@@ -1961,6 +1962,16 @@ class ChatOrchestrator:
                     "Campaign email discard tool returned an invalid result"
                 )
             return _answer(render_campaign_email(payload))
+        if (
+            scope is not None
+            and session_id
+            and is_campaign_email_general_approval(user_message, history)
+        ):
+            return _answer(
+                "No email was sent. To approve the reviewed content and "
+                "recipient list, copy and paste the exact confirmation phrase shown "
+                "in the latest preview."
+            )
         if campaign_context_issue is not None:
             if campaign_context_issue.status == "ambiguous":
                 choices = "\n".join(

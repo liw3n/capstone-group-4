@@ -58,9 +58,17 @@ _EMAIL_CONTENT_QUESTION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _EMAIL_PREVIEW_REPLY_PATTERN = re.compile(
-    r"\b(?:revise|edit|change|update|replace|rewrite|shorten|shorter|longer|"
+    r"\b(?:revise|edit|change|update|replace|rewrite|add|include|mention|remove|"
+    r"shorten|shorter|longer|"
     r"subject|body|message|recipients?|sign[ -]?off)\b|"
     r"\bmake\s+(?:it|the\s+(?:subject|body|message))\b",
+    re.IGNORECASE,
+)
+_EMAIL_PREVIEW_APPROVAL_PATTERN = re.compile(
+    r"^(?:(?:it\s+)?looks?\s+good|approved?|i\s+approve|proceed|go\s+ahead|"
+    r"send\s+(?:it|the\s+e[ -]?mail))"
+    r"(?:\s*[,;:-]?\s*(?:please\s+)?(?:proceed|go\s+ahead|"
+    r"send\s+(?:it|the\s+e[ -]?mail)))?[.! ]*$",
     re.IGNORECASE,
 )
 _EXPLICIT_EMAIL_CANCEL_PATTERN = re.compile(
@@ -118,6 +126,16 @@ def is_campaign_email_cancel(
     return bool(
         pending_campaign_email_prompt(history)
         and _SHORT_CANCEL_PATTERN.fullmatch(latest_message.strip())
+    )
+
+
+def is_campaign_email_general_approval(
+    latest_message: str, history: Iterable[HistoryItem]
+) -> bool:
+    """Recognise approval language that is not the exact send confirmation."""
+    return bool(
+        pending_campaign_email_prompt(history) == "preview"
+        and _EMAIL_PREVIEW_APPROVAL_PATTERN.fullmatch(latest_message.strip())
     )
 
 
