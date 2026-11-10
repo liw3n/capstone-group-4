@@ -3,7 +3,7 @@ import pytest
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
-from datetime import datetime
+from datetime import datetime, timezone
 import importlib.util
 import json
 from pathlib import Path
@@ -150,13 +150,21 @@ def test_campaign_follow_up_returns_profiles_with_grounded_reasons(monkeypatch):
     ]
     assert result["candidates"] == [{
         "client_id": client_id,
-        "portfolio_data": {"client_id": client_id, "portfolio_value": 125000},
-        "profile_data": {"client_id": client_id, "name": "Demo Client B", "age": 70},
-        "last_engagement_date": engagement_date.isoformat(),
+        "portfolio_data": {"portfolio_value": 125000},
+        "profile_data": {"name": "Demo Client B", "age": 70},
+        "last_engagement_date": "2026-08-02",
     } for client_id in ("client-002", "client-003")]
     assert "Dynamically formulate and explain" in result["additional_instructions"]
     assert portfolio_requests == ["client-002", "client-003"]
     assert profile_requests == ["client-002", "client-003"]
+
+
+def test_campaign_follow_up_reports_singapore_engagement_date():
+    # 20:00 UTC is already the next day in Singapore.
+    assert server_module._follow_up_date(
+        datetime(2026, 8, 2, 20, 0, tzinfo=timezone.utc)
+    ) == "2026-08-03"
+    assert server_module._follow_up_date(None) is None
 
 
 def test_campaign_follow_up_compares_25_longest_unengaged_clients(monkeypatch):

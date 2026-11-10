@@ -22,6 +22,7 @@ from app.tools.campaign_follow_up import (
     get_campaign_info
 )
 
+from app.campaigns.clock import SINGAPORE
 from app.campaigns.repository import (
     CAMPAIGN_ID_PATTERN,
     DEMO_TENANT,
@@ -93,6 +94,20 @@ def recommend_clients_for_campaign(
     if metadata is not None and not isinstance(metadata, dict):
         metadata = metadata.model_dump()
     return execute_recommendation(campaign_id, limit, metadata)
+
+# campaign_follow_up sends the model profiles for at most this many of the
+# longest-unengaged clients; total_unreplied_clients still counts all of them.
+MAX_FOLLOW_UP_CANDIDATES = 15
+
+
+def _follow_up_date(value: datetime | None) -> str | None:
+    """Singapore calendar date of a member's last engagement, without the time."""
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone(SINGAPORE)
+    return value.date().isoformat()
+
 
 @mcp.tool()
 def campaign_follow_up(
@@ -226,21 +241,26 @@ def campaign_follow_up(
                 }
         client_info = get_client_follow_up_list(campaign_id, fa_id, tenant_id)
 
-        # 2. Fetch profile and portfolio context for the 25 longest-unengaged
-        # candidates (never-engaged first, then earliest engagement date).
+        # 2. Fetch profile and portfolio context for the MAX_FOLLOW_UP_CANDIDATES
+        # longest-unengaged candidates (never-engaged first, then earliest
+        # engagement date).
         client_info = sorted(
             client_info,
             key=lambda row: (row[1] is not None, row[1] or datetime.min),
         )
         client_profiles = []
-        for client_id, last_engagement_date in client_info[:15]:
+        for client_id, last_engagement_date in client_info[:MAX_FOLLOW_UP_CANDIDATES]:
             portfolio = fetch_client_portfolio(client_id)
             profile = fetch_client_profile(client_id, fa_id, tenant_id)
+            # Every candidate is resent to the model, so drop the repeated
+            # client IDs and the email address, which ranking does not use.
             client_profiles.append({
                 "client_id": client_id,
-                "portfolio_data": portfolio,
-                "profile_data": profile,
-                "last_engagement_date": last_engagement_date.isoformat() if last_engagement_date else None,
+                "portfolio_data": {key: value for key, value in portfolio.items()
+                                   if key != "client_id"},
+                "profile_data": {key: value for key, value in profile.items()
+                                 if key not in {"client_id", "email"}},
+                "last_engagement_date": _follow_up_date(last_engagement_date),
             })
         recommend_count = min(limit, len(client_profiles))
 

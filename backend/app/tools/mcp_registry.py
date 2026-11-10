@@ -40,6 +40,33 @@ MODEL_DISCOVERABLE_TOOLS = frozenset({
 })
 
 
+def _compact_schema(schema: Any) -> Any:
+    """Shrink a tool's JSON schema before it is sent to the model.
+
+    Every tool definition is resent with each LLM call, so verbose Pydantic
+    output costs tokens on every request. Optional fields become one
+    ``"type": [..., "null"]`` entry instead of an ``anyOf`` with a null branch,
+    and null defaults and regex patterns are dropped; the MCP server still
+    validates every argument against its full schema.
+    """
+    if isinstance(schema, list):
+        return [_compact_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    compact = {key: _compact_schema(value) for key, value in schema.items()
+               if key != "pattern" and not (key == "default" and value is None)}
+    branches = compact.get("anyOf")
+    if isinstance(branches, list) and len(branches) == 2 and {"type": "null"} in branches:
+        value = next(branch for branch in branches if branch != {"type": "null"})
+        if isinstance(value, dict) and isinstance(value.get("type"), str):
+            merged = {**value, "type": [value["type"], "null"]}
+            if "enum" in merged:
+                merged["enum"] = [*merged["enum"], None]
+            del compact["anyOf"]
+            compact = {**merged, **compact}
+    return compact
+
+
 class MCPToolRegistry:
     def __init__(self, transport: Any, timeout_seconds: float = 30.0,
                  scope: RequestScope | None = None,
@@ -95,7 +122,7 @@ class MCPToolRegistry:
                 # Confirmation and draft revision are server-routed. An MCP
                 # tool added later is not automatically made callable by the LLM.
                 continue
-            parameters = deepcopy(tool.input_schema)
+            parameters = _compact_schema(deepcopy(tool.input_schema))
             description = tool.description or ""
             if tool.name == "prepare_campaign_draft":
                 # The signed token and exact query stay server-side after

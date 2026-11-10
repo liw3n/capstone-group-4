@@ -2,8 +2,9 @@
 
 Runs adviser prompts through the real ChatOrchestrator, LLM provider and
 FastMCP server against a seeded evaluation database, then scores whether
-campaign_follow_up was called with the right campaign and limit and returned
-the ground-truth unreplied clients (Tool Calling Accuracy), checks that every
+campaign_follow_up was called with the right campaign and limit, counted every
+ground-truth unreplied client and returned only unreplied clients as
+candidates, up to the tool's candidate cap (Tool Calling Accuracy), checks that every
 client named in the final answer has 'contacted' (no reply) status for the
 campaign, or that the out-of-scope prompt names no clients and surfaces the
 tool error (Response Accuracy), and records each prompt's response time with
@@ -28,6 +29,7 @@ evaluation/results/ (git-ignored).
 from __future__ import annotations
 
 import argparse
+from functools import cache
 import importlib.util
 import json
 import re
@@ -114,7 +116,7 @@ PROMPT_CASES = [
     PromptCase(
         case_id="3-unscoped-named",
         prompt=("Which clients from the Young Families Cover Check campaign "
-                "haven't responded yet?"),
+                "haven't responded yet that I should follow up with?"),
         scoped_campaign=None,
         expected_campaign="Young Families Cover Check",
     ),
@@ -173,6 +175,9 @@ class CaseResult:
     follow_up_arguments: dict[str, Any] | None = None
     expected_unreplied: int = 0
     returned_unreplied: int | None = None
+    # The tool sends at most MAX_FOLLOW_UP_CANDIDATES profiles to the model.
+    expected_candidates: int = 0
+    returned_candidates: int | None = None
     error: str | None = None
     answer_preview: str = ""
     # Full final answer, scored by Response Accuracy.
@@ -237,13 +242,23 @@ class _TimedClient:
         return getattr(self._inner, attribute)
 
 
-def _in_process_mcp_server() -> Any:
+@cache
+def _server_module() -> Any:
     spec = importlib.util.spec_from_file_location(
         "pulse_mcp_server", BACKEND_DIR / "mcp" / "server.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.mcp
+    return module
+
+
+def _in_process_mcp_server() -> Any:
+    return _server_module().mcp
+
+
+def _candidate_cap() -> int:
+    """How many unreplied clients campaign_follow_up returns as candidates."""
+    return _server_module().MAX_FOLLOW_UP_CANDIDATES
 
 
 def _loaded_counts() -> dict[str, int]:
@@ -331,6 +346,7 @@ def _score(case: PromptCase, run: int, calls: list[ToolCall], answer: str,
         prompt=case.prompt, end_to_end_seconds=round(elapsed, 3),
         llm_seconds=round(client.seconds, 3), llm_calls=client.calls,
         tool_sequence=[call.name for call in calls], expected_unreplied=len(truth),
+        expected_candidates=min(len(truth), _candidate_cap()),
         answer_preview=answer[:400], answer=answer,
     )
     follow_ups = [call for call in calls if call.name == TOOL_NAME]
@@ -360,10 +376,20 @@ def _score(case: PromptCase, run: int, calls: list[ToolCall], answer: str,
     result.limit_correct = case.expected_limit is None or limit == case.expected_limit
     returned_id = str((call.result.get("campaign_info") or {}).get("campaign_id", ""))
     result.campaign_correct = returned_id == expected_id
-    returned = {str(candidate.get("client_id")) for candidate in call.result.get("candidates", [])}
+    returned = [str(candidate.get("client_id")) for candidate in call.result.get("candidates", [])]
+    result.returned_candidates = len(returned)
     if "total_unreplied_clients" in call.result:
         result.returned_unreplied = call.result["total_unreplied_clients"]
-    result.result_correct = result.campaign_correct and returned == truth
+    # The tool counts every unreplied client but returns profiles for only the
+    # capped, longest-unengaged subset. Ties in engagement dates make the exact
+    # subset order-dependent, so require unreplied, distinct candidates of the
+    # capped size rather than one specific set.
+    result.result_correct = (
+        result.campaign_correct
+        and result.returned_unreplied == len(truth)
+        and len(set(returned)) == len(returned) == result.expected_candidates
+        and set(returned) <= truth
+    )
     result.passed = (result.tool_called and not result.wrong_tool_called
                      and result.campaign_correct and result.limit_correct
                      and result.result_correct)
@@ -664,7 +690,8 @@ def main() -> int:
             status = "PASS" if result.passed else "FAIL"
             print(f"[{status}] {case.case_id} run {run}: tools={result.tool_sequence} "
                   f"args={result.follow_up_arguments} unreplied="
-                  f"{result.returned_unreplied}/{result.expected_unreplied} "
+                  f"{result.returned_unreplied}/{result.expected_unreplied} candidates="
+                  f"{result.returned_candidates}/{result.expected_candidates} "
                   f"e2e={result.end_to_end_seconds}s tool={result.follow_up_tool_seconds}s"
                   + (f" error={result.error}" if result.error else ""))
 
