@@ -131,8 +131,8 @@ byte-for-byte to deployed commit `2ab0408`. Editing those already-applied files
 caused checksum rejection when deploying the recommendation feature. Never
 delete or rewrite `pulse_deploy_migration` entries to bypass that protection.
 
-Two new immutable files in `tables/mock_data/`, listed in `SEED_UPDATES` in
-`deploy/database.py`, carry the changes:
+Immutable files in `tables/mock_data/`, listed in `SEED_UPDATES` in
+`deploy/database.py`, carry the versioned changes:
 
 - `20261107_add_demo_contacts.sql`: adds synthetic clients 37–100 without
   overwriting existing IDs; fills Demo Client J's missing birth date only when
@@ -140,6 +140,15 @@ Two new immutable files in `tables/mock_data/`, listed in `SEED_UPDATES` in
 - `20261107_add_demo_members.sql`: adds the two intended memberships only if
   parents are present/not deleted and no prior membership (even soft-deleted)
   exists. No outreach is sent.
+- `20261110_update_demo_member_dates.sql`: corrects the three intended
+  synthetic campaign-member dates only while each row still matches its
+  original baseline values. It preserves adviser edits and deleted rows.
+
+The 10 November deployment regression re-edited `mock_campaign_member.sql`
+after this repair and was rejected by the hosted checksum guard before service
+startup. The baseline is again restored to checksum `4c28ddc...`; keep the date
+correction in the versioned update above. Do not bypass the guard by changing
+the migration ledger.
 
 Fresh demos run baseline seeds followed by these updates. Existing databases
 with all baseline seed ledger entries receive updates even with

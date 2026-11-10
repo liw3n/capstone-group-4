@@ -43,48 +43,13 @@ VALUES
     ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'b3333333-3333-3333-3333-333333333333', 'd0000000-0000-0000-0000-000000000031', '2026-09-22 10:00:00+08', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', FALSE, 0, NULL, 0),
     ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'b3333333-3333-3333-3333-333333333333', 'd0000000-0000-0000-0000-000000000032', '2026-10-06 10:00:00+08', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', FALSE, 1, '2026-10-08 12:00:00+08', 0),
     ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'b3333333-3333-3333-3333-333333333333', 'd0000000-0000-0000-0000-000000000033', '2026-10-13 09:00:00+08', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', FALSE, 1, '2026-10-15 10:00:00+08', 1),
-    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'b3333333-3333-3333-3333-333333333333', 'd0000000-0000-0000-0000-000000000034', '2026-11-03 11:00:00+08', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', FALSE, 0, NULL, 0),
-    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'b3333333-3333-3333-3333-333333333333', 'd0000000-0000-0000-0000-000000000035', '2026-11-04 10:00:00+08', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', FALSE, 2, '2026-11-05 15:00:00+08', 1),
-    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'b3333333-3333-3333-3333-333333333333', 'd0000000-0000-0000-0000-000000000036', '2026-11-09 09:00:00+08', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', FALSE, 1, '2026-11-09 10:00:00+08', 0)
+    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'b3333333-3333-3333-3333-333333333333', 'd0000000-0000-0000-0000-000000000034', '2026-10-19 11:00:00+08', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', FALSE, 0, NULL, 0),
+    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'b3333333-3333-3333-3333-333333333333', 'd0000000-0000-0000-0000-000000000035', '2026-10-26 10:00:00+08', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', FALSE, 2, '2026-10-27 15:00:00+08', 1),
+    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'b3333333-3333-3333-3333-333333333333', 'd0000000-0000-0000-0000-000000000036', '2026-10-28 09:00:00+08', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', FALSE, 1, '2026-10-29 13:00:00+08', 0)
 ON CONFLICT (tenant_id, campaign_id, contact_id) WHERE is_deleted = FALSE
 DO UPDATE SET emailed_at = EXCLUDED.emailed_at
 WHERE campaign_member.emailed_at IS NULL
   AND campaign_member.email_send_count > 0
   AND EXCLUDED.emailed_at IS NOT NULL;
-
--- Refresh only the unchanged synthetic demo rows on a repeated local provision.
--- The INSERT above does not update added_at for existing members.
-UPDATE campaign_member
-SET added_at = '2026-11-03 11:00:00+08'::timestamptz
-WHERE tenant_id = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
-  AND campaign_id = 'b3333333-3333-3333-3333-333333333333'
-  AND contact_id = 'd0000000-0000-0000-0000-000000000034'
-  AND added_by_user_id = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
-  AND is_deleted = FALSE AND email_send_count = 0 AND emailed_at IS NULL
-  AND added_at = '2026-10-19 11:00:00+08'::timestamptz;
-
-UPDATE campaign_member
-SET added_at = '2026-11-04 10:00:00+08'::timestamptz,
-    emailed_at = '2026-11-05 15:00:00+08'::timestamptz
-WHERE tenant_id = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
-  AND campaign_id = 'b3333333-3333-3333-3333-333333333333'
-  AND contact_id = 'd0000000-0000-0000-0000-000000000035'
-  AND added_by_user_id = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
-  AND is_deleted = FALSE AND email_send_count = 2
-  AND emailed_at = '2026-10-27 15:00:00+08'::timestamptz
-  AND added_at IN ('2026-10-26 10:00:00+08'::timestamptz,
-                   '2026-11-04 10:00:00+08'::timestamptz);
-
-UPDATE campaign_member
-SET added_at = '2026-11-09 09:00:00+08'::timestamptz,
-    emailed_at = '2026-11-09 10:00:00+08'::timestamptz
-WHERE tenant_id = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
-  AND campaign_id = 'b3333333-3333-3333-3333-333333333333'
-  AND contact_id = 'd0000000-0000-0000-0000-000000000036'
-  AND added_by_user_id = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
-  AND is_deleted = FALSE AND email_send_count = 1
-  AND emailed_at = '2026-10-29 13:00:00+08'::timestamptz
-  AND added_at IN ('2026-10-28 09:00:00+08'::timestamptz,
-                   '2026-11-12 09:00:00+08'::timestamptz);
 
 COMMIT;
