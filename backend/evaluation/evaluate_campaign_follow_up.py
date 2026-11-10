@@ -3,8 +3,11 @@
 Runs adviser prompts through the real ChatOrchestrator, LLM provider and
 FastMCP server against a seeded evaluation database, then scores whether
 campaign_follow_up was called with the right campaign and limit and returned
-the ground-truth unreplied clients (Tool Calling Accuracy), and records each
-prompt's response time with the total and mean (Response Time).
+the ground-truth unreplied clients (Tool Calling Accuracy), checks that every
+client named in the final answer has 'contacted' (no reply) status for the
+campaign, or that the out-of-scope prompt names no clients and surfaces the
+tool error (Response Accuracy), and records each prompt's response time with
+the total and mean (Response Time).
 
 Datasets (synthetic, tables/eval_data/):
   small  5 campaigns, 20 contacts, 66 campaign members
@@ -27,6 +30,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import statistics
 import sys
 import time
@@ -47,6 +51,8 @@ from app.tools.mcp_registry import MCPToolRegistry  # noqa: E402
 
 EVAL_FA_ID = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
 TOOL_NAME = "campaign_follow_up"
+# campaign_follow_up recommends this many clients when no limit is passed.
+DEFAULT_LIMIT = 5
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
 
@@ -169,6 +175,8 @@ class CaseResult:
     returned_unreplied: int | None = None
     error: str | None = None
     answer_preview: str = ""
+    # Full final answer, scored by Response Accuracy.
+    answer: str = field(default="", repr=False)
 
 
 class _RecordingRegistry:
@@ -323,7 +331,7 @@ def _score(case: PromptCase, run: int, calls: list[ToolCall], answer: str,
         prompt=case.prompt, end_to_end_seconds=round(elapsed, 3),
         llm_seconds=round(client.seconds, 3), llm_calls=client.calls,
         tool_sequence=[call.name for call in calls], expected_unreplied=len(truth),
-        answer_preview=answer[:400],
+        answer_preview=answer[:400], answer=answer,
     )
     follow_ups = [call for call in calls if call.name == TOOL_NAME]
     result.tool_called = bool(follow_ups)
@@ -348,7 +356,7 @@ def _score(case: PromptCase, run: int, calls: list[ToolCall], answer: str,
                          and result.result_correct)
         return result
 
-    limit = call.arguments.get("limit", 5)
+    limit = call.arguments.get("limit", DEFAULT_LIMIT)
     result.limit_correct = case.expected_limit is None or limit == case.expected_limit
     returned_id = str((call.result.get("campaign_info") or {}).get("campaign_id", ""))
     result.campaign_correct = returned_id == expected_id
@@ -377,6 +385,162 @@ def _summary(results: list[CaseResult]) -> dict[str, Any]:
         "result_accuracy": rate("result_correct"),
         "pass_rate": rate("passed"),
     }
+
+
+#=========================#
+# Response Accuracy       #
+#=========================#
+
+# campaign_member.engagement_status values; a contact's status for a campaign
+# is its highest status, matching campaign_follow_up and _ground_truth.
+STATUS_LABELS = {0: "contacted", 1: "engaged", 2: "rejected"}
+NOT_A_MEMBER = "not_a_member"
+UUID_PATTERN = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
+)
+
+
+@dataclass
+class ResponseResult:
+    case_id: str
+    run: int
+    identified_clients: list[dict[str, str]] = field(default_factory=list)
+    non_contacted_clients: list[dict[str, str]] = field(default_factory=list)
+    expected_error_code: str | None = None
+    tool_error_code: str | None = None
+    # Most clients the answer may name: the prompt's limit, else the tool default.
+    limit: int | None = None
+    within_limit: bool = False
+    passed: bool = False
+    error: str | None = None
+
+
+def _contact_names() -> dict[str, str]:
+    """Contact ID -> full name for every contact the evaluation adviser owns."""
+    with _connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT contact_id::text AS contact_id, full_name
+            FROM contact
+            WHERE tenant_id = %s AND is_deleted = FALSE
+              AND (assigned_to_user_id = %s OR
+                   (assigned_to_user_id IS NULL AND created_by_user_id = %s))
+            """,
+            (EVAL_FA_ID, EVAL_FA_ID, EVAL_FA_ID),
+        ).fetchall()
+    return {row["contact_id"]: row["full_name"] for row in rows if row["full_name"]}
+
+
+def _member_statuses(campaign_id: str) -> dict[str, str]:
+    """Contact ID -> engagement status label for a campaign's members."""
+    with _connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT contact_id::text AS contact_id, max(engagement_status) AS status
+            FROM campaign_member
+            WHERE tenant_id = %s AND campaign_id = %s AND is_deleted = FALSE
+            GROUP BY contact_id
+            """,
+            (EVAL_FA_ID, campaign_id),
+        ).fetchall()
+    return {row["contact_id"]: STATUS_LABELS.get(row["status"], str(row["status"]))
+            for row in rows}
+
+
+def _normalise(text: str) -> str:
+    # Models often render IDs with non-breaking hyphens and names with
+    # narrow/non-breaking spaces; fold them so plain matching works.
+    text = re.sub(r"[\u2010-\u2015\u2212]", "-", text)
+    return re.sub(r"[\u00a0\u2007\u202f\s]+", " ", text)
+
+
+def _identified_clients(answer: str, names: dict[str, str]) -> set[str]:
+    """Contact IDs the answer names, by client ID or by full name."""
+    text = _normalise(answer)
+    lowered = text.lower()
+    found = {match.lower() for match in UUID_PATTERN.findall(text)} & set(names)
+    for contact_id, name in names.items():
+        name = name.lower()
+        if name in lowered and re.search(rf"(?<!\w){re.escape(name)}(?!\w)", lowered):
+            found.add(contact_id)
+    return found
+
+
+def _score_response(case: PromptCase, case_result: CaseResult, calls: list[ToolCall],
+                    names: dict[str, str], statuses: dict[str, str]) -> ResponseResult:
+    """Score the final answer rather than the tool call.
+
+    Normal prompts pass when the answer names at least one client, no more
+    clients than the limit (the prompt's, else the tool default), and every
+    named client has 'contacted' status for the expected campaign. The
+    out-of-scope prompt passes when the tool returned the expected error and
+    the answer names no clients.
+    """
+    result = ResponseResult(case_id=case.case_id, run=case_result.run,
+                            expected_error_code=case.expected_error_code)
+    if case_result.error and not case_result.answer:
+        result.error = case_result.error
+    follow_ups = [call for call in calls if call.name == TOOL_NAME]
+    errors = [call.result.get("error_code") for call in follow_ups
+              if "error_code" in call.result]
+    result.tool_error_code = errors[-1] if errors else None
+
+    for contact_id in sorted(_identified_clients(case_result.answer, names)):
+        client = {"client_id": contact_id, "name": names[contact_id],
+                  "status": statuses.get(contact_id, NOT_A_MEMBER)}
+        result.identified_clients.append(client)
+        if client["status"] != "contacted":
+            result.non_contacted_clients.append(client)
+
+    if case.expected_error_code is None:
+        result.limit = case.expected_limit or DEFAULT_LIMIT
+        result.within_limit = (not result.error
+                               and len(result.identified_clients) <= result.limit)
+
+    if result.error:
+        return result
+    if case.expected_error_code is not None:
+        result.passed = (result.tool_error_code == case.expected_error_code
+                         and not result.identified_clients)
+    else:
+        result.passed = (bool(result.identified_clients) and result.within_limit
+                         and not result.non_contacted_clients)
+    return result
+
+
+def _response_summary(results: list[ResponseResult]) -> dict[str, Any]:
+    normal = [r for r in results if r.expected_error_code is None]
+    refusals = [r for r in results if r.expected_error_code is not None]
+    identified = sum(len(r.identified_clients) for r in normal)
+    contacted = identified - sum(len(r.non_contacted_clients) for r in normal)
+    return {
+        "runs": len(results),
+        "pass_rate": round(sum(r.passed for r in results) / len(results), 3),
+        "contacted_prompt_pass_rate": (
+            round(sum(r.passed for r in normal) / len(normal), 3) if normal else None),
+        "clients_identified": identified,
+        "contacted_client_precision": round(contacted / identified, 3) if identified else None,
+        "within_limit_rate": (
+            round(sum(r.within_limit for r in normal) / len(normal), 3) if normal else None),
+        "error_prompt_pass_rate": (
+            round(sum(r.passed for r in refusals) / len(refusals), 3) if refusals else None),
+    }
+
+
+def _print_response_accuracy(results: list[ResponseResult], summary: dict[str, Any]) -> None:
+    print("\nResponse accuracy")
+    for result in results:
+        status = "PASS" if result.passed else "FAIL"
+        if result.expected_error_code is not None:
+            detail = (f"expected error={result.expected_error_code} "
+                      f"tool error={result.tool_error_code} "
+                      f"clients named={len(result.identified_clients)}")
+        else:
+            detail = (f"clients named={len(result.identified_clients)}/{result.limit} "
+                      f"not contacted={[c['name'] + ' (' + c['status'] + ')' for c in result.non_contacted_clients]}")
+        print(f"  [{status}] {result.case_id} run {result.run}: {detail}"
+              + (f" error={result.error}" if result.error else ""))
+    print(json.dumps(summary, indent=2))
 
 
 #=========================#
@@ -423,7 +587,8 @@ def _print_response_time(response_time: dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description=f"Evaluate {TOOL_NAME} tool-call accuracy and response time")
+        description=f"Evaluate {TOOL_NAME} tool-call accuracy, response accuracy "
+                    "and response time")
     parser.add_argument("--dataset", choices=sorted(DATASETS), default=None,
                         help="Expected dataset (default: detect from the loaded database)")
     parser.add_argument("--repeats", type=int, default=1,
@@ -432,10 +597,16 @@ def main() -> int:
                         help="Call a running FastMCP server (e.g. http://127.0.0.1:8001/mcp) "
                              "instead of loading mcp/server.py in-process")
     parser.add_argument("--min-pass-rate", type=float, default=1.0,
-                        help="Exit non-zero below this pass rate (default 1.0)")
+                        help="Exit non-zero when the tool-call or response pass rate is "
+                             "below this (default 1.0)")
     parser.add_argument("--case", action="append", default=None, metavar="CASE_ID",
                         help="Run only this case ID (repeatable; default: all cases)")
+    parser.add_argument("--delay", type=float, default=0.0, metavar="SECONDS",
+                        help="Pause between runs to stay under provider rate limits; "
+                             "excluded from response times (default 0)")
     args = parser.parse_args()
+    if args.delay < 0:
+        raise SystemExit("--delay must be non-negative")
 
     settings = get_settings()
     if not settings.llm_configured:
@@ -458,12 +629,21 @@ def main() -> int:
         scoped_id = _campaign_id(case.scoped_campaign) if case.scoped_campaign else None
         truth = set() if case.expected_error_code else _ground_truth(expected_id)
         expectations[case.case_id] = (expected_id, scoped_id, truth)
+    names = _contact_names()
+    statuses = {case.case_id: _member_statuses(expectations[case.case_id][0])
+                for case in cases}
 
     scope = RequestScope(EVAL_FA_ID)
     results: list[CaseResult] = []
+    responses: list[ResponseResult] = []
+    first_run = True
     for case in cases:
         expected_id, scoped_id, truth = expectations[case.case_id]
         for run in range(1, args.repeats + 1):
+            # Sleep before the timer starts so the pause never counts towards response time.
+            if args.delay and not first_run:
+                time.sleep(args.delay)
+            first_run = False
             calls: list[ToolCall] = []
             client = _TimedClient(LLMClient(settings))
             orchestrator = ChatOrchestrator(
@@ -479,6 +659,8 @@ def main() -> int:
             result = _score(case, run, calls, answer, elapsed, client, expected_id, truth)
             result.error = error or result.error
             results.append(result)
+            responses.append(_score_response(case, result, calls, names,
+                                             statuses[case.case_id]))
             status = "PASS" if result.passed else "FAIL"
             print(f"[{status}] {case.case_id} run {run}: tools={result.tool_sequence} "
                   f"args={result.follow_up_arguments} unreplied="
@@ -488,6 +670,8 @@ def main() -> int:
 
     summary = _summary(results)
     print(json.dumps(summary, indent=2))
+    response_summary = _response_summary(responses)
+    _print_response_accuracy(responses, response_summary)
     response_time = _response_time(cases, results)
     _print_response_time(response_time)
 
@@ -498,13 +682,19 @@ def main() -> int:
         "dataset": asdict(spec),
         "model": settings.llm_model,
         "mcp_transport": args.mcp_url or "in-process",
+        "delay_between_runs_seconds": args.delay,
         "cases": [asdict(case) for case in cases],
         "summary": summary,
+        "response_accuracy": {
+            "summary": response_summary,
+            "results": [asdict(response) for response in responses],
+        },
         "response_time": response_time,
         "results": [asdict(result) for result in results],
     }, indent=2, default=str))
     print(f"Wrote {output}")
-    return 0 if summary["pass_rate"] >= args.min_pass_rate else 1
+    passed = min(summary["pass_rate"], response_summary["pass_rate"])
+    return 0 if passed >= args.min_pass_rate else 1
 
 
 if __name__ == "__main__":

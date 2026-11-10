@@ -226,14 +226,14 @@ def campaign_follow_up(
                 }
         client_info = get_client_follow_up_list(campaign_id, fa_id, tenant_id)
 
-        # 2. Fetch profile and portfolio context for every candidate, oldest contact
-        # first, so the model compares the whole no-reply list before choosing.
+        # 2. Fetch profile and portfolio context for the 25 longest-unengaged
+        # candidates (never-engaged first, then earliest engagement date).
         client_info = sorted(
             client_info,
             key=lambda row: (row[1] is not None, row[1] or datetime.min),
         )
         client_profiles = []
-        for client_id, last_engagement_date in client_info:
+        for client_id, last_engagement_date in client_info[:15]:
             portfolio = fetch_client_portfolio(client_id)
             profile = fetch_client_profile(client_id, fa_id, tenant_id)
             client_profiles.append({

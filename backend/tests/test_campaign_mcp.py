@@ -159,7 +159,7 @@ def test_campaign_follow_up_returns_profiles_with_grounded_reasons(monkeypatch):
     assert profile_requests == ["client-002", "client-003"]
 
 
-def test_campaign_follow_up_compares_every_unreplied_client(monkeypatch):
+def test_campaign_follow_up_compares_25_longest_unengaged_clients(monkeypatch):
     clients = [
         (f"client-{day:03d}", datetime(2026, 8, day % 28 + 1, 9, 0))
         for day in range(50)
@@ -178,13 +178,13 @@ def test_campaign_follow_up_compares_every_unreplied_client(monkeypatch):
 
     dates = [item["last_engagement_date"] for item in result["candidates"]]
     assert result["total_unreplied_clients"] == 51
-    assert result["compared_candidates"] == 51
-    assert {item["client_id"] for item in result["candidates"]} == {
-        client_id for client_id, _ in clients
-    }
+    assert result["compared_candidates"] == 25
     assert dates[0] is None
     assert dates[1:] == sorted(dates[1:])
-    assert "Compare all 51 candidates and recommend the top 25" in result[
+    # The oldest dated engagements are kept; later ones are dropped.
+    all_dates = sorted(date for _, date in clients if date is not None)
+    assert dates[-1] == all_dates[23].isoformat()
+    assert "Compare all 25 candidates and recommend the top 25" in result[
         "additional_instructions"
     ]
 
