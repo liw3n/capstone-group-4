@@ -16,6 +16,78 @@ local copies; see [the recommendation guide](docs/campaign_recommendations.md#la
 Provisioning safely reapplies the existing campaign-member index without editing
 the supplied CRM definitions or clearing data.
 
+## Client recommendation latency evaluation
+
+With exactly one shared evaluation dataset already loaded, run from the root:
+
+```bash
+make eval-run EVAL=client_recommendation ARGS="--dataset small --repeats 3"
+# After separately preparing a clean large dataset:
+make eval-run EVAL=client_recommendation ARGS="--dataset large --repeats 3"
+```
+
+The script never clears, provisions or switches databases. It rejects a dataset
+whose table counts do not match the requested size. Loading another seed file
+over existing data mixes datasets; use an isolated evaluation database. Both
+sizes use the same six prompts: four named-campaign recommendations, a request
+without a campaign and an unknown-campaign request. They use fresh empty
+histories and no selected campaign. Normal Groq tool selection remains in use. Campaign names,
+IDs and active dates are checked before timing; expired campaigns stop the run.
+The shared datasets do not have identical criteria or match distributions, so
+the comparison represents their complete workloads, not contact count alone.
+
+Results go to ignored `backend/evaluation/results/client_recommendation_latency_*.json`.
+They include per-run and per-prompt total/orchestrator, LLM, lookup and
+recommendation-tool timings; mean, median, nearest-rank p95, min and max; model
+call counts and recommendation counts. Expected clarification and not-found
+replies count as completed outcomes. A later successful recommendation for the
+correct campaign counts as recovered when an earlier tool call failed; all retry
+time remains included. Tool errors without recovery, missing expected results
+and wrong-campaign results are reported separately from completed-run latency.
+Reports include per-outcome summaries so recommendation, clarification and
+not-found timings can be compared separately. These are completion checks,
+not accuracy or answer-quality scores. Known safe tool error codes are retained
+for diagnostics; raw provider/storage error messages are not saved.
+Small-sample p95 values are preliminary. The first run is retained and runs are
+sequential with a reused provider client. Use `--delay-seconds 2` to add an
+untimed pause between attempts, or `--case small-1-young-families` to select one
+prompt. For rate-limited evaluation accounts, consider `--delay-seconds 65`;
+this reduces pressure between prompts but cannot guarantee avoiding provider
+limits within a multi-call prompt or a shared organisation. Rate-limit failures
+remain visible. Changing campaign names cannot eliminate provider rate limits.
+
+Default MCP transport is in-process. `--mcp-url http://127.0.0.1:8001/mcp` uses a
+running server instead; compare runs with the same transport. Timing includes
+tool discovery and temporary recommendation snapshot writes, but excludes
+browser/API handling, saved-chat persistence and Excel downloads. It makes real
+Groq calls; it does not run email or CRM mutation tools. Full client payloads
+and assistant answers are not written into evaluation reports. Unrelated tool
+execution is blocked and recorded as an error. No production application code
+or shared evaluation datasets are changed by this evaluator.
+
+Version 2 uses these six prompts and corrected completion handling. Existing
+version-1 JSON reports are unchanged; their five-prompt aggregate is not directly
+comparable to the six-prompt aggregate. Campaign IDs are looked up from the
+loaded dataset, rather than using the normal demo's IDs. Shared SQL fixtures
+are unchanged. Replacing three absent campaign names gives these prompts:
+
+1. Which clients do you recommend for the Young Families Cover Check?
+2. Who should I target for the legacy protection refresh campaign?
+3. Which clients do you recommend?
+4. Which clients do you recommend for Nonexistent Evaluation Campaign Z9?
+5. Which clients do you recommend for the Education Savings Kickstart campaign?
+6. Which clients do you recommend for the Retirement Income Review?
+
+The fifth question does not guarantee fewer than ten matches on both datasets;
+the actual counts depend on the loaded synthetic criteria and contacts. The
+latency script does not test browser previews or Excel download correctness.
+
+Inspect the six prompts without database or Groq access:
+
+```bash
+make eval-run EVAL=client_recommendation ARGS="--dataset small --list-cases"
+```
+
 ## Shared application setup
 
 Follow the [team setup guide](../README.md#team-setup-and-development-workflow).
