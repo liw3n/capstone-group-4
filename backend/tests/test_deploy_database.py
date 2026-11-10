@@ -44,6 +44,11 @@ def test_upgrade_original_demo_preserves_edits(isolated_url, monkeypatch, edited
         c.execute("UPDATE campaign SET name='Tester campaign'")
         # Removal must not be undone by the new membership additions.
         c.execute("UPDATE contact SET is_deleted=true WHERE contact_id='d0000000-0000-0000-0000-000000000030'")
+        # The date correction must not replace an adviser-modified member row.
+        c.execute("""UPDATE campaign_member
+            SET added_at='2026-10-20 11:00:00+08'
+            WHERE campaign_id='b3333333-3333-3333-3333-333333333333'
+              AND contact_id='d0000000-0000-0000-0000-000000000034'""")
         if edited_dob:
             c.execute("UPDATE contact SET date_of_birth='1990-01-02', updated_at=now() WHERE contact_id='d0000000-0000-0000-0000-000000000010'")
     # Data updates must also work with DEMO_SEED_ON_START disabled after first boot.
@@ -55,6 +60,20 @@ def test_upgrade_original_demo_preserves_edits(isolated_url, monkeypatch, edited
         assert str(dob) == ('1990-01-02' if edited_dob else '1989-11-12')
         assert c.execute("SELECT count(*) FROM campaign WHERE name <> 'Tester campaign'").fetchone()[0] == 0
         assert c.execute("SELECT count(*) FROM campaign_member WHERE campaign_id='b2222222-2222-2222-2222-222222222222' AND contact_id='d0000000-0000-0000-0000-000000000030'").fetchone()[0] == 0
+        assert c.execute("""SELECT count(*) FROM campaign_member
+            WHERE campaign_id='b3333333-3333-3333-3333-333333333333'
+              AND contact_id='d0000000-0000-0000-0000-000000000034'
+              AND added_at='2026-10-20 11:00:00+08'""").fetchone()[0] == 1
+        assert c.execute("""SELECT count(*) FROM campaign_member
+            WHERE campaign_id='b3333333-3333-3333-3333-333333333333'
+              AND contact_id='d0000000-0000-0000-0000-000000000035'
+              AND added_at='2026-11-04 10:00:00+08'
+              AND emailed_at='2026-11-05 15:00:00+08'""").fetchone()[0] == 1
+        assert c.execute("""SELECT count(*) FROM campaign_member
+            WHERE campaign_id='b3333333-3333-3333-3333-333333333333'
+              AND contact_id='d0000000-0000-0000-0000-000000000036'
+              AND added_at='2026-11-09 09:00:00+08'
+              AND emailed_at='2026-11-09 10:00:00+08'""").fetchone()[0] == 1
         after = dict(c.execute("SELECT name, checksum FROM pulse_deploy_migration").fetchall())
         assert all(after[name] == digest for name, digest in before.items())
         assert all(f'mock_data/{name}' in after for name in updates)
@@ -77,6 +96,16 @@ def test_fresh_seed_includes_versioned_additions(isolated_url):
     with psycopg.connect(isolated_url) as c:
         assert c.execute("SELECT count(*) FROM contact").fetchone()[0] == 100
         assert c.execute("SELECT count(*) FROM campaign_member WHERE campaign_id='b2222222-2222-2222-2222-222222222222'").fetchone()[0] == 13
+        assert c.execute("""SELECT count(*) FROM campaign_member
+            WHERE campaign_id='b3333333-3333-3333-3333-333333333333'
+              AND ((contact_id='d0000000-0000-0000-0000-000000000034'
+                    AND added_at='2026-11-03 11:00:00+08' AND emailed_at IS NULL)
+                OR (contact_id='d0000000-0000-0000-0000-000000000035'
+                    AND added_at='2026-11-04 10:00:00+08'
+                    AND emailed_at='2026-11-05 15:00:00+08')
+                OR (contact_id='d0000000-0000-0000-0000-000000000036'
+                    AND added_at='2026-11-09 09:00:00+08'
+                    AND emailed_at='2026-11-09 10:00:00+08'))""").fetchone()[0] == 3
 
 
 def test_failed_data_update_rolls_back_upgrade(isolated_url, tmp_path, monkeypatch):

@@ -199,6 +199,50 @@ def test_ranking_shows_ties_without_model_call():
     assert result.answer.count("| 11 |") == 2
 
 
+@pytest.mark.parametrize("question,direction,heading", [
+    ("Which campaign has the highest email coverage?", "most", "Highest email coverage"),
+    ("Which campaign has the least email coverage?", "least", "Lowest email coverage"),
+])
+def test_email_coverage_ranking_uses_fast_path_and_shows_ties(question, direction, heading):
+    app, registry = orchestrator({
+        "data_source": "synthetic",
+        "metric": "email_coverage",
+        "direction": direction,
+        "requested_period": "campaign_to_date",
+        "period_end_date": "2026-11-08",
+        "campaign_count": 2,
+        "leaders": [
+            {"campaign_name": "First Home Starter Bundle", "campaign_members_total": 4,
+             "clients_emailed_total": 2, "email_coverage_percent": 50.0},
+            {"campaign_name": "Legacy Protection Refresh", "campaign_members_total": 8,
+             "clients_emailed_total": 4, "email_coverage_percent": 50.0},
+        ],
+        "leaders_truncated": False,
+    })
+    result = app.run(question, [], scope=RequestScope("adv-demo"))
+
+    assert registry.calls == [("get_campaign_contact_ranking", {
+        "metric": "email_coverage", "period": "campaign_to_date", "direction": direction,
+    })]
+    assert heading in result.answer
+    assert "First Home Starter Bundle" in result.answer
+    assert "Legacy Protection Refresh" in result.answer
+    assert "50% (2/4 members)" in result.answer
+    assert "50% (4/8 members)" in result.answer
+    assert "does not confirm delivery" in result.answer
+
+
+def test_empty_email_coverage_ranking_explains_undefined_percentage():
+    app, _registry = orchestrator({
+        "data_source": "synthetic", "metric": "email_coverage",
+        "direction": "least", "requested_period": "campaign_to_date",
+        "campaign_count": 0, "leaders": [],
+    })
+    result = app.run("Which campaign has the lowest email coverage?", [],
+                     scope=RequestScope("adv-demo"))
+    assert "campaign with members" in result.answer
+
+
 def test_last_week_ranking_uses_singapore_week_from_tool():
     app, registry = orchestrator({
         "data_source": "synthetic",
@@ -261,3 +305,66 @@ def test_compound_question_keeps_the_normal_chat_path():
 
     assert result.answer == "Handled by the normal chat flow"
     assert registry.calls == []
+
+
+def test_model_selected_ranking_renders_without_second_model_request():
+    registry = RecordingRegistry({
+        "data_source": "synthetic",
+        "metric": "email_coverage",
+        "direction": "least",
+        "requested_period": "campaign_to_date",
+        "period_end_date": "2026-11-10",
+        "campaign_count": 2,
+        "leaders": [{
+            "campaign_name": "Education Savings Kickstart",
+            "campaign_members_total": 13,
+            "clients_emailed_total": 10,
+            "email_coverage_percent": 76.9,
+        }],
+        "leaders_truncated": False,
+    })
+    registry.schemas = lambda: [{
+        "type": "function",
+        "function": {
+            "name": "get_campaign_contact_ranking",
+            "description": "Rank campaign email coverage.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }]
+
+    class SelectingModel:
+        calls = 0
+
+        def create_chat_completion(self, _messages, _tools):
+            self.calls += 1
+            if self.calls != 1:
+                raise AssertionError("Ranking result must not be sent back to the model")
+            tool = SimpleNamespace(
+                id="rank-1",
+                function=SimpleNamespace(
+                    name="get_campaign_contact_ranking",
+                    arguments=json.dumps({
+                        "metric": "email_coverage",
+                        "direction": "least",
+                        "period": "campaign_to_date",
+                    }),
+                ),
+            )
+            return SimpleNamespace(choices=[SimpleNamespace(
+                message=SimpleNamespace(content=None, tool_calls=[tool])
+            )])
+
+    model = SelectingModel()
+    app = ChatOrchestrator(
+        model, Settings(_env_file=None, groq_api_key="test-key"), registry
+    )
+    result = app.run(
+        "Across my campaigns, which has the smallest proportion of members "
+        "with a recorded email? Include ties.",
+        [], scope=RequestScope("adv-demo"),
+    )
+
+    assert model.calls == 1
+    assert registry.calls[0][0] == "get_campaign_contact_ranking"
+    assert "Education Savings Kickstart" in result.answer
+    assert "76.9%" in result.answer

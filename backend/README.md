@@ -296,9 +296,12 @@ but their metrics now use only the remaining tables:
   percentage of members with a recorded email. It also reports members **added**
   this week, last week, or in a named Monday–Sunday week in Singapore time.
 - `get_campaign_contact_ranking` ranks adviser-owned campaigns by cumulative
-  clients with a recorded email (default), or by members added in the chosen
-  period. Weekly email ranking is unavailable. Ties and zero-count campaigns
-  are included.
+  clients with a recorded email (default), members added in the chosen period,
+  or highest/lowest cumulative email coverage. Weekly email ranking is
+  unavailable. Ties are included. Count rankings include zero-count campaigns;
+  coverage rankings exclude campaigns with no members because their percentage
+  is undefined. For example, ask “Which campaign has the least email coverage?”
+  or “Which campaign has the highest email coverage?”
 
 Member additions are not contacts. `campaign_member` has no event history for
 repeat contacts, first contact, email delivery, or the week when each email was

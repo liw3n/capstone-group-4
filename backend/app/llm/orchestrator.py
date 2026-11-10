@@ -42,6 +42,7 @@ from app.campaigns.email import (
 from app.campaigns.conversation_context import (
     CampaignContextResolution,
     is_campaign_email_cancel,
+    is_campaign_email_general_approval,
     is_campaign_email_turn,
     signoff_reply,
 )
@@ -173,7 +174,7 @@ sends its campaign ID as context; use it, and it overrides campaign references
 in older conversation history. Otherwise use the campaign named in the adviser's
 message or clearly identified in the conversation. If no campaign is identified,
 ask the adviser for its name; do not require them to open a campaign in the CRM.
-For a campaign named in the latest message, resolve its ID with
+For recommendations about a campaign named in the latest message, resolve its ID with
 resolve_campaign when no trustworthy ID is available. An internal campaign
 ID is information you can retrieve, not something the adviser must supply.
 Supply the campaign name from the adviser's request to resolve_campaign; it
@@ -213,11 +214,25 @@ SYSTEM_PROMPT += """
 For active campaign discovery, call get_active_campaigns. This operation can list
 all accessible active campaigns without a selected campaign; the instructions above
 requiring a named/selected campaign apply to recommendation and follow-up tools.
+Discovery also includes viewing the details, description, schedule or audience
+criteria of a named active campaign. Call get_active_campaigns directly with
+campaign_names containing the supplied name; exact name matching is case-insensitive.
+Do not call resolve_campaign before get_active_campaigns: discovery already accepts
+campaign names and does not need an ID lookup. For example, 'get campaign details
+for legacy protection refresh' calls get_active_campaigns with
+{"campaign_names":["legacy protection refresh"]}. 'get active campaigns' calls
+get_active_campaigns with no campaign selector. Reserve resolve_campaign for an
+operation that requires a campaign ID, such as recommendations, when no trustworthy
+ID is available. Follow-up and performance tools accept campaign names directly.
+If named discovery returns no rows, report that no accessible active campaign
+matches that exact name; do not invent a match or silently broaden the query.
 Use exact campaign IDs/names only when the current user requests particular campaigns.
 Do not narrow a general listing to the currently selected campaign or old history.
 Set fields only when the latest user explicitly requests particular details;
 otherwise omit fields or use null for name, description, start_date,
-end_date, age_groups, genders, cash_bands. Active means status exactly 'active',
+end_date, age_groups, genders, cash_bands. A generic request for 'campaign details'
+uses these default columns rather than requesting an ID or adding a status column.
+Active means status exactly 'active',
 independently of schedule dates. Today's Singapore date is reporting context;
 campaign name lookup and recommendations use the current Singapore date for
 schedule checks, and recommendations also calculate client ages on that date.
@@ -308,8 +323,11 @@ you may offer the narrower recorded-email and member figures with clear labels.
 For comparisons, use get_campaign_contact_ranking (legacy tool name). Choose
 metric=clients_emailed and period=campaign_to_date for "which campaign emailed
 the most clients?" Choose metric=members_added with this_week, last_week, or
-campaign_to_date for "which campaign added the most members?" Weekly email
-rankings are unavailable. If the adviser asks only "which campaign has the most
+campaign_to_date for "which campaign added the most members?" For highest or
+lowest email coverage, choose metric=email_coverage, period=campaign_to_date,
+and direction=most or least respectively. Coverage is the percentage of
+campaign members with a recorded email; zero-member campaigns are excluded.
+Weekly email rankings are unavailable. If the adviser asks only "which campaign has the most
 clients?", ask whether they mean members or clients with recorded emails. If
 they ask for the most contacted clients, explain that the all-channel ranking
 is unavailable and offer the email ranking as a narrower alternative. Name ties
@@ -478,6 +496,22 @@ def _fast_performance_request(message: str) -> _FastPerformanceRequest | None:
     text = " ".join(message.strip().split()).strip('"“”')
     if not text or len(text) > 400:
         return None
+
+    ranking_coverage = re.fullmatch(
+        r"which campaign has the (?P<direction>most|least|highest|lowest) email coverage"
+        r"(?:\?\s*include (?:any|all) ties\.?)?[?!.]?",
+        text,
+        re.IGNORECASE,
+    )
+    if ranking_coverage:
+        direction = ("least" if ranking_coverage["direction"].lower() in {"least", "lowest"}
+                     else "most")
+        return _FastPerformanceRequest(
+            "get_campaign_contact_ranking",
+            {"metric": "email_coverage", "period": "campaign_to_date",
+             "direction": direction},
+            "ranking",
+        )
 
     ranking_email = re.fullmatch(
         r"which campaign has the most (?:members|clients) with a recorded email"
@@ -1942,6 +1976,16 @@ class ChatOrchestrator:
                     "Campaign email discard tool returned an invalid result"
                 )
             return _answer(render_campaign_email(payload))
+        if (
+            scope is not None
+            and session_id
+            and is_campaign_email_general_approval(user_message, history)
+        ):
+            return _answer(
+                "No email was sent. To approve the reviewed content and "
+                "recipient list, copy and paste the exact confirmation phrase shown "
+                "in the latest preview."
+            )
         if campaign_context_issue is not None:
             if campaign_context_issue.status == "ambiguous":
                 choices = "\n".join(
@@ -2333,6 +2377,21 @@ class ChatOrchestrator:
                         performance_report_returned = "error_code" not in json.loads(result)
                     except (TypeError, ValueError):
                         performance_report_returned = False
+                if tool_call.function.name == "get_campaign_contact_ranking":
+                    # The ranking may include twenty tied campaigns. Render the
+                    # trusted tool figures here instead of sending the full
+                    # result back to the model for another completion.
+                    try:
+                        ranking_payload = json.loads(result)
+                        if not isinstance(ranking_payload, dict):
+                            raise ValueError("Ranking result is not an object")
+                        if "error" in ranking_payload or "error_code" in ranking_payload:
+                            return _answer(render_performance_error(ranking_payload))
+                        return _answer(render_ranking_result(ranking_payload))
+                    except (TypeError, KeyError, ValueError) as exc:
+                        raise LLMProviderError(
+                            "Campaign ranking tool returned an invalid result"
+                        ) from exc
                 if tool_call.function.name == "get_active_campaigns":
                     try:
                         discovery_payload = json.loads(result)
