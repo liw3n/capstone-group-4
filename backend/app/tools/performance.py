@@ -251,14 +251,9 @@ def execute_contact_ranking(arguments: dict, metadata: dict | None) -> dict:
         period_end_date = today
         period_words = f"as of {today.day} {today:%B %Y}"
     try:
-        if query.metric == "email_coverage":
-            rows = repository.rank_campaigns_by_member_metric(
-                scope, query.metric, period_start, period_end, now, query.direction
-            )
-        else:
-            rows = repository.rank_campaigns_by_member_metric(
-                scope, query.metric, period_start, period_end, now
-            )
+        rows = repository.rank_campaigns_by_member_metric(
+            scope, query.metric, period_start, period_end, now, query.direction
+        )
     except CampaignStorageUnavailable as exc:
         return _error("storage_unavailable", str(exc))
 

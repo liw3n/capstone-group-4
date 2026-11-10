@@ -43,9 +43,10 @@ def test_schema_exposes_metric_and_period_but_not_scope():
 
 
 def test_default_ranks_cumulative_emailed_clients(monkeypatch):
-    def rank(scope, metric, start, end, as_of):
+    def rank(scope, metric, start, end, as_of, direction):
         assert scope.fa_id == DEMO_FA
         assert metric == "clients_emailed"
+        assert direction == "most"
         assert start is None and end == NOW and as_of == NOW
         return (row("camp-1", "Legacy Protection Refresh", 8, 2, 8),
                 row("camp-2", "First Home Starter Bundle", 5, 3, 5))
@@ -60,8 +61,9 @@ def test_default_ranks_cumulative_emailed_clients(monkeypatch):
 
 
 def test_weekly_member_ranking_and_ties(monkeypatch):
-    def rank(scope, metric, start, end, as_of):
+    def rank(scope, metric, start, end, as_of, direction):
         assert metric == "members_added"
+        assert direction == "most"
         assert start.isoformat() == "2026-10-05T00:00:00+08:00"
         assert end.isoformat() == "2026-10-12T00:00:00+08:00"
         return (row("camp-1", "Legacy Protection Refresh", 8, 3, 3, tie_count=2),
