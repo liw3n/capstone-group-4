@@ -2352,6 +2352,21 @@ class ChatOrchestrator:
                         performance_report_returned = "error_code" not in json.loads(result)
                     except (TypeError, ValueError):
                         performance_report_returned = False
+                if tool_call.function.name == "get_campaign_contact_ranking":
+                    # The ranking may include twenty tied campaigns. Render the
+                    # trusted tool figures here instead of sending the full
+                    # result back to the model for another completion.
+                    try:
+                        ranking_payload = json.loads(result)
+                        if not isinstance(ranking_payload, dict):
+                            raise ValueError("Ranking result is not an object")
+                        if "error" in ranking_payload or "error_code" in ranking_payload:
+                            return _answer(render_performance_error(ranking_payload))
+                        return _answer(render_ranking_result(ranking_payload))
+                    except (TypeError, KeyError, ValueError) as exc:
+                        raise LLMProviderError(
+                            "Campaign ranking tool returned an invalid result"
+                        ) from exc
                 if tool_call.function.name == "get_active_campaigns":
                     try:
                         discovery_payload = json.loads(result)
