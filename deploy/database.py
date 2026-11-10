@@ -19,7 +19,11 @@ SCHEMA = (
     "create_campaign_recommendation_lists.sql",
 )
 SEEDS = ("mock_user_account.sql", "mock_contact.sql", "mock_campaign.sql", "mock_campaign_member.sql")
-SEED_UPDATES = ("20261107_add_demo_contacts.sql", "20261107_add_demo_members.sql")
+SEED_UPDATES = (
+    "20261107_add_demo_contacts.sql",
+    "20261107_add_demo_members.sql",
+    "20261110_update_demo_member_dates.sql",
+)
 
 
 class BootstrapError(ValueError):
