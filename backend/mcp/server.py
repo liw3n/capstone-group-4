@@ -109,7 +109,7 @@ def _follow_up_date(value: datetime | None) -> str | None:
     return value.date().isoformat()
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def campaign_follow_up(
     ctx: Context,
     campaign: Annotated[

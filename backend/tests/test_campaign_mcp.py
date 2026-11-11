@@ -159,6 +159,16 @@ def test_campaign_follow_up_returns_profiles_with_grounded_reasons(monkeypatch):
     assert profile_requests == ["client-002", "client-003"]
 
 
+def test_campaign_follow_up_is_annotated_read_only():
+    async def list_tools():
+        async with Client(server) as client:
+            return await client.list_tools()
+
+    tool = next(item for item in asyncio.run(list_tools()) if item.name == "campaign_follow_up")
+    assert tool.annotations.read_only_hint is True
+    assert tool.annotations.destructive_hint is False
+
+
 def test_campaign_follow_up_reports_singapore_engagement_date():
     # 20:00 UTC is already the next day in Singapore.
     assert server_module._follow_up_date(
@@ -167,7 +177,8 @@ def test_campaign_follow_up_reports_singapore_engagement_date():
     assert server_module._follow_up_date(None) is None
 
 
-def test_campaign_follow_up_compares_25_longest_unengaged_clients(monkeypatch):
+def test_campaign_follow_up_compares_capped_longest_unengaged_clients(monkeypatch):
+    cap = server_module.MAX_FOLLOW_UP_CANDIDATES
     clients = [
         (f"client-{day:03d}", datetime(2026, 8, day % 28 + 1, 9, 0))
         for day in range(50)
@@ -186,13 +197,14 @@ def test_campaign_follow_up_compares_25_longest_unengaged_clients(monkeypatch):
 
     dates = [item["last_engagement_date"] for item in result["candidates"]]
     assert result["total_unreplied_clients"] == 51
-    assert result["compared_candidates"] == 25
+    assert result["compared_candidates"] == cap
     assert dates[0] is None
     assert dates[1:] == sorted(dates[1:])
     # The oldest dated engagements are kept; later ones are dropped.
     all_dates = sorted(date for _, date in clients if date is not None)
-    assert dates[-1] == all_dates[23].isoformat()
-    assert "Compare all 25 candidates and recommend the top 25" in result[
+    assert dates[-1] == all_dates[cap - 2].date().isoformat()
+    # A limit above the cap recommends every compared candidate.
+    assert f"Compare all {cap} candidates and recommend the top {cap}" in result[
         "additional_instructions"
     ]
 
