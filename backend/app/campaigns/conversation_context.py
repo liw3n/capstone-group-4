@@ -22,6 +22,27 @@ _EMAIL_WORKFLOW_REQUEST_PATTERN = re.compile(
     r"\b(?:e[ -]?mail|mail)\s+(?:the\s+)?(?:clients?|contacts?|recipients?)\b)",
     re.IGNORECASE,
 )
+_PERFORMANCE_METRIC_PATTERN = re.compile(
+    r"\b(?:performance|e[ -]?mail coverage|recorded e[ -]?mails?"
+    r"(?: sends?)?|e[ -]?mail sends?|member(?:ship)? additions?|"
+    r"members? (?:were )?added)\b",
+    re.IGNORECASE,
+)
+_PERFORMANCE_QUESTION_PATTERN = re.compile(
+    r"\b(?:what|which|how many|show|compare|give|total|number|percentage|"
+    r"proportion|share)\b",
+    re.IGNORECASE,
+)
+_EMAIL_ACTION_PREFIX_PATTERN = re.compile(
+    r"^\s*(?:(?:please|can you|could you|would you|i want to|i'd like to)\s+)*"
+    r"(?:draft|write|prepare|review|revise|edit|send|email|create)\b",
+    re.IGNORECASE,
+)
+_EMAIL_WORKFLOW_DETAIL_PATTERN = re.compile(
+    r"\b(?:draft|write|prepare|review|revise|edit|preview|subject|body|"
+    r"recipients?|message)\b",
+    re.IGNORECASE,
+)
 _UUID_PATTERN = re.compile(
     r"(?<![0-9a-f])"
     r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
@@ -146,6 +167,15 @@ def is_campaign_email_turn(
     items = tuple(history)
     if is_campaign_email_cancel(latest_message, items):
         return True
+    # A recorded send is an analytics metric, not a request to send email.
+    # Let a new performance question leave a pending sign-off prompt as well.
+    if (
+        _PERFORMANCE_METRIC_PATTERN.search(latest_message)
+        and _PERFORMANCE_QUESTION_PATTERN.search(latest_message)
+        and not _EMAIL_ACTION_PREFIX_PATTERN.search(latest_message)
+        and not _EMAIL_WORKFLOW_DETAIL_PATTERN.search(latest_message)
+    ):
+        return False
     if _EMAIL_WORKFLOW_REQUEST_PATTERN.search(latest_message):
         return True
     pending = pending_campaign_email_prompt(items)

@@ -65,6 +65,33 @@ def test_plural_email_request_uses_email_context():
     ) is True
 
 
+@pytest.mark.parametrize("message", [
+    "What proportion of Legacy Protection Refresh members have at least one recorded email send?",
+    "Show me how membership additions for Legacy Protection Refresh changed between last week and this week.",
+    "Which campaign has the lowest email coverage?",
+    "How many email sends are recorded for Legacy Protection Refresh?",
+])
+def test_performance_question_does_not_enter_email_drafting(message):
+    pending_signoff = [ChatHistoryItem(
+        "2026-11-01T00:00:00Z", False,
+        "What name would you like me to use in the email sign-off?",
+    )]
+    assert conversation_context.is_campaign_email_turn(message, []) is False
+    assert conversation_context.is_campaign_email_turn(message, pending_signoff) is False
+
+
+def test_explicit_email_request_with_member_metric_still_enters_drafting():
+    assert conversation_context.is_campaign_email_turn(
+        "Draft an email to members added last week", []
+    ) is True
+    assert conversation_context.is_campaign_email_turn(
+        "Can you show me a draft email to members added last week?", []
+    ) is True
+    assert conversation_context.is_campaign_email_turn(
+        "Show me the email send preview", []
+    ) is True
+
+
 def test_pending_email_can_be_cancelled_with_a_short_reply():
     history = [ChatHistoryItem(
         "2026-11-01T00:00:00Z", False,
