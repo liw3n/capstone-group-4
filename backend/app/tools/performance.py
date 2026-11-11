@@ -42,6 +42,8 @@ def _error(code: str, message: str) -> dict:
 
 def _resolve_campaign(campaign_query: str, selected_id: str | None,
                       scope: RequestScope) -> Campaign:
+    # Workspace selection is application-owned context, so it takes precedence
+    # over a possibly conflicting campaign name in the chat message.
     if selected_id is not None:
         return repository.get_campaign(selected_id, scope)
     if campaign_query and len(campaign_query) <= 69:
@@ -123,6 +125,7 @@ def execute_contact_performance(arguments: dict, metadata: dict | None) -> dict:
         if requested_week_start_date is not None else None
     )
     requested_end = (
+        # A week containing today must stop at now, not include future activity.
         min(now, datetime.combine(requested_week_end_date + timedelta(days=1),
                                   time.min, SINGAPORE))
         if requested_week_end_date is not None else None
@@ -144,6 +147,8 @@ def execute_contact_performance(arguments: dict, metadata: dict | None) -> dict:
     members = counts["campaign_members_total"]
     emailed = counts["clients_emailed_total"]
     sends = int(counts["email_sends_total"])
+    # Coverage is undefined for an empty campaign; reporting 0% would imply
+    # that members exist but none have a recorded email.
     coverage = round(100 * emailed / members, 1) if members else None
     state, state_words = _state(campaign, today)
     date_words = f"{today.day} {today:%B %Y}"
@@ -258,6 +263,8 @@ def execute_contact_ranking(arguments: dict, metadata: dict | None) -> dict:
         return _error("storage_unavailable", str(exc))
 
     campaign_count = rows[0]["campaign_count"] if rows else 0
+    # SQL fetches one extra row to detect truncation without sending every
+    # campaign through the MCP result or into the model's context.
     visible = rows[:20]
     ranking = []
     for row in visible:
@@ -276,6 +283,8 @@ def execute_contact_ranking(arguments: dict, metadata: dict | None) -> dict:
         else:
             item["metric_count"] = row["count_value"]
         ranking.append(item)
+    # Compare the unrounded database values. Two percentages that display the
+    # same to one decimal place may still have different true rankings.
     leading_value = rows[0]["count_value"] if rows else None
     leaders = [ranking[index] for index, row in enumerate(visible)
                if row["count_value"] == leading_value]

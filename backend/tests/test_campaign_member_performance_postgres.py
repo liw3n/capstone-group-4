@@ -29,6 +29,8 @@ def database(monkeypatch):
     database_url = os.environ.get("PULSE_TEST_DATABASE_URL")
     if not database_url:
         pytest.skip("Set PULSE_TEST_DATABASE_URL to a disposable PostgreSQL database")
+    # Each run gets its own schema so seed data and advisor-scope checks cannot
+    # modify the developer's normal tables or affect another test run.
     schema = "pulse_member_test_" + uuid4().hex
     with psycopg.connect(database_url, autocommit=True) as admin:
         admin.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))

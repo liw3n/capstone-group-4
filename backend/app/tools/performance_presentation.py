@@ -6,6 +6,8 @@ from typing import Any
 
 
 def _text(value: object) -> str:
+    # Campaign names are stored data, not trusted Markdown. Escape them before
+    # placing them in a table or bold text so they cannot alter the answer.
     result = escape(str(value).replace("\r", " ").replace("\n", " "), quote=False)
     for character in ("\\", "`", "*", "_", "[", "]", "|"):
         result = result.replace(character, "\\" + character)

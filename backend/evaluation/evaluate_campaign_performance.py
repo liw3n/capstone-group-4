@@ -159,6 +159,7 @@ def _ranking_truth(metric: str, direction: str):
         members, emailed = int(row["members"]), int(row["emailed"])
         if metric == "email_coverage" and members == 0:
             continue
+        # Exact fractions preserve the true order when rounded percentages tie.
         score = Fraction(emailed, members) if metric == "email_coverage" else emailed
         candidates.append((row["name"], members, emailed, score))
     if not candidates:
@@ -269,6 +270,8 @@ def _response_correct(case: PromptCase, answer: str, expected: dict,
     normalized_answer = _normalized_response(answer)
     named_leaders = sum(_normalized_response(name) in normalized_answer
                         for name, _, _, _ in visible)
+    # An LLM answer need not enumerate every visible leader when a tie exceeds
+    # the 20-row tool limit; require one correct name and a truncation notice.
     if (named_leaders == 0 if case.route == "llm" and tie_count > 20
             else named_leaders != len(visible)):
         return False
@@ -337,6 +340,8 @@ def main() -> int:
             orchestrator = ChatOrchestrator(
                 client, settings, _RecordingRegistry(MCPToolRegistry(transport), calls)
             )
+            # Time the chatbot request itself; fixture checks and report writing
+            # stay outside the measurement so runs remain comparable.
             started = time.perf_counter()
             error = None
             try:
