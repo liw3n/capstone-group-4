@@ -129,7 +129,7 @@ def campaign_follow_up(
         int,
         Field(
             ge=1,
-            le=25,
+            le=10,
             strict=True,
             description="How many of the compared candidates to recommend for follow-up.",
         ),
